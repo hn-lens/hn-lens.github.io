@@ -1,0 +1,103 @@
+import { useEffect, useState } from 'react';
+import type { FormEvent } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { Bookmark, ExternalLink, Moon, Search, Settings, Sun } from 'lucide-react';
+import { useTheme } from '../../hooks/useTheme';
+import { usePrefs } from '../../lib/prefs';
+import { LAYOUTS, THEMES } from '../../lib/themes';
+import { IconButton } from '../ui/primitives';
+
+export default function TopNav() {
+  const { isDark, toggle } = useTheme();
+  const themeName = usePrefs((s) => s.themeName);
+  const setThemeName = usePrefs((s) => s.setThemeName);
+  const layout = usePrefs((s) => s.layout);
+  const setLayout = usePrefs((s) => s.setLayout);
+  const navigate = useNavigate();
+  const [params] = useSearchParams();
+  const urlQ = params.get('q') ?? '';
+  const [q, setQ] = useState(urlQ);
+
+  // Keep the box in sync with the URL (deep links, clearing, back/forward).
+  useEffect(() => {
+    setQ(urlQ);
+  }, [urlQ]);
+
+  const onSearch = (e: FormEvent) => {
+    e.preventDefault();
+    const term = q.trim();
+    navigate(term ? `/?q=${encodeURIComponent(term)}` : '/');
+  };
+
+  return (
+    <header className="sticky top-0 z-30 border-b border-border bg-bg/85 backdrop-blur">
+      <div className="mx-auto flex h-14 max-w-6xl items-center gap-3 px-3 sm:px-4">
+        <Link to="/" className="flex shrink-0 items-center gap-2 font-semibold tracking-tight">
+          <span className="grid size-6 place-items-center rounded-md bg-accent text-accent-fg">
+            <span className="size-2.5 rounded-full bg-current" />
+          </span>
+          <span className="hidden sm:inline">HN Lens</span>
+        </Link>
+
+        <form onSubmit={onSearch} className="relative ml-1 flex-1 sm:max-w-md">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-subtle" />
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search Hacker News…"
+            aria-label="Search Hacker News"
+            type="search"
+            className="w-full rounded-lg border border-border bg-surface py-1.5 pl-8 pr-3 text-sm outline-none placeholder:text-subtle focus:border-accent focus:ring-1 focus:ring-ring"
+          />
+        </form>
+
+        <nav aria-label="Primary" className="flex items-center gap-0.5">
+          <select
+            value={themeName}
+            aria-label="Theme design"
+            title="Switch theme design"
+            onChange={(e) => setThemeName(e.target.value)}
+            className="hidden max-w-[9rem] rounded-lg border border-border bg-surface px-2 py-1.5 text-xs text-muted outline-none hover:text-fg focus:border-accent md:block"
+          >
+            {THEMES.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.label}
+              </option>
+            ))}
+          </select>
+          <select
+            value={layout}
+            aria-label="Layout"
+            title="Switch layout (structure)"
+            onChange={(e) => setLayout(e.target.value)}
+            className="hidden max-w-[8rem] rounded-lg border border-border bg-surface px-2 py-1.5 text-xs text-muted outline-none hover:text-fg focus:border-accent lg:block"
+          >
+            {LAYOUTS.map((l) => (
+              <option key={l.id} value={l.id}>
+                {l.label}
+              </option>
+            ))}
+          </select>
+          <IconButton label="Saved items" onClick={() => navigate('/saved')}>
+            <Bookmark className="size-[18px]" />
+          </IconButton>
+          <IconButton label="Settings & models" onClick={() => navigate('/settings')}>
+            <Settings className="size-[18px]" />
+          </IconButton>
+          <IconButton label={isDark ? 'Switch to light mode' : 'Switch to dark mode'} onClick={toggle}>
+            {isDark ? <Moon className="size-[18px]" /> : <Sun className="size-[18px]" />}
+          </IconButton>
+          <a
+            href="https://news.ycombinator.com/"
+            target="_blank"
+            rel="noreferrer"
+            title="Open original Hacker News"
+            className="hidden rounded-lg px-2 py-1.5 text-muted transition-colors hover:bg-surface-2 hover:text-fg sm:inline-flex"
+          >
+            <ExternalLink className="size-[18px]" />
+          </a>
+        </nav>
+      </div>
+    </header>
+  );
+}

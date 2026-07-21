@@ -1,0 +1,317 @@
+// BYO cloud-LLM test — guards the feature: the user can pick a cloud provider (Gemini /
+// OpenAI / Anthropic) and supply their own API key, and AI summaries then run via that
+// provider's HTTP API — no WebGPU, no local model. Verifies: (1) generate() routes to the
+// selected provider's endpoint and returns its text; (2) a missing key errors clearly;
+// (3) the AI summary block works in the UI with WebGPU UNAVAILABLE when a cloud key is set;
+// (4) provider + key persist. All provider endpoints are mocked (no real network/keys).
+import { chromium } from 'playwright';
+
+const BASE = process.env.BASE || 'http://localhost:4173/';
+const now = Math.floor(Date.now() / 1000);
+const STORY_ID = 7000;
+const story = { id: STORY_ID, type: 'story', by: 'op', title: 'A story about raft consensus', url: 'https://ex.com/raft', score: 150, descendants: 6, time: now - 100000 };
+const tree = {
+  id: STORY_ID, story_id: STORY_ID, title: story.title, url: story.url, author: 'op', created_at_i: now - 100000, type: 'story', text: null, points: 150,
+  children: Array.from({ length: 6 }, (_, i) => ({ id: STORY_ID * 10 + i, author: `u${i}`, text: `<p>A substantive comment number ${i} about the consensus protocol tradeoffs and why they matter in practice here.</p>`, created_at_i: now - 9000 + i * 100, parent_id: STORY_ID, story_id: STORY_ID, points: null, type: 'comment', children: [] })),
+};
+
+const fails = [];
+const check = (name, pass, detail = '') => {
+  console.log(`  ${pass ? '\u2713' : '\u2717'} ${name}${detail ? ` \u2014 ${detail}` : ''}`);
+  if (!pass) fails.push(name);
+};
+
+const b = await chromium.launch({ headless: true });
+const ctx = await b.newContext({ viewport: { width: 1280, height: 900 } });
+const page = ctx.pages()[0] || (await ctx.newPage());
+
+const hits = { gemini: 0, openai: 0, anthropic: 0 };
+let lastGeminiModel = '';
+let lastGeminiMaxTokens = 0;
+let lastGeminiSystem = ''; // the systemInstruction text sent on the last generate call
+let geminiEmpty = false; // when true, simulate a "thinking" model that returned no text
+let geminiListBad = false; // when true, the list-models endpoint returns 401 (bad key)
+const json = (r, x) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(x) });
+// Gemini: one host for both list (?models) and generate (models/<m>:generateContent).
+await page.route(/generativelanguage\.googleapis\.com/, (r) => {
+  const u = r.request().url();
+  if (/:generateContent/.test(u)) {
+    hits.gemini++;
+    lastGeminiModel = u.match(/models\/([^:]+):generateContent/)?.[1] ?? '';
+    try {
+      const body = JSON.parse(r.request().postData() || '{}');
+      lastGeminiMaxTokens = body.generationConfig?.maxOutputTokens ?? 0;
+      lastGeminiSystem = body.systemInstruction?.parts?.[0]?.text ?? '';
+    } catch {
+      lastGeminiMaxTokens = 0;
+    }
+    // A thinking model can burn the token budget on reasoning and return no text part.
+    if (geminiEmpty) return json(r, { candidates: [{ finishReason: 'MAX_TOKENS', content: {} }] });
+    return json(r, { candidates: [{ content: { parts: [{ text: 'GEMINI_SUMMARY raft' }] } }] });
+  }
+  // list models
+  if (geminiListBad) return r.fulfill({ status: 401, contentType: 'application/json', body: JSON.stringify({ error: { message: 'bad key' } }) });
+  return json(r, {
+    models: [
+      { name: 'models/gemini-2.0-flash', displayName: 'Gemini 2.0 Flash', supportedGenerationMethods: ['generateContent'] },
+      { name: 'models/gemini-1.5-pro', displayName: 'Gemini 1.5 Pro', supportedGenerationMethods: ['generateContent'] },
+      { name: 'models/text-embedding-004', displayName: 'Embedding', supportedGenerationMethods: ['embedContent'] },
+    ],
+  });
+});
+await page.route(/api\.openai\.com\/v1\/chat\/completions/, (r) => {
+  hits.openai++;
+  return json(r, { choices: [{ message: { content: 'OPENAI_SUMMARY raft' } }] });
+});
+await page.route(/api\.openai\.com\/v1\/models/, (r) =>
+  json(r, { data: [{ id: 'gpt-4o-mini' }, { id: 'gpt-4o' }, { id: 'text-embedding-3-small' }, { id: 'whisper-1' }] })
+);
+await page.route(/api\.anthropic\.com\/v1\/messages/, (r) => {
+  hits.anthropic++;
+  return json(r, { content: [{ text: 'CLAUDE_SUMMARY raft' }] });
+});
+await page.route(/api\.anthropic\.com\/v1\/models/, (r) =>
+  json(r, { data: [{ id: 'claude-3-5-haiku-latest', display_name: 'Claude 3.5 Haiku' }, { id: 'claude-3-5-sonnet-latest', display_name: 'Claude 3.5 Sonnet' }] })
+);
+await page.route(/hacker-news\.firebaseio\.com/, (r) => {
+  const u = r.request().url();
+  const j = (x) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(x) });
+  if (/topstories/.test(u)) return j([STORY_ID]);
+  if (/(best|new|ask|show|job)stories/.test(u)) return j([]);
+  const m = u.match(/item\/(\d+)/);
+  if (m) return j(Number(m[1]) === STORY_ID ? story : null);
+  return j(null);
+});
+// Generic route FIRST so the specific /items/ route (registered next) WINS — Playwright
+// uses the last-registered matching route, so the comment tree isn't shadowed by '{}'.
+await page.route(/hn\.algolia\.com|google\.com\/s2/, (r) => r.fulfill({ status: 200, body: '{}' }));
+await page.route(/hn\.algolia\.com\/api\/v1\/items\/(\d+)/, (r) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(tree) }));
+
+await page.goto(BASE, { waitUntil: 'domcontentloaded' });
+await page.waitForFunction(() => window.__hnlens && window.__hnlens.prefs && window.__hnlens.llm, null, { timeout: 20000 });
+await page.evaluate(async () => {
+  await (await window.__hnlens.interactions()).clearAllData();
+  window.__hnlens.prefs.getState().set({ defaultFeed: 'top', minPoints: 0, showAiSummaries: true, llmEnabled: false });
+});
+
+// ---- (1) generate() routes to the selected provider and returns its text ----
+const routed = await page.evaluate(async () => {
+  const llm = await window.__hnlens.llm();
+  const out = {};
+  for (const [provider, key] of [['gemini', 'g-key'], ['openai', 'o-key'], ['anthropic', 'a-key']]) {
+    const cur = window.__hnlens.prefs.getState();
+    cur.set({ llmProvider: provider, apiKeys: { ...cur.apiKeys, [provider]: key } });
+    out[provider] = await llm.generate('ignored-local-model', [{ role: 'user', content: 'Summarize: hello' }], { maxTokens: 40 });
+  }
+  return out;
+});
+check('generate() routes to Gemini and returns its text', /GEMINI_SUMMARY/.test(routed.gemini), routed.gemini);
+check('generate() routes to OpenAI and returns its text', /OPENAI_SUMMARY/.test(routed.openai), routed.openai);
+check('generate() routes to Anthropic and returns its text', /CLAUDE_SUMMARY/.test(routed.anthropic), routed.anthropic);
+check('each provider endpoint was actually called once', hits.gemini >= 1 && hits.openai >= 1 && hits.anthropic >= 1, JSON.stringify(hits));
+// Cloud gets generous token headroom (thinking models spend output tokens reasoning); a
+// tiny local-model cap (the TL;DR passes 40) would starve the answer → empty output.
+check('cloud generate gives thinking models headroom (maxOutputTokens ≥ 4096)', lastGeminiMaxTokens >= 4096, `maxOutputTokens=${lastGeminiMaxTokens}`);
+
+// A thinking-truncated / empty response must surface a CLEAR error, not a blank summary.
+const emptyErr = await page.evaluate(async () => {
+  const llm = await window.__hnlens.llm();
+  const cur = window.__hnlens.prefs.getState();
+  cur.set({ llmProvider: 'gemini', apiKeys: { ...cur.apiKeys, gemini: 'g-key' } });
+  try {
+    await llm.generate('m', [{ role: 'user', content: 'x' }], { maxTokens: 40 });
+    return 'NO_ERROR';
+  } catch (e) {
+    return String(e?.message || e);
+  }
+});
+// Toggle the empty response for THIS assertion only.
+geminiEmpty = true;
+const emptyErr2 = await page.evaluate(async () => {
+  const llm = await window.__hnlens.llm();
+  try {
+    await llm.generate('m', [{ role: 'user', content: 'x' }], { maxTokens: 40 });
+    return 'NO_ERROR';
+  } catch (e) {
+    return String(e?.message || e);
+  }
+});
+geminiEmpty = false;
+void emptyErr;
+check('an empty (thinking-truncated) response throws a clear error, not blank', /no text/i.test(emptyErr2), emptyErr2);
+
+// ---- (2) a missing key errors clearly (no silent success) ----
+const errMsg = await page.evaluate(async () => {
+  const llm = await window.__hnlens.llm();
+  window.__hnlens.prefs.getState().set({ llmProvider: 'gemini', apiKeys: { gemini: '', openai: '', anthropic: '' } });
+  try {
+    await llm.generate('m', [{ role: 'user', content: 'x' }]);
+    return 'NO_ERROR';
+  } catch (e) {
+    return String(e?.message || e);
+  }
+});
+check('a cloud provider with NO key throws a clear error', /API key/i.test(errMsg), errMsg);
+
+// ---- (3) UI: with a cloud key set, AI summaries work even with WebGPU UNAVAILABLE ----
+await page.evaluate(async () => {
+  window.__hnlens.prefs.getState().set({ llmProvider: 'gemini', apiKeys: { gemini: 'g-key', openai: '', anthropic: '' }, llmEnabled: false, showAiSummaries: true });
+});
+await page.goto(`${BASE}#/item/${STORY_ID}`, { waitUntil: 'domcontentloaded' });
+await page.waitForFunction(() => /comment/i.test(document.body.innerText), null, { timeout: 15000 });
+await page.evaluate(async () => {
+  // Force WebGPU unavailable AFTER load (startup probe may have set it); the cloud path
+  // must not care.
+  (await window.__hnlens.registry()).useModelStore.getState().setWebgpu('unavailable');
+});
+await page.waitForTimeout(300);
+const beforeText = await page.evaluate(() => document.body.innerText);
+check('cloud key + no WebGPU: the AI summary block is shown (not the "needs WebGPU" notice)', /AI discussion summary/i.test(beforeText) && !/need WebGPU|needs WebGPU/i.test(beforeText), beforeText.match(/AI discussion summary|needs? WebGPU/i)?.[0] ?? 'neither');
+check('cloud key + no WebGPU: the non-AI gist is hidden', !(await page.getByTestId('thread-gist').isVisible().catch(() => false)));
+await page.getByRole('button', { name: 'Summarize', exact: true }).click();
+await page.waitForFunction(() => /GEMINI_SUMMARY|Could not/.test(document.body.innerText), null, { timeout: 15000 }).catch(() => {});
+await page.waitForTimeout(400);
+const afterClick = await page.evaluate(() => document.body.innerText);
+check('clicking Summarize renders the cloud provider\'s summary', /GEMINI_SUMMARY/.test(afterClick), afterClick.match(/Could not[^\n]*/)?.[0] ?? '');
+
+// ---- (5) listModels() queries each provider and filters to chat models ----
+const models = await page.evaluate(async () => {
+  const mod = await window.__hnlens.cloud();
+  return {
+    gemini: (await mod.listModels('gemini', 'k')).map((m) => m.id),
+    openai: (await mod.listModels('openai', 'k')).map((m) => m.id),
+    anthropic: (await mod.listModels('anthropic', 'k')).map((m) => m.id),
+  };
+});
+check('listModels(gemini) returns generateContent models, excludes embeddings', models.gemini.includes('gemini-2.0-flash') && models.gemini.includes('gemini-1.5-pro') && !models.gemini.includes('text-embedding-004'), JSON.stringify(models.gemini));
+check('listModels(openai) keeps gpt chat models, drops embedding/whisper', models.openai.includes('gpt-4o-mini') && models.openai.includes('gpt-4o') && !models.openai.includes('text-embedding-3-small') && !models.openai.includes('whisper-1'), JSON.stringify(models.openai));
+check('listModels(anthropic) returns claude models', models.anthropic.includes('claude-3-5-sonnet-latest'), JSON.stringify(models.anthropic));
+
+// ---- (6) Settings UI: Load models → pick one → it's saved and USED in generate ----
+await page.goto(`${BASE}#/settings`, { waitUntil: 'domcontentloaded' });
+await page.waitForFunction(() => /AI provider/i.test(document.body.innerText), null, { timeout: 15000 });
+await page.getByRole('combobox', { name: 'AI provider' }).selectOption('gemini');
+await page.getByPlaceholder('AIza…').fill('g-key');
+await page.getByRole('button', { name: 'Load models' }).click();
+await page.waitForFunction(() => [...document.querySelectorAll('option')].some((o) => o.value === 'gemini-1.5-pro'), null, { timeout: 15000 }).catch(() => {});
+const modelOptions = await page.evaluate(() => [...document.querySelectorAll('option')].map((o) => o.value));
+check('the Model picker populates from the provider (gemini-1.5-pro offered)', modelOptions.includes('gemini-1.5-pro'), JSON.stringify(modelOptions.filter((v) => /gemini/.test(v))));
+await page.getByRole('combobox', { name: 'AI model' }).selectOption('gemini-1.5-pro');
+const chosen = await page.evaluate(() => window.__hnlens.prefs.getState().cloudModels.gemini);
+check('choosing a model saves it to prefs.cloudModels', chosen === 'gemini-1.5-pro', chosen);
+// generate must use the CHOSEN model, not the default
+lastGeminiModel = '';
+await page.evaluate(async () => {
+  await (await window.__hnlens.llm()).generate('local', [{ role: 'user', content: 'x' }], { maxTokens: 20 });
+});
+check('generate() uses the chosen model (gemini-1.5-pro)', lastGeminiModel === 'gemini-1.5-pro', lastGeminiModel);
+
+// ---- (7) After RELOAD the picker SHOWS the chosen model (not the default). The fetched
+// list is transient, so the chosen option must still be present (used === displayed). ----
+await page.reload({ waitUntil: 'domcontentloaded' });
+await page.waitForFunction(() => window.__hnlens, null, { timeout: 20000 });
+await page.goto(`${BASE}#/settings`, { waitUntil: 'domcontentloaded' });
+await page.waitForFunction(() => /AI provider/i.test(document.body.innerText), null, { timeout: 15000 });
+const shownModel = await page.evaluate(() => document.querySelector('select[aria-label="AI model"]')?.value);
+check('after reload the Model picker SHOWS the chosen model, not the default', shownModel === 'gemini-1.5-pro', String(shownModel));
+
+// ---- (8) A "Load models" error must NOT leak across a provider switch. ----
+geminiListBad = true;
+await page.getByPlaceholder('AIza…').fill('bad-key');
+await page.getByRole('button', { name: 'Load models' }).click();
+await page.waitForFunction(() => /invalid or unauthorized|API error/i.test(document.querySelector('main')?.innerText ?? ''), null, { timeout: 15000 }).catch(() => {});
+check('Load-models shows an error for a bad key', /invalid or unauthorized|API error/i.test(await page.evaluate(() => document.querySelector('main')?.innerText ?? '')));
+await page.getByRole('combobox', { name: 'AI provider' }).selectOption('anthropic');
+await page.waitForTimeout(250);
+check('the Load-models error clears when switching provider (no leak)', !/invalid or unauthorized/i.test(await page.evaluate(() => document.querySelector('main')?.innerText ?? '')));
+geminiListBad = false;
+
+// ---- (9) LLM transparency + control: full request is returned, a CUSTOM system
+// instruction flows into the actual request, and changing it re-summarizes (cache key). ----
+const trans = await page.evaluate(async (id) => {
+  const llm = await window.__hnlens.llm();
+  const dbMod = await window.__hnlens.db();
+  const p = window.__hnlens.prefs.getState();
+  p.set({ llmProvider: 'gemini', apiKeys: { ...p.apiKeys, gemini: 'g-key' }, systemPrompts: { tldr: 'CUSTOM_SYS_INSTRUCTION', thread: '' } });
+  await dbMod.db.kv.where('key').startsWith('sum:').delete();
+  const item = { id, title: 'Transparency test', url: 'https://ex.com/t', text: '' };
+  const r1 = await llm.summarizeItem('local', 'tldr', item, { fetchArticle: false, force: true });
+  const r2 = await llm.summarizeItem('local', 'tldr', item, { fetchArticle: false }); // should be cached
+  window.__hnlens.prefs.getState().set({ systemPrompts: { tldr: 'A DIFFERENT INSTRUCTION', thread: '' } });
+  const r3 = await llm.summarizeItem('local', 'tldr', item, { fetchArticle: false }); // key changed → miss
+  return {
+    reqRoles: r1.request.map((m) => m.role),
+    sysContent: r1.request.find((m) => m.role === 'system')?.content ?? '',
+    r2cached: r2.cached,
+    r3cached: r3.cached,
+  };
+}, STORY_ID + 1);
+check('summary result returns the full request (system + user messages)', trans.reqRoles.includes('system') && trans.reqRoles.includes('user'), JSON.stringify(trans.reqRoles));
+check('the request carries the CUSTOM system instruction', /CUSTOM_SYS_INSTRUCTION/.test(trans.sysContent), trans.sysContent.slice(0, 40));
+// lastGeminiSystem reflects the MOST RECENT generate call (r3, after the instruction was
+// changed) — so it proves the current custom system instruction flows to the wire.
+check('the custom system instruction is sent in the actual provider request', /A DIFFERENT INSTRUCTION/.test(lastGeminiSystem), lastGeminiSystem.slice(0, 40));
+check('an unchanged system instruction serves the cache (2nd call cached)', trans.r2cached === true, String(trans.r2cached));
+check('changing the system instruction re-summarizes (cache invalidated)', trans.r3cached === false, String(trans.r3cached));
+
+// ---- (4) provider + key persist across reload ----
+// ---- (10) CARD path: the TL;DR controls (Refresh/View request/Edit) must be CLICKABLE —
+// not covered by the card's stretched title link (a z-index bug that made them dead). ----
+await page.evaluate(async () => {
+  await (await window.__hnlens.interactions()).clearAllData();
+  window.__hnlens.prefs.getState().set({ defaultFeed: 'top', minPoints: 0, llmProvider: 'gemini', apiKeys: { gemini: 'g-key', openai: '', anthropic: '' }, showAiSummaries: true, systemPrompts: { tldr: '', thread: '' } });
+  location.hash = '#/';
+});
+await page.reload({ waitUntil: 'domcontentloaded' });
+await page.waitForFunction(() => window.__hnlens, null, { timeout: 20000 });
+await page.getByRole('button', { name: 'Top', exact: true }).click();
+await page.waitForSelector('article', { timeout: 15000 });
+// Match the TL;DR control by name PREFIX — the label carries an honest source hint
+// ("TL;DR (discussion)" when article text is off, "· local LLM" without a cloud key).
+await page.locator('article').first().getByRole('button', { name: /^TL;DR/ }).first().click();
+await page.waitForFunction(() => /GEMINI_SUMMARY/.test(document.body.innerText), null, { timeout: 15000 }).catch(() => {});
+await page.waitForTimeout(300);
+const cardCtl = await page.evaluate(() => {
+  const btn = [...document.querySelectorAll('article .sc-tldr button')].find((x) => /View request/i.test(x.textContent || ''));
+  if (!btn) return { ok: false, reason: 'no control found' };
+  const r = btn.getBoundingClientRect();
+  const el = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+  return { ok: el === btn || btn.contains(el), hit: el?.tagName };
+});
+check('card TL;DR controls are clickable (not under the stretched title link)', cardCtl.ok, JSON.stringify(cardCtl));
+// clicking "View request" opens the request modal from the card path too
+await page.locator('article .sc-tldr').first().getByRole('button', { name: 'View request' }).click();
+await page.waitForTimeout(300);
+check('card "View request" opens the request modal', await page.evaluate(() => [...document.querySelectorAll('[role="dialog"]')].some((d) => /Request sent to the model/i.test(d.textContent || ''))));
+await page.keyboard.press('Escape').catch(() => {});
+
+// ---- (11) The sidebar "N signals recorded locally" is clickable → opens the signals viewer. ----
+const sidebarSignals = page.locator('.app-sidebar').getByRole('button', { name: /signals recorded locally/i });
+check('sidebar signals count is a clickable control', await sidebarSignals.isVisible().catch(() => false));
+await sidebarSignals.click().catch(() => {});
+await page.waitForTimeout(250);
+check('sidebar signals count opens the signals viewer', await page.evaluate(() => [...document.querySelectorAll('[role="dialog"]')].some((d) => /Signals recorded locally/i.test(d.textContent || ''))));
+await page.keyboard.press('Escape').catch(() => {});
+
+// "Your interests" chips are actionable (click to unfollow), not dead text.
+await page.evaluate(() => window.__hnlens.prefs.getState().set({ followedDomains: ['chip.example'] }));
+await page.waitForTimeout(200);
+const chip = page.locator('.app-sidebar').getByRole('button', { name: /chip\.example/i });
+check('a "Your interests" chip is a clickable control', await chip.isVisible().catch(() => false));
+await chip.click().catch(() => {});
+await page.waitForTimeout(150);
+check('clicking an interest chip unfollows it', !(await page.evaluate(() => window.__hnlens.prefs.getState().followedDomains.includes('chip.example'))));
+
+await page.evaluate(() => window.__hnlens.prefs.getState().set({ llmProvider: 'openai', apiKeys: { gemini: '', openai: 'persist-key', anthropic: '' } }));
+await page.reload({ waitUntil: 'domcontentloaded' });
+await page.waitForFunction(() => window.__hnlens && window.__hnlens.prefs, null, { timeout: 20000 });
+const persisted = await page.evaluate(() => {
+  const s = window.__hnlens.prefs.getState();
+  return { provider: s.llmProvider, key: s.apiKeys.openai };
+});
+check('the chosen provider persists across reload', persisted.provider === 'openai', persisted.provider);
+check('the API key persists across reload', persisted.key === 'persist-key', persisted.key ? 'present' : 'missing');
+
+await b.close();
+console.log(`\n${fails.length === 0 ? 'RESULT: CLOUD LLM PASS \u2713' : `RESULT: ${fails.length} FAILED`}`);
+process.exit(fails.length ? 1 : 0);

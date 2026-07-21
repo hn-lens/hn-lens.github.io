@@ -1,0 +1,94 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Award, BookOpen, Briefcase, Clock, Flame, HelpCircle, Rocket, Sparkles } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
+import { cn } from '../../lib/cn';
+import type { FeedKind } from '../../types';
+
+const TABS: Array<{ kind: FeedKind; label: string; icon: LucideIcon }> = [
+  { kind: 'foryou', label: 'For You', icon: Sparkles },
+  { kind: 'top', label: 'Top', icon: Flame },
+  { kind: 'new', label: 'New', icon: Clock },
+  { kind: 'best', label: 'Best', icon: Award },
+  { kind: 'ask', label: 'Ask', icon: HelpCircle },
+  { kind: 'show', label: 'Show', icon: Rocket },
+  { kind: 'job', label: 'Jobs', icon: Briefcase },
+  { kind: 'read', label: 'Read', icon: BookOpen },
+];
+
+export default function FeedTabs({
+  value,
+  onSelect,
+}: {
+  value: FeedKind;
+  onSelect: (k: FeedKind) => void;
+}) {
+  const activeRef = useRef<HTMLButtonElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  // Edge fades hint that the tab strip scrolls — otherwise off-screen tabs (e.g.
+  // "Read", last in the row) are invisible on a narrow/mobile viewport with no cue.
+  // Only shown when actually scrollable, and hidden at each end so they never mask
+  // the first/last tab. In the vertical `rail` layout there's no horizontal overflow,
+  // so neither fade appears.
+  const [edges, setEdges] = useState({ left: false, right: false });
+  const updateEdges = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    setEdges({
+      left: el.scrollLeft > 4,
+      right: el.scrollLeft + el.clientWidth < el.scrollWidth - 4,
+    });
+  }, []);
+
+  useEffect(() => {
+    activeRef.current?.scrollIntoView({ inline: 'center', block: 'nearest' });
+  }, [value]);
+
+  useEffect(() => {
+    updateEdges();
+    const el = scrollRef.current;
+    if (!el) return;
+    el.addEventListener('scroll', updateEdges, { passive: true });
+    window.addEventListener('resize', updateEdges);
+    return () => {
+      el.removeEventListener('scroll', updateEdges);
+      window.removeEventListener('resize', updateEdges);
+    };
+  }, [updateEdges]);
+
+  return (
+    <div className="relative">
+      <div
+        ref={scrollRef}
+        className="feed-tabs -mx-3 flex gap-1 overflow-x-auto px-3 sm:mx-0 sm:px-0"
+      >
+        {TABS.map(({ kind, label, icon: Icon }) => {
+          const active = value === kind;
+          return (
+            <button
+              key={kind}
+              ref={active ? activeRef : undefined}
+              type="button"
+              aria-current={active ? 'page' : undefined}
+              onClick={() => onSelect(kind)}
+              className={cn(
+                'inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm font-medium transition-colors',
+                active
+                  ? 'border-transparent bg-accent/12 text-accent'
+                  : 'border-border bg-surface text-muted hover:text-fg'
+              )}
+            >
+              <Icon className="size-4" />
+              {label}
+            </button>
+          );
+        })}
+      </div>
+      {edges.left && (
+        <div aria-hidden className="pointer-events-none absolute inset-y-0 left-0 w-6 bg-gradient-to-r from-bg to-transparent" />
+      )}
+      {edges.right && (
+        <div aria-hidden className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-bg to-transparent" />
+      )}
+    </div>
+  );
+}
