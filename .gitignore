@@ -17,6 +17,11 @@ dist-ssr
 .env
 .env.*
 
+# Private local dev notes / runbook (never committed — carry between machines by hand)
+/DEV_LOCAL.md
+*.local.md
+/.dev-local/
+
 # Generated proof/report artifacts (regenerate with `npm run test:personalization`)
 scripts/.artifacts
 
