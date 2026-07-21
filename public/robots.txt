@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://hn-lens.github.io/sitemap.xml
