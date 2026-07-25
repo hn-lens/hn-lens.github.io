@@ -1428,10 +1428,16 @@ messaging and the fabrication findings are **pre-existing**.*
   (`AGENTS.md`, `review/README.md`), and on review the *scrub-pattern lists themselves* were the
   larger leak: a checklist that spells out internal hostnames, group paths and bug/CL formats
   identifies the employer from the list alone. Both fixed, and the concrete patterns moved to the
-  gitignored local notes. Closed for good with **`scripts/leakcheck.mjs`**, now a `static`-tier step:
-  it reads the pattern list from the gitignored notes (so the guard cannot leak them either), greps
-  every `git ls-files` entry, and skips loudly where no local list exists. Verified it FAILS on a
-  planted leak and passes clean across 189 tracked files. First run surfaced 26 false positives
+  gitignored local notes. Guarded by **`scripts/leakcheck.mjs`**, a `static`-tier step that reads the
+  pattern list from the gitignored notes (so the guard cannot leak them either).
+
+  **This paragraph originally said "closed for good", and that was wrong.** The next round's OSS lens
+  found the leak still in HEAD and in 7 unpushed commits: the guard graded only WORKING-TREE bytes and
+  the scrub had been left staged, so it reported clean while `git push` would have published the leak.
+  The confident wording also actively suppressed the instinct to check history. The guard now grades
+  the working tree, HEAD, every unpushed commit tree AND every unpushed commit message, refuses to
+  pass silently where no pattern list exists, and skips digest lines so a lockfile hash cannot
+  masquerade as a hit. First run surfaced 26 false positives
   (`fig` inside "config", `critique` as ordinary English) — fixed with word boundaries and by pruning
   those terms, because *a guard that cries wolf gets muted rather than fixed*.
 
@@ -1549,3 +1555,61 @@ serving as the precondition that makes the first half mean something. Verified p
 
 Also fixed from that lens run: the third and final "clicks, saves, hides" sibling (`Settings.tsx:236`),
 which the RankExplainDialog comment had itself flagged as still un-fixed.
+
+---
+
+## c3r16 — round 16 (certification attempt; NOT clean)
+
+Seven lenses against a build from HEAD: **3 BLOCKER, 4 HIGH, ~19 MEDIUM**, so this round did not
+certify. Three findings were regressions from the previous round's own fixes, which is the part worth
+recording.
+
+### Self-inflicted by c3r15's fixes
+
+- **[HIGH usability] The session order pin silenced "Tune ranking".** Dragging a weight changed the
+  score and moved **0 of 25** cards while two strings promised the feed "re-ranks live"; a filter
+  round-trip left the order permanently scrambled (24/25). **[MEDIUM bug] The pin was also a
+  component-local `useRef`**, so the core reading loop (feed → discussion → back) discarded the very
+  thing it existed to preserve. *A stability mechanism must not freeze the controls whose whole job is
+  to restructure what is being stabilised.* Fixed by moving the pin to module scope (like paging
+  depth) and keying it on a **ranking-intent fingerprint** — weights, filters, follows, applied model
+  — so deliberate changes re-order at once and incidental activity does not. Guarded three ways: the
+  order holds under engagement, yields to a weight change, and survives the reading loop.
+
+- **[BLOCKER OSS] The internal-reference scrub was staged but never committed.** See the correction
+  above. `origin/main` was verified clean, so nothing already public was affected; the 62 unpushed
+  commits were squashed into one clean commit after confirming the tree hash was byte-identical
+  before and after the reset.
+
+### Other findings fixed
+
+- **[HIGH UI/UX] Global shortcuts stayed live behind every modal** — `j`/`k` scrolled the page under a
+  dialog that had already set `body{overflow:hidden}`, `l` unmounted it, and **`s` silently saved a
+  story the reader could not see**, its toast hidden behind the overlay. Shortcuts are now inert while
+  any `[aria-modal]` is open; Escape still closes, and they resume afterwards.
+- **[BLOCKER AI] Summaries put invented opinions in named real users' mouths** — including HN's
+  moderator made to state a position on encryption backdoors, on 4 of 4 runs. This is the one AI
+  defect no caveat covers: the others degrade into a summary a reader can discount, this one ascribes
+  a fabricated position to a real, identifiable person under their handle. The prompt no longer asks
+  for names, and `sanitizeAttributions` enforces it deterministically after generation — a handle may
+  only be credited if it actually authored one of the supplied comments; anything else becomes "a
+  commenter", while a handle merely mentioned in passing is left alone.
+- **[HIGH AI] The "nothing to summarize" gate fired only at ZERO comments**, so a single junk comment
+  still produced an invented discussion (four fabricated quotes from a one-comment thread). Now gated
+  on actual substance.
+- **[HIGH AI] Self-reinforcement at serve time** — leave-one-out had landed on behavioural affinity but
+  not the content profile, so an engaged story scored highly for resembling itself (rank 5→1). Now
+  excluded from its own profile when serving as well as when training.
+- **[HIGH bug] The prompt fence covered comments and article text but not the post body or title** —
+  the one field a submitter fully controls reached the model raw, carrying exactly the three vectors
+  the defang exists to strip.
+
+### Accepted, not fixed — the one residual BLOCKER-severity risk
+
+**Prompt injection still succeeds** against the fence + defang: a hostile comment can still dictate a
+card TL;DR. Measured rather than assumed, and a probe confirmed the defences do reach the request — so
+this is a capability limit of a 1B on-device model, not an implementation gap. What DOES hold: false
+attribution is now prevented, untrusted text is delimited and defanged, a thin thread is never sent,
+output renders as plain text (no script, no data access), the feature is opt-in behind a large
+deliberate download, and every summary carries a visible caveat plus a SECURITY.md section stating
+exactly this. Recorded as an accepted residual risk rather than quietly downgraded.
