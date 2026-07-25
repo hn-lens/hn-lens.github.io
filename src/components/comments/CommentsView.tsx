@@ -319,7 +319,7 @@ export default function CommentsView({ id }: { id: number }) {
           </Link>
         )}
 
-        <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
+        <div className="discussion-header mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
           <span className="inline-flex items-center gap-1 font-medium text-fg">
             <ArrowBigUp className="size-3.5 text-accent" /> {story.score ?? 0}
           </span>

@@ -1281,6 +1281,30 @@ button:not(:disabled) {
 [data-layout='compact'] .story-card {
   position: relative;
 }
+/* The "Why #N?" explainer lives in .sc-reasons, which compact hides and — until now — never
+   revealed, so choosing the terminal or cyberpunk DESIGN silently deleted the flagship rank
+   explainer on desktop: not visible, not tabbable, no hover fallback, while its three siblings in
+   the same row were all reachable. Reveal it in the same overlay. The "why" CHIPS stay hidden (this
+   layout is one line per story and they are prose); only the control comes back. */
+[data-layout='compact'] .story-card:hover .sc-reasons,
+[data-layout='compact'] .story-card:focus-within .sc-reasons {
+  display: flex;
+  position: absolute;
+  right: 0.5rem;
+  bottom: calc(100% + 2px);
+  z-index: 21;
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  margin: 0;
+  padding: 0 0.25rem;
+  border-radius: 0.5rem;
+  background: var(--surface);
+  box-shadow: 0 0 0 1px var(--edge);
+}
+[data-layout='compact'] .story-card:hover .sc-reasons > :not(button),
+[data-layout='compact'] .story-card:focus-within .sc-reasons > :not(button) {
+  display: none;
+}
 [data-layout='compact'] .story-card:hover .sc-actions,
 [data-layout='compact'] .story-card:focus-within .sc-actions {
   display: flex;
@@ -1297,6 +1321,14 @@ button:not(:disabled) {
   /* Opaque, so the controls stay legible where they sit over the title. */
   background: var(--surface);
   box-shadow: 0 0 0 1px var(--edge);
+}
+/* Cover the row cleanly. The overlay is shorter than the row, so a 6px sliver of the meta line
+   stayed visible beneath it in 14 of 20 design x width cells — a half-cut glyph, and a still-
+   clickable author link 3px from a button, which is a mis-tap waiting to happen. Suppress the meta
+   underneath while the actions are up; it is redundant with the row itself and returns on unhover. */
+[data-layout='compact'] .story-card:hover .sc-meta,
+[data-layout='compact'] .story-card:focus-within .sc-meta {
+  visibility: hidden;
 }
 @media (hover: none) {
   [data-layout='compact'] .sc-reasons,
@@ -1822,5 +1854,24 @@ html[data-textsize='lg'] {
   .sc-comments {
     min-height: 2.75rem;
     min-width: 2.75rem;
+  }
+
+  /* The DISCUSSION page was never covered. The rule above is scoped to the feed card's own hooks,
+     so on /item every control stayed finger-hostile: an 18x18 collapse chevron, a 14x14
+     jump-to-parent, and 16px-tall Save / Article / HN links in the header — on the surface a reader
+     spends the most time on, and where the controls are packed closest together. Same 44px bar.
+     Applied via padding rather than min-width so a chevron sitting inline with text does not become
+     a 44px-wide gap in the middle of a sentence. */
+  .thread-root button,
+  .comment-actions button,
+  .comment-actions a,
+  .discussion-header button,
+  .discussion-header a {
+    min-height: 2.75rem;
+    display: inline-flex;
+    align-items: center;
+  }
+  .replies-toggle {
+    min-height: 2.75rem;
   }
 }

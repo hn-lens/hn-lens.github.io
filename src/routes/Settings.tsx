@@ -259,8 +259,15 @@ export default function Settings() {
               // this never claims "Active" while the reranker is toggled off or still dormant.
               if (!prefs.useLearnedRanker) return `Off · trained on ${m.n} examples from your activity (turn on above to apply)`;
               if (rankerTrained(m)) return `Active · personalizing from ${m.n} examples from your activity${when}`;
-              return m.n < MIN_TRAIN_SAMPLES
-                ? `Still learning · ${m.n}/${MIN_TRAIN_SAMPLES} interactions — not applied yet`
+              // Name the clause that actually failed, like the other three gate surfaces. This one
+              // still collapsed everything past the sample count into "read N+ stories", so a
+              // degenerate model was given advice that cannot help — and it contradicted the Retrain
+              // message four lines below, which does name it.
+              const gate = rankerGate(m);
+              if (gate === 'degenerate')
+                return `Still learning · your activity doesn't yet separate what you engage with from what you skip — not applied yet${when}`;
+              return gate === 'too-few-samples'
+                ? `Still learning · ${m.n}/${MIN_TRAIN_SAMPLES} examples — not applied yet`
                 : `Still learning · read ${MIN_TRAIN_POSITIVES}+ stories to activate — not applied yet${when}`;
             })()}
           </span>
@@ -778,7 +785,7 @@ function ModelStatusLine({
   // and waited out its full 10-minute deadline. Target the element, not the words.
   if (status === 'idle')
     return (
-      <span data-model-status="idle" className="text-xs text-subtle">
+      <span data-model-status="idle" className="text-xs text-muted">
         Not loaded
       </span>
     );

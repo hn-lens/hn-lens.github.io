@@ -74,11 +74,11 @@ export default function ThreadGist({ tree }: { tree: AlgoliaItem }) {
         className="flex w-full items-center gap-2 text-sm font-medium"
       >
         <ListTree className="size-4 text-accent" /> Quick gist — {picks.length} most-discussed comments
-        <span className="rounded bg-surface px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-subtle">no AI</span>
+        <span className="rounded bg-surface px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted">no AI</span>
         {open ? (
-          <ChevronDown className="ml-auto size-4 text-subtle" />
+          <ChevronDown className="ml-auto size-4 text-muted" />
         ) : (
-          <ChevronRight className="ml-auto size-4 text-subtle" />
+          <ChevronRight className="ml-auto size-4 text-muted" />
         )}
       </button>
       {open && (
@@ -95,7 +95,7 @@ export default function ThreadGist({ tree }: { tree: AlgoliaItem }) {
                   <CornerDownRight className="size-3 text-accent" /> {p.author}
                 </span>
                 {p.replies > 0 && (
-                  <span className="text-subtle">
+                  <span className="text-muted">
                     {' '}
                     · {p.replies} {p.replies === 1 ? 'reply' : 'replies'}
                   </span>

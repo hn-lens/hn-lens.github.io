@@ -108,7 +108,7 @@ function CommentImpl({
         data-depth={0}
         className="rounded-lg border border-border bg-surface p-3 text-sm"
       >
-        <div className="flex items-center gap-2 pb-1 text-xs">
+        <div className="comment-actions flex items-center gap-2 pb-1 text-xs">
           <AuthorLink author={node.author} isOp={isOp} />
           {isOp && (
             <span className="rounded bg-accent/15 px-1 py-px text-[10px] font-semibold uppercase text-fg">
@@ -154,7 +154,7 @@ function CommentImpl({
         depth > 0 && isNew && 'border-l-accent'
       )}
     >
-      <div className="flex items-center gap-2 py-1 text-xs">
+      <div className="comment-actions flex items-center gap-2 py-1 text-xs">
         <button
           type="button"
           onClick={() => setCollapsed((c) => !c)}

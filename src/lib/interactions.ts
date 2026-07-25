@@ -228,6 +228,7 @@ export async function computeAffinities(): Promise<Affinities> {
   const perItem: Affinities['perItem'] = {};
   const domainItems = new Map<string, Set<number>>(); // distinct positively-engaged items
   const authorItems = new Map<string, Set<number>>();
+  const undone = new Set<number>(); // items whose only positive signal was later withdrawn
   const noteItem = (map: Map<string, Set<number>>, key: string, id?: number) => {
     if (!id) return;
     let s = map.get(key);
@@ -264,7 +265,14 @@ export async function computeAffinities(): Promise<Affinities> {
     if (!w) continue;
     // `unhide` cancels a prior hide in the affinity SUM, but it is an UNDO, not positive engagement,
     // so it must NOT count toward the distinct-engaged-items tally (which gates the "often" reason).
+    //
+    // `unsave` is the same shape and was missed: its NEGATIVE weight correctly cancels the save in
+    // the affinity sum, but the save had already marked the item as a distinct engaged item and
+    // nothing took that back. So saving and immediately un-saving left a permanent +1 on the habit
+    // count, and at identical affinity the card then claimed "You often read <site>" on the strength
+    // of an interaction the reader had explicitly withdrawn. Undone engagement is not engagement.
     const counts = w > 0 && e.type !== 'unhide';
+    if (e.type === 'unsave' && e.itemId) undone.add(e.itemId);
     const rec = e.itemId ? (perItem[e.itemId] ??= { dw: 0, aw: 0, counted: false }) : undefined;
     if (e.domain && !mutedD.has(e.domain)) {
       domains[e.domain] = (domains[e.domain] ?? 0) + w;
@@ -283,6 +291,16 @@ export async function computeAffinities(): Promise<Affinities> {
       if (counts) noteItem(authorItems, e.author, e.itemId);
     }
     if (rec && counts) rec.counted = true;
+  }
+  // Drop items whose engagement was withdrawn AND that have no surviving positive weight. Checking
+  // the residual weight matters: a story you saved, READ, then un-saved is still genuinely engaged,
+  // so only the ones left with nothing are removed from the habit tally.
+  for (const id of undone) {
+    const rec = perItem[id];
+    if (rec && rec.dw <= 0 && rec.aw <= 0) {
+      for (const set of domainItems.values()) set.delete(id);
+      for (const set of authorItems.values()) set.delete(id);
+    }
   }
   const domainCounts: Record<string, number> = {};
   for (const [d, s] of domainItems) domainCounts[d] = s.size;

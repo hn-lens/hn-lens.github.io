@@ -159,7 +159,9 @@ export default function Sidebar({ feed, searching }: { feed: FeedKind; searching
             >
               <span className={cn('size-2 rounded-full', statusColor(embeddings.status))} />
               <span className="text-muted">Embeddings</span>
-              <span className="ml-auto text-subtle">
+              {/* The STATUS VALUE, drawn fainter than its own label and failing AA on the hover
+                  surface — it is the informative half of the row, so it takes `muted` like the label. */}
+              <span className="ml-auto text-muted">
                 {embeddingsEnabled ? embeddings.status : 'off →'}
               </span>
             </Link>
@@ -169,7 +171,9 @@ export default function Sidebar({ feed, searching }: { feed: FeedKind; searching
             >
               <span className={cn('size-2 rounded-full', cloud ? 'bg-up' : statusColor(llm.status))} />
               <span className="text-muted">LLM</span>
-              <span className="ml-auto text-subtle">
+              {/* The STATUS VALUE, drawn fainter than its own label and failing AA on the hover
+                  surface — it is the informative half of the row, so it takes `muted` like the label. */}
+              <span className="ml-auto text-muted">
                 {cloud ? `via ${PROVIDER_LABEL[llmProvider] ?? 'cloud'}` : llmEnabled ? llm.status : 'off →'}
               </span>
             </Link>

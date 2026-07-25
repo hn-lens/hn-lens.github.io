@@ -113,7 +113,12 @@ await page.route(/hacker-news\.firebaseio\.com|hn\.algolia\.com|google\.com\/s2/
     // surface, so the fixture has to actually populate it or the pass grades page chrome.
     return json({
       ...story(id),
-      children: Array.from({ length: 8 }, (_, k) => comment(id * 10 + 3 + k, k % 3)),
+      // 10 top-level, each with one reply = 20 comments. The previous 8 yielded exactly 14, one
+      // short of the >=15 threshold that makes the heuristic thread digest appear — so the digest was
+      // structurally unreachable by this guard and a contrast defect inside it went unseen for
+      // rounds. A fixture that lands one item below a feature's activation threshold silently
+      // removes that feature from the audit.
+      children: Array.from({ length: 10 }, (_, k) => comment(id * 10 + 3 + k, k % 3)),
     });
   }
   if (/algolia/.test(u)) return json({ hits: STORY_IDS.slice(0, 5).map((id) => ({ objectID: String(id), ...story(id) })) });
@@ -206,6 +211,16 @@ const gradedPerRoute = {};
 for (const [routeName, hash] of ROUTES) {
   await page.evaluate((h) => { window.location.hash = h; }, hash);
   await page.waitForTimeout(700);
+  // Expand collapsed disclosures so their text is actually graded. The thread digest is collapsed by
+  // default, which is the second reason its contrast defect was invisible here: unreachable fixture
+  // AND unopened panel.
+  await page
+    .evaluate(() => {
+      for (const d of document.querySelectorAll('details')) d.open = true;
+      for (const b of document.querySelectorAll('button[aria-expanded="false"]')) b.click();
+    })
+    .catch(() => {});
+  await page.waitForTimeout(500);
   for (const d of designs) {
   for (const mode of ['light', 'dark']) {
     const res = await page.evaluate(

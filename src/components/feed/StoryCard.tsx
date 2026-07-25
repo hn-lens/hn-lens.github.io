@@ -205,25 +205,40 @@ function StoryCard({
   useLayoutEffect(() => {
     const el = menuContentRef.current;
     if (!menuOpen || !el) return;
-    el.style.transform = 'none';
-    const r = el.getBoundingClientRect();
-    const pad = 6;
-    let dx = 0;
-    if (r.left < pad) dx = pad - r.left;
-    else if (r.right > window.innerWidth - pad) dx = window.innerWidth - pad - r.right;
-    // Vertical is the exact same problem and was never handled: the menu is absolutely positioned
-    // BELOW its trigger, so opening one on a card near the bottom of the viewport left only 22px of
-    // a 186px menu on screen (12% on phones, 25% at 1280x800) — in all 39 layout x viewport cells.
-    // Flip it above the trigger when it would overflow the bottom and there is more room above,
-    // otherwise just nudge it up; the card is already raised to z-30 while open, so the upward case
-    // paints over the preceding card the same way the downward case paints over the next one.
-    let dy = 0;
-    const overflowBottom = r.bottom - (window.innerHeight - pad);
-    if (overflowBottom > 0) {
-      // Lift by however much hangs below the fold, but never past the top edge.
-      dy = -Math.min(overflowBottom, Math.max(0, r.top - pad));
-    }
-    if (dx || dy) el.style.transform = `translate(${dx}px, ${dy}px)`;
+    // Re-clamp on any VIEWPORT CHANGE too, not only when the menu opens.
+    //
+    // The clamp ran once on open, so rotating a phone (or any resize) while the menu was up left it
+    // stranded: 0-40% of it on screen in 6 of 6 layouts, with no way to see what was being chosen.
+    // The geometry it was clamped against no longer exists after a resize, so the answer has to be
+    // recomputed rather than kept.
+    const clamp = () => {
+        el.style.transform = 'none';
+      const r = el.getBoundingClientRect();
+      const pad = 6;
+      let dx = 0;
+      if (r.left < pad) dx = pad - r.left;
+      else if (r.right > window.innerWidth - pad) dx = window.innerWidth - pad - r.right;
+      // Vertical is the exact same problem and was never handled: the menu is absolutely positioned
+      // BELOW its trigger, so opening one on a card near the bottom of the viewport left only 22px of
+      // a 186px menu on screen (12% on phones, 25% at 1280x800) — in all 39 layout x viewport cells.
+      // Flip it above the trigger when it would overflow the bottom and there is more room above,
+      // otherwise just nudge it up; the card is already raised to z-30 while open, so the upward case
+      // paints over the preceding card the same way the downward case paints over the next one.
+      let dy = 0;
+      const overflowBottom = r.bottom - (window.innerHeight - pad);
+      if (overflowBottom > 0) {
+        // Lift by however much hangs below the fold, but never past the top edge.
+        dy = -Math.min(overflowBottom, Math.max(0, r.top - pad));
+      }
+      if (dx || dy) el.style.transform = `translate(${dx}px, ${dy}px)`;
+    };
+    clamp();
+    window.addEventListener('resize', clamp);
+    window.addEventListener('orientationchange', clamp);
+    return () => {
+      window.removeEventListener('resize', clamp);
+      window.removeEventListener('orientationchange', clamp);
+    };
   }, [menuOpen]);
 
   // The extracted-article overlay is a modal — close on Escape like every other dialog.

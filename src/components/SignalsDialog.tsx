@@ -114,6 +114,9 @@ export default function SignalsDialog({ onClose }: { onClose: () => void }) {
                   48px of a needed 197px remained, so the item, domain, @author and dwell that are
                   the dialog's entire reason to exist were truncated away on every phone. */}
               <span className="w-20 min-w-0 shrink truncate font-medium text-fg sm:w-28 sm:shrink-0">{labelFor(e.type)}</span>
+              {/* `muted`, not `subtle`: the domain / @author / dwell / timestamp ARE the content of
+                  this dialog — the reason it exists — so they are informative text, and on the
+                  raised hover surface the decorative token measured 3.80:1 against a 4.5 bar. */}
               <span className="min-w-0 flex-1 truncate text-muted">
                 {e.itemId ? (
                   <Link to={`/item/${e.itemId}`} onClick={onClose} className="text-accent hover:underline">
@@ -122,14 +125,14 @@ export default function SignalsDialog({ onClose }: { onClose: () => void }) {
                 ) : (
                   <span className="text-subtle">—</span>
                 )}
-                {e.domain && <span className="ml-1.5 text-subtle">{e.domain}</span>}
-                {e.author && <span className="ml-1.5 text-subtle">@{e.author}</span>}
+                {e.domain && <span className="ml-1.5 text-muted">{e.domain}</span>}
+                {e.author && <span className="ml-1.5 text-muted">@{e.author}</span>}
                 {e.type === 'dwell' && typeof e.value === 'number' && (
-                  <span className="ml-1.5 text-subtle">{Math.round(e.value / 1000)}s</span>
+                  <span className="ml-1.5 text-muted">{Math.round(e.value / 1000)}s</span>
                 )}
                 {e.meta?.source === 'hn_import' ? <span className="ml-1.5 text-subtle">(imported)</span> : null}
               </span>
-              <span className="shrink-0 text-subtle">{timeAgo(Math.floor(e.ts / 1000))}</span>
+              <span className="shrink-0 text-muted">{timeAgo(Math.floor(e.ts / 1000))}</span>
             </div>
           ))}
           {events !== null && total > events.length && (

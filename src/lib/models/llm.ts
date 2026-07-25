@@ -115,7 +115,16 @@ export function neutralizeInjection(body: string): string {
       // Direct imperatives aimed at the model.
       .replace(/\b(ignore|disregard|forget)\s+(all\s+|any\s+)?(previous|prior|above|earlier)\s+(instructions?|prompts?|rules?)/gi,
         '[instruction-like text removed]')
-      .replace(/\byou\s+(must|should|will|are\s+required\s+to)\b/gi, 'the text claims one')
+      // NOTE: no generic "you must/should" rewrite here.
+      //
+      // There was one, and it was a bad trade: "you should" is overwhelmingly ordinary technical
+      // advice ("you should pin the version"), so it fired on 1.69% of real comments — roughly a
+      // quarter of all summaries — and the MANGLED text was then quoted back to the reader as if the
+      // commenter had written it. Corrupting a quarter of summaries to slightly inconvenience an
+      // attacker who has many other phrasings available is a net loss. The narrowly-targeted rules
+      // above (output-format markers, role labels, fence terminators, explicit
+      // "ignore previous instructions") match text that has no innocent reading, which is the bar a
+      // rewrite has to clear.
       .replace(/\b(new|updated|revised)\s+instructions?\s*:/gi, 'text claiming new instructions -')
   );
 }
@@ -591,6 +600,16 @@ export async function summarizeItem(
     } catch {
       articleText = '';
     }
+    // Does the extraction plausibly belong to THIS story? A reader proxy can return a cookie wall,
+    // a paywall interstitial, a navigation shell, or an entirely unrelated page, and the model
+    // faithfully summarises whatever it is handed: one 251-word extraction produced a German TL;DR
+    // about printer ink on an English story about buttons — while the UI advertised
+    // "article text (~251 words)" as the basis. Better to summarise from comments alone than from
+    // confidently-labelled garbage.
+    if (articleText && !articleLooksRelevant(item.title ?? '', articleText)) {
+      articleText = '';
+      articleProxy = '';
+    }
   }
   const sources: SummarySources = {
     articleWords: wordCount(articleText),
@@ -713,6 +732,28 @@ export function sanitizeAttributions(text: string, authors: string[]): string {
         allowed.has(String(name).toLowerCase()) ? m : `A commenter ${verb}`
       )
   );
+}
+
+/**
+ * Cheap relevance check on extracted article text: does it share meaningful words with the title?
+ *
+ * Deliberately weak — it only has to reject text that is obviously about something else, not judge
+ * quality. A real article about the story shares proper nouns and topic words with its own headline;
+ * a cookie wall, a login page or an unrelated article typically shares nothing but stopwords.
+ */
+export function articleLooksRelevant(title: string, article: string): boolean {
+  const STOP = new Set(
+    'the a an and or but of to in on for with from by is are was were be been it its this that as at how why what when new show ask hn using use used your you our we they i'.split(' ')
+  );
+  const words = (t: string) =>
+    (t.toLowerCase().match(/[a-z][a-z0-9'-]{2,}/g) ?? []).filter((w) => !STOP.has(w));
+  const titleWords = [...new Set(words(title))];
+  // Nothing distinctive in the title (very short or all stopwords) ⇒ nothing to check against, so
+  // do not reject: a false negative here silently discards a perfectly good article.
+  if (titleWords.length < 3) return true;
+  const body = new Set(words(article).slice(0, 4000));
+  const hits = titleWords.filter((w) => body.has(w)).length;
+  return hits / titleWords.length >= 0.25;
 }
 
 export function looksTruncated(text: string): boolean {

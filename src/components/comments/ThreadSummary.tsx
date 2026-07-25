@@ -134,8 +134,11 @@ export default function ThreadSummary({ story, tree }: { story: HnItem; tree: Al
         <div className="mt-2 border-t border-accent/20 pt-2 text-xs text-muted">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <span>
+              {/* `sourceLine` already ends with the provenance (backend + proxy) via
+                  describeProvenance. This hand-rolled suffix was left behind when the card path was
+                  refactored to the shared describer, so the line read "… · article via AllOrigins ·
+                  via AllOrigins". */}
               Based on <span className="font-medium text-fg">{sourceLine}</span>
-              {sources.articleProxy && <span className="ml-1 text-muted">· via {sources.articleProxy}</span>}
               {cached && <span className="ml-1 text-muted">· cached</span>}
             </span>
             {articleText && (
@@ -174,7 +177,9 @@ export default function ThreadSummary({ story, tree }: { story: HnItem; tree: Al
                   {sources.articleProxy && <> · fetched via {sources.articleProxy}</>}
                 </p>
               )}
-              <p className="max-h-48 overflow-auto whitespace-pre-wrap rounded-lg bg-surface-2 p-2 text-[11px] leading-relaxed text-muted">
+              {/* rem, like the other two renderings of this same extracted text — it is reading
+                  content, so the reading-size setting must scale it. 0.6875rem === 11px by default. */}
+              <p className="max-h-48 overflow-auto whitespace-pre-wrap rounded-lg bg-surface-2 p-2 text-[0.6875rem] leading-relaxed text-muted">
                 {articleText}
               </p>
             </div>

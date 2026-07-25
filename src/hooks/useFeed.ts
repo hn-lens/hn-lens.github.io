@@ -110,7 +110,14 @@ export function useFeed(kind: FeedKind) {
       // via a firebase N+1 (ids-only API), so the pool size dominates time-to-first-card on
       // the default landing feed. 90 keeps ample headroom for the diversity caps (domain 3 /
       // author 2) + Load-more while cutting ~40% of the cold-start item fetches.
-      getItems(await getForYouCandidateIds(90, forceRef.current ? 0 : undefined), 12, forceRef.current ? 0 : undefined),
+      // Concurrency 32, not 12. These are ~1KB JSON reads against a CDN-backed endpoint, so the
+      // pool spends nearly all its time waiting on round trips rather than on bandwidth or CPU; at
+      // 12 the 90 candidates serialise into 8 waves and cost about a second of time-to-first-card
+      // on a mobile-latency link. Browsers cap same-host HTTP/1.1 connections at 6 and multiplex
+      // freely over HTTP/2, so the ceiling here is the protocol's, not ours — a higher number simply
+      // stops us adding a queue on top of it. Every fetch is individually deadline-bounded, so a
+      // wider pool cannot turn one slow response into a longer stall.
+      getItems(await getForYouCandidateIds(90, forceRef.current ? 0 : undefined), 32, forceRef.current ? 0 : undefined),
     staleTime: 120000,
   });
   const pool = useMemo(() => poolQ.data ?? [], [poolQ.data]);
@@ -385,7 +392,17 @@ export function useFeed(kind: FeedKind) {
     return ranked.filter((r) => !hidden.has(r.item.id) && readSnapshot.has(r.item.id)).length;
   }, [isForYou, prefs.hideReadInFeed, ranked, hidden, readSnapshot]);
 
-  const total = isForYou ? ranked.length : ids.length;
+  // Count only what CAN be shown. `ranked.length` includes candidates that the hidden set and the
+  // read-hide snapshot filter out a few lines below, so "of 60" appeared beside 20 cards, and once
+  // every remaining candidate was filtered "Load more" was still offered and did nothing when
+  // pressed. Apply the same predicate the card list uses, so the count and the button describe the
+  // list the reader is actually looking at.
+  const forYouShowable = useMemo(() => {
+    if (!isForYou) return 0;
+    const hideRead = prefs.hideReadInFeed;
+    return ranked.filter((r) => !hidden.has(r.item.id) && !(hideRead && readSnapshot.has(r.item.id))).length;
+  }, [isForYou, ranked, hidden, prefs.hideReadInFeed, readSnapshot]);
+  const total = isForYou ? forYouShowable : ids.length;
   const hasMore = visible < total;
   const isFetchingMore = !isForYou && itemsQ.isFetching && cards.length > 0;
   const loadMore = useCallback(() => setVisible((v) => (v >= total ? v : v + PAGE)), [total]);
