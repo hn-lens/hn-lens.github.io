@@ -82,8 +82,10 @@ const SELF = new Set(['scripts/leakcheck.mjs']);
 // hash matched the pattern and would have been reported as an internal reference forever. Skip lines
 // that are unmistakably a digest rather than prose.
 const DIGEST_LINE = /"integrity"\s*:|\b(sha256|sha512)-[A-Za-z0-9+/=]{20,}/;
-// Word boundaries: without them `fig` matched inside "config" and produced 26 pure false
-// positives, which is how a guard gets muted instead of fixed.
+// Word boundaries: without them a short pattern entry matched inside a longer ordinary word and
+// produced 26 pure false positives, which is how a guard gets muted instead of fixed. (The entry is
+// not named here: this file is published, and the pattern list is private precisely because its
+// contents identify the employer.)
 const re = new RegExp(`\\b(${pattern})\\b`, 'i');
 
 const hits = [];

@@ -8,9 +8,34 @@ DOMPurify.addHook('afterSanitizeAttributes', (node) => {
   }
 });
 
+// Sanitising is PURE — the same input always yields the same output — but it parses the string with
+// DOMParser every time, and comments re-render far more often than their text changes. Changing the
+// comment sort on a large thread re-ran it once per rendered comment: 1,637 parses, a 300-381ms long
+// task on a desktop and 1,200-1,461ms on a mid-range phone, to produce byte-identical HTML. The sort
+// itself is 2.4ms; essentially all of the cost was re-sanitising unchanged text.
+//
+// A bounded LRU keyed on the raw string removes it. Bounded because a long thread can hold thousands
+// of distinct bodies and this must not become an unbounded leak; insertion order gives cheap LRU
+// eviction without a second structure.
+const SANITIZE_CACHE = new Map<string, string>();
+const SANITIZE_CACHE_MAX = 4000;
+
 export function sanitize(html?: string | null): string {
   if (!html) return '';
-  return DOMPurify.sanitize(html, { ADD_ATTR: ['target'] });
+  const hit = SANITIZE_CACHE.get(html);
+  if (hit !== undefined) {
+    // Refresh recency so hot comments survive eviction on a very long thread.
+    SANITIZE_CACHE.delete(html);
+    SANITIZE_CACHE.set(html, hit);
+    return hit;
+  }
+  const clean = DOMPurify.sanitize(html, { ADD_ATTR: ['target'] });
+  if (SANITIZE_CACHE.size >= SANITIZE_CACHE_MAX) {
+    const oldest = SANITIZE_CACHE.keys().next().value;
+    if (oldest !== undefined) SANITIZE_CACHE.delete(oldest);
+  }
+  SANITIZE_CACHE.set(html, clean);
+  return clean;
 }
 
 /**
@@ -87,7 +112,9 @@ export function isLinkDump(text: string): boolean {
 export function stripHtml(html?: string | null): string {
   if (!html) return '';
   const el = document.createElement('div');
-  el.innerHTML = DOMPurify.sanitize(html);
+  // Through the CACHED sanitize, not DOMPurify directly — these two call sites bypassed the
+  // memo entirely, which is why caching `sanitize` alone did not remove the re-parse cost.
+  el.innerHTML = sanitize(html);
   // Insert a separator on BOTH sides of every block/line boundary before flattening, so no two
   // text runs mash. `textContent` alone turns `<p>a</p><p>b</p>` into "ab"; and because real HN
   // comments START with a bare text node (the first paragraph is NOT wrapped in `<p>`), APPENDING
@@ -121,7 +148,9 @@ export function stripHtml(html?: string | null): string {
 export function htmlToText(html?: string | null): string {
   if (!html) return '';
   const el = document.createElement('div');
-  el.innerHTML = DOMPurify.sanitize(html);
+  // Through the CACHED sanitize, not DOMPurify directly — these two call sites bypassed the
+  // memo entirely, which is why caching `sanitize` alone did not remove the re-parse cost.
+  el.innerHTML = sanitize(html);
   el.querySelectorAll('script,style,nav,footer,header,aside,form,noscript').forEach((n) => n.remove());
   // Both-sides break insertion (see stripHtml) so a leading bare paragraph is split from the first
   // block too — HN "quote-then-respond" comments are a bare `&gt; quote` before the first `<p>`, and

@@ -34,7 +34,11 @@ await page.goto(BASE, { waitUntil: 'domcontentloaded' });
 await page.waitForFunction(() => window.__hnlens && window.__hnlens.prefs, null, { timeout: 20000 });
 await page.evaluate(async () => {
   await (await window.__hnlens.interactions()).clearAllData();
-  window.__hnlens.prefs.getState().set({ defaultFeed: 'top', minPoints: 0, useLearnedRanker: false, embeddingsEnabled: false });
+  // useLearnedRanker stays at its DEFAULT (true). Turning it off here made the stability checks
+  // below structurally unable to see the worst instance of the very defect they exist to catch: a
+  // background retrain re-sorting the feed with no user action. A guard that disables the subsystem
+  // under test is measuring a configuration no real user has.
+  window.__hnlens.prefs.getState().set({ defaultFeed: 'top', minPoints: 0, embeddingsEnabled: false });
 });
 
 const feedIds = () =>
@@ -421,6 +425,39 @@ check('the engaged story does not count ITSELF toward the "often" habit count',
     `before=${settled.slice(0, 5).join(',')} after=${returned.slice(0, 5).join(',')}`
   );
 }
+
+// --- a BACKGROUND retrain must not re-sort the feed ---
+// Auto-training runs on its own schedule after engagement. With the model's updatedAt folded into
+// the pin's identity, that counted as a deliberate change and the list re-sorted ~15s after the
+// reader touched anything — no user action at all, which is exactly what the pin exists to prevent.
+// Runs at the DEFAULT useLearnedRanker so the retrain actually happens.
+{
+  await page.goto(`${BASE}#/?feed=foryou`, { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('article[data-id]', { timeout: 25000 });
+  await page.waitForTimeout(900);
+  const order = () => page.evaluate(() => [...document.querySelectorAll('article[data-id]')].map((a) => a.getAttribute('data-id')));
+  const t0 = await order();
+  // Engage enough to trigger a retrain, then wait past the auto-train debounce + rate limit.
+  await page.evaluate(async () => {
+    const inter = await window.__hnlens.interactions();
+    for (let k = 0; k < 10; k++) {
+      inter.track({ type: 'open_link', itemId: 95000 + k, domain: `d${k % 3}.com`, author: `a${k % 3}` });
+      inter.track({ type: 'dwell', itemId: 95000 + k, domain: `d${k % 3}.com`, author: `a${k % 3}`, value: 30000 });
+    }
+  });
+  await page.waitForTimeout(25000); // past the debounce and the ~45s-limited retrain's first window
+  const t1 = await order();
+  check(
+    'a background retrain does not re-sort the feed under the reader',
+    JSON.stringify(t0) === JSON.stringify(t1.slice(0, t0.length)),
+    `before=${t0.slice(0, 5).join(',')} after=${t1.slice(0, 5).join(',')}`
+  );
+}
+
+// NOTE: there is deliberately no scroll-offset assertion here. That feature was implemented and
+// then REMOVED (see the note in Feed.tsx) because it could not be made reliable across every
+// navigation path; paging DEPTH restoration, which is what actually prevents losing your place, is
+// covered by the pin checks above. A guard for a feature that does not exist is worse than none.
 
 await b.close();
 console.log(`\n${fails.length === 0 ? 'RESULT: FEED STABILITY PASS \u2713' : `RESULT: ${fails.length} FAILED`}`);

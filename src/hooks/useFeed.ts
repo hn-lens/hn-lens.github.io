@@ -280,7 +280,12 @@ export function useFeed(kind: FeedKind) {
         prefs.followedDomains,
         prefs.followedUsers,
         prefs.useLearnedRanker,
-        activeModel?.updatedAt ?? 0,
+        // NOT the model's updatedAt. Including it made a BACKGROUND retrain count as a deliberate
+        // change of intent, so the feed re-sorted itself ~15s after the reader engaged with
+        // anything — with no user action at all, which is precisely the defect the pin exists to
+        // prevent, and it shipped disabled-by-its-own-fix. The retrained model still takes effect;
+        // it just does so at the next boundary the reader causes (refresh, tab switch, reload),
+        // exactly like every other input here.
       ]),
     [
       prefs.weights,
@@ -292,7 +297,6 @@ export function useFeed(kind: FeedKind) {
       prefs.followedDomains,
       prefs.followedUsers,
       prefs.useLearnedRanker,
-      activeModel,
     ]
   );
 

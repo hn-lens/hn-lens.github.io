@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Inbox, MessageSquare, RotateCw } from 'lucide-react';
 import { useFeed } from '../../hooks/useFeed';
@@ -11,7 +11,6 @@ import { Spinner } from '../ui/primitives';
 import { SwitchVisual } from '../ui/controls';
 import { usePrefs } from '../../lib/prefs';
 import { effectiveLayout } from '../../lib/themes';
-import { getFeedScroll, setFeedScroll } from '../../lib/feedSession';
 import type { FeedKind } from '../../types';
 
 export default function Feed({ kind, showRank }: { kind: FeedKind; showRank?: boolean }) {
@@ -33,58 +32,16 @@ export default function Feed({ kind, showRank }: { kind: FeedKind; showRank?: bo
   const topCommentsUnavailable = effectiveLayout(themeName, layoutPref) === 'compact';
   const sentinel = useRef<HTMLDivElement | null>(null);
 
-  // Restore the reader's scroll position for this feed (see lib/feedSession).
+  // NOTE: paging DEPTH is restored per feed (see lib/feedSession + useFeed); scroll OFFSET is not.
   //
-  // The paging half of that module was wired; this half never was, so depth restored (50 cards came
-  // back) while scrollY snapped to 0 — leaving the reader at the top of a long list they had already
-  // walked, which is arguably worse than a short one. It looked fixed if you only tested browser
-  // Back, because the browser restores scroll natively there; the in-app path had nothing.
-  //
-  // Restore in a LAYOUT effect and only once the page is actually tall enough: the restored cards
-  // render after this component mounts, and scrolling to 3860 on a page that is still 800px tall
-  // silently clamps to the bottom. Retry across a few frames, then give up rather than fight the
-  // user if they have already started scrolling themselves.
-  const restoredFor = useRef<string | null>(null);
-  useLayoutEffect(() => {
-    const want = getFeedScroll(kind);
-    if (restoredFor.current === kind) return;
-    restoredFor.current = kind;
-    if (want <= 0) return;
-    let frames = 0;
-    let cancelled = false;
-    const tryRestore = () => {
-      if (cancelled) return;
-      if (document.documentElement.scrollHeight - window.innerHeight >= want) {
-        window.scrollTo(0, want);
-        return;
-      }
-      if (frames++ < 40) requestAnimationFrame(tryRestore);
-    };
-    requestAnimationFrame(tryRestore);
-    return () => {
-      cancelled = true;
-    };
-  }, [kind]);
-
-  // Record it continuously, throttled through rAF so a scroll never does layout work per event.
-  useEffect(() => {
-    let queued = false;
-    const onScroll = () => {
-      if (queued) return;
-      queued = true;
-      requestAnimationFrame(() => {
-        queued = false;
-        setFeedScroll(kind, window.scrollY);
-      });
-    };
-    window.addEventListener('scroll', onScroll, { passive: true });
-    return () => {
-      window.removeEventListener('scroll', onScroll);
-      // Capture the final position on unmount too — navigating into a discussion does not
-      // necessarily fire a scroll event first.
-      setFeedScroll(kind, window.scrollY);
-    };
-  }, [kind]);
+  // A scroll-offset restore was implemented and removed. Coming back from a discussion, the recorder
+  // was overwritten by genuine scroll events that fire while the list unmounts and the document
+  // collapses — a real 1245 became 37, which the restore then faithfully applied. Four attempts
+  // (ignore zero, high-water mark, manual scrollRestoration, ignore-while-shrinking) each fixed one
+  // path and left another, and the remaining value is small: the browser restores scroll natively on
+  // Back, and depth restoration already prevents the much worse "your 90 loaded cards are gone".
+  // Shipping a half-working restore that lands you at an arbitrary offset is worse than not claiming
+  // one at all, so the code and the claim were both removed rather than left aspirational.
 
   // Re-render every 30s so the "updated Xm ago" label stays current.
   const [, setTick] = useState(0);

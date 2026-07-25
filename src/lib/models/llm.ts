@@ -472,7 +472,18 @@ export async function askThread(
     onToken?: (full: string) => void;
   }
 ): Promise<string> {
-  return generate(model, buildAskMessages(opts), { onToken: opts.onToken, maxTokens: 600, temperature: 0.3 });
+  const out = await generate(model, buildAskMessages(opts), { onToken: opts.onToken, maxTokens: 600, temperature: 0.3 });
+  // Same attribution hardening as the thread summary. It was applied only in `summarizeItem`, so on
+  // the SAME thread the summary rewrote a fabricated "dang says…" while this answer published it
+  // verbatim — and this prompt explicitly asks the model to name commenters, so it is the more
+  // exposed of the two. When one output path is hardened, every sibling that reaches the same model
+  // with the same data has to be as well.
+  return sanitizeAttributions(out, authorsFromComments(opts.comments));
+}
+
+/** Handles that actually authored the supplied comments — the allow-list for attribution. */
+export function authorsFromComments(comments: string[]): string[] {
+  return comments.map((c) => /^-?\s*([\w.-]+):/.exec(c)?.[1] ?? '').filter(Boolean);
 }
 
 export async function tldr(
@@ -667,7 +678,7 @@ export async function summarizeItem(
   });
 
   // Enforce honest attribution before anything is shown or cached (see sanitizeAttributions).
-  const safeText = sanitizeAttributions(text, comments.map((c) => (/^-?\s*([\w.-]+):/.exec(c)?.[1] ?? '')).filter(Boolean));
+  const safeText = sanitizeAttributions(text, authorsFromComments(comments));
   const result: CachedSummary = { text: safeText, sources, articleText, request };
   // Never cache output that was cut off. Previously anything not starting with "Could not" was
   // written to IndexedDB, so a mid-word truncation was preserved and re-served on every later view —
@@ -718,6 +729,13 @@ const PROVIDER_LABEL: Record<string, string> = {
  * "handle:" bullet, or "handle says/argues/notes/points out/thinks/claims/warns"), so a handle merely
  * mentioned in passing is left alone.
  */
+const COMMON_SUBJECTS = new Set(
+  ('commenter commenters comment comments someone one many some others other people reader readers ' +
+    'author authors poster op user users everyone nobody discussion thread article post story it he ' +
+    'she they we you i this that which who what everybody anyone several few most all both')
+    .split(' ')
+);
+
 export function sanitizeAttributions(text: string, authors: string[]): string {
   const allowed = new Set(authors.map((a) => a.toLowerCase()));
   const VERBS = 'says|said|argues|argued|notes|noted|points out|pointed out|thinks|claims|claimed|warns|warned|explains|explained|adds|added|mentions|mentioned|believes|suggests|asks|writes|wrote';
@@ -728,9 +746,32 @@ export function sanitizeAttributions(text: string, authors: string[]): string {
         allowed.has(String(name).toLowerCase()) ? m : `${br}${bullet}A commenter${tail}`
       )
       // "handle says ..." anywhere in a sentence.
-      .replace(new RegExp(`\\b([A-Za-z][\\w.-]{1,24})\\s+(${VERBS})\\b`, 'g'), (m, name, verb) =>
-        allowed.has(String(name).toLowerCase()) ? m : `A commenter ${verb}`
-      )
+      //
+      // This must only fire on something that could plausibly BE a handle. The first version matched
+      // any word before a reporting verb, so it rewrote ordinary prose — including the very word the
+      // prompt tells the model to use — producing "A A commenter mentions" and "The A commenter
+      // notes". Measured on real output: 10 of 12 summaries corrupted, 24 rewrites, precision 0.00.
+      // Not one was a genuine misattribution. Corrupting every summary to catch nothing is strictly
+      // worse than the defect it was aimed at.
+      //
+      // So require handle SHAPE and exclude ordinary vocabulary: HN handles are lowercase-ish, often
+      // contain digits or punctuation, and are never sentence-initial capitalised English words. The
+      // bullet rule above ("- handle: ...") stays broad because that position genuinely is an
+      // attribution slot.
+      .replace(new RegExp(`(^|[^\\w.-])([A-Za-z][\\w.-]{2,24})\\s+(${VERBS})\\b`, 'g'), (m, pre, name, verb) => {
+        const n = String(name);
+        const low = n.toLowerCase();
+        if (allowed.has(low)) return m;
+        // Ordinary words that appear before reporting verbs in normal prose.
+        if (COMMON_SUBJECTS.has(low)) return m;
+        // A capitalised word that is not a known handle is far more likely to be a sentence subject
+        // than a handle; leave it rather than mangle the sentence.
+        if (/^[A-Z]/.test(n)) return m;
+        // Capitalise only where a sentence actually starts, so the replacement reads naturally in
+        // both positions rather than dropping "A commenter" into the middle of a clause.
+        const atSentenceStart = pre === '' || /[.!?]\s$|^\n|\n\s*$/.test(pre) || /^[\n\r]/.test(pre);
+        return `${pre}${atSentenceStart ? 'A' : 'a'} commenter ${verb}`;
+      })
   );
 }
 
@@ -838,6 +879,8 @@ export async function summarizeUser(
   }
   const request = buildUserSummaryMessages(opts);
   const text = await generate(model, request, { onToken: opts.onToken, maxTokens: 300, temperature: 0.4 });
-  if (text && !/^Could not/i.test(text)) await kvSet(key, { text, request });
+  // Refuse to cache truncated output, like the thread path. This sibling was missed, so a persona
+  // summary cut off mid-word was written to IndexedDB and re-served forever with no way to notice.
+  if (text && !/^Could not/i.test(text) && !looksTruncated(text)) await kvSet(key, { text, request });
   return { text, request, cached: false, counts };
 }

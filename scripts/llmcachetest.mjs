@@ -167,6 +167,14 @@ const attrib = await page.evaluate(async () => {
     realKept: llm.sanitizeAttributions('- alice: the planner changes look good', authors),
     realInlineKept: llm.sanitizeAttributions('bob notes the benchmark is flawed.', authors),
     passingMention: llm.sanitizeAttributions('The thread discusses whether dang should weigh in.', authors),
+    // REAL model output shapes. The first version of this guard tested 5 strings, none of which
+    // contained an ordinary noun before a reporting verb — so it passed while the sanitiser was
+    // rewriting 10 of 12 real summaries into "A A commenter mentions".
+    ordinaryNoun: llm.sanitizeAttributions('A commenter mentions the planner changes.', authors),
+    ordinaryNoun2: llm.sanitizeAttributions('The commenter notes that it is slow. Several users say otherwise.', authors),
+    sentenceSubject: llm.sanitizeAttributions('Performance claims the benchmark is flawed.', authors),
+    realHandleDigits: llm.sanitizeAttributions('tjacobs2 says the opposite.', ['tjacobs2']),
+    fakeHandleDigits: llm.sanitizeAttributions('tjacobs2 says the opposite.', ['alice']),
   };
   return cases;
 });
@@ -175,6 +183,11 @@ check('an invented inline attribution is anonymised', !/^dang/.test(attrib.inlin
 check('a REAL commenter is still named (bullet)', /alice:/.test(attrib.realKept), attrib.realKept);
 check('a REAL commenter is still named (inline)', /bob notes/.test(attrib.realInlineKept), attrib.realInlineKept);
 check('a handle merely MENTIONED in passing is left alone', /dang should weigh in/.test(attrib.passingMention), attrib.passingMention);
+check('ordinary prose is NOT rewritten ("A commenter mentions")', attrib.ordinaryNoun === 'A commenter mentions the planner changes.', attrib.ordinaryNoun);
+check('ordinary prose is NOT rewritten (multiple subjects)', !/a commenter (notes|say)/.test(attrib.ordinaryNoun2.replace('The commenter notes', '')), attrib.ordinaryNoun2);
+check('a capitalised sentence subject is not treated as a handle', /^Performance claims/.test(attrib.sentenceSubject), attrib.sentenceSubject);
+check('a REAL handle with digits is kept', /^tjacobs2 says/.test(attrib.realHandleDigits), attrib.realHandleDigits);
+check('an UNKNOWN handle with digits is anonymised', /^A commenter says/.test(attrib.fakeHandleDigits), attrib.fakeHandleDigits);
 
 // --- a thread with almost nothing in it must not be summarised at all ---
 // Gating only on ZERO comments left the door open at one: a single junk comment gave the model

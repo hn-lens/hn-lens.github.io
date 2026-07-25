@@ -1,8 +1,9 @@
 import type { FeedKind } from '../types';
 
 /**
- * Per-feed browsing position, remembered for the lifetime of the page (module scope, NOT
- * persisted).
+ * Per-feed paging DEPTH, remembered for the lifetime of the page (module scope, NOT persisted).
+ *
+ * Depth only — scroll offset is deliberately not tracked here; see the note in `Feed.tsx`.
  *
  * The core reading loop is skim the feed → open a discussion → come back and carry on. Both halves
  * of "where I was" used to be destroyed by that round trip: paging depth lived in a `useState`
@@ -19,7 +20,6 @@ import type { FeedKind } from '../types';
  * recomputes on reload.
  */
 const depth = new Map<FeedKind, number>();
-const scroll = new Map<FeedKind, number>();
 
 export function getFeedDepth(kind: FeedKind, fallback: number): number {
   return depth.get(kind) ?? fallback;
@@ -29,21 +29,12 @@ export function setFeedDepth(kind: FeedKind, value: number): void {
   depth.set(kind, value);
 }
 
-export function getFeedScroll(kind: FeedKind): number {
-  return scroll.get(kind) ?? 0;
-}
-
-export function setFeedScroll(kind: FeedKind, value: number): void {
-  scroll.set(kind, value);
-}
-
 /**
  * Forget a feed's position. Used by an explicit Refresh: the user asked for a new list, so keeping
  * them 90 cards deep in stories that may no longer be there would be the wrong kind of stable.
  */
 export function resetFeedPosition(kind: FeedKind): void {
   depth.delete(kind);
-  scroll.delete(kind);
 }
 
 /**

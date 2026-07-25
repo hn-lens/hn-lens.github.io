@@ -46,7 +46,10 @@ export default function SummaryActions({
           empty thread is never sent to the model) and neither is eliminated at this model size, so
           say so where the output is actually read. */}
       <span
-        className="text-muted/80"
+        // Full `--muted`, not `/80`. Dimming it voided the AA guarantee of the very token chosen for
+        // legibility (sub-AA in 40 of 62 cells on cards), and made the accuracy caveat FAINTER than
+        // the action labels beside it — the one line here that must not be easy to miss.
+        className="text-muted"
         title="AI summaries are generated from the story and its comments. Small models can state things the source doesn't support, and comment text can influence the result — check anything important against the discussion itself."
       >
         AI-generated · may be inaccurate
@@ -92,7 +95,7 @@ export function RequestDialog({ request, onClose }: { request: ChatMessage[]; on
         <div className="flex items-center justify-between gap-3 border-b border-border p-4">
           <div className="min-w-0">
             <h2 className="text-sm font-semibold">Request sent to the model</h2>
-            <p className="mt-0.5 text-xs text-subtle">The exact messages sent to the model.</p>
+            <p className="mt-0.5 text-xs text-muted">The exact messages sent to the model.</p>
           </div>
           <button type="button" aria-label="Close" onClick={onClose} className="shrink-0 rounded-lg p-1 text-muted hover:bg-surface-2 hover:text-fg">
             <X className="size-4" />
@@ -101,7 +104,7 @@ export function RequestDialog({ request, onClose }: { request: ChatMessage[]; on
         <div className="space-y-3 overflow-y-auto p-4">
           {request.map((m, i) => (
             <div key={i}>
-              <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-subtle">{m.role}</div>
+              <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted">{m.role}</div>
               <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-surface-2 p-2.5 text-[11px] leading-relaxed text-fg/90">
                 {m.content}
               </pre>
@@ -149,7 +152,7 @@ function PromptEditorDialog({ kind, onClose, onSaved }: { kind: PromptKind; onCl
         <div className="flex items-center justify-between gap-3 border-b border-border p-4">
           <div className="min-w-0">
             <h2 className="text-sm font-semibold">Edit the {PROMPT_META[kind].label} prompt</h2>
-            <p className="mt-0.5 text-xs text-subtle">Both parts are sent to the model. Blank = use the built-in default. Save re-runs it.</p>
+            <p className="mt-0.5 text-xs text-muted">Both parts are sent to the model. Blank = use the built-in default. Save re-runs it.</p>
           </div>
           <button type="button" aria-label="Close" onClick={onClose} className="shrink-0 rounded-lg p-1 text-muted hover:bg-surface-2 hover:text-fg">
             <X className="size-4" />
@@ -175,7 +178,7 @@ function PromptEditorDialog({ kind, onClose, onSaved }: { kind: PromptKind; onCl
               onChange={(e) => setUser(e.target.value)}
               className="w-full resize-y rounded-lg border border-edge bg-surface-2 px-3 py-2 font-mono text-[11px] leading-relaxed outline-none focus:border-accent"
             />
-            <span className="block text-[11px] text-subtle">
+            <span className="block text-[11px] text-muted">
               Placeholders (filled with the story data):{' '}
               {PROMPT_META[kind].placeholders.map((p) => (
                 <code key={p} className="mr-1 rounded bg-surface-2 px-1 py-0.5">{p}</code>

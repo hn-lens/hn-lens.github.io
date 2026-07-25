@@ -1438,8 +1438,10 @@ messaging and the fabrication findings are **pre-existing**.*
   the working tree, HEAD, every unpushed commit tree AND every unpushed commit message, refuses to
   pass silently where no pattern list exists, and skips digest lines so a lockfile hash cannot
   masquerade as a hit. First run surfaced 26 false positives
-  (`fig` inside "config", `critique` as ordinary English) — fixed with word boundaries and by pruning
-  those terms, because *a guard that cries wolf gets muted rather than fixed*.
+  — short pattern entries matching inside longer ordinary words, and one that is an everyday English
+  verb — fixed with word boundaries and by pruning those entries, because *a guard that cries wolf
+  gets muted rather than fixed*. (Naming the offending entries here would republish exactly what the
+  list is kept private to avoid; they are recorded in the gitignored notes instead.)
 
 - **[HIGH · UI/UX] Extracted article text had no long-token guard** — +453px page overflow at 320px
   on the discussion Article tab, and silent clipping (no wrap, no ellipsis, no scroll) in the card

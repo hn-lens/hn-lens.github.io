@@ -347,6 +347,37 @@ check('real flow: STAYING on a discussion marks it read', await isRead(), '');
   check('expanding a collapsed subtree mounts its children', jumped.after > jumped.before, JSON.stringify(jumped));
 }
 
+// --- re-rendering comments must not re-sanitize them ---
+// Sanitising is pure but parses the string with DOMParser, and comments re-render far more often
+// than their text changes. Changing the sort on a large thread re-ran it once per rendered comment —
+// 1,637 parses and a 300-381ms long task (1.2-1.5s on a mid-range phone) to produce byte-identical
+// HTML. Caching `sanitize` alone did NOT fix it: `stripHtml` called DOMPurify directly and bypassed
+// the memo, so the guard counts PARSES rather than trusting that a cache exists somewhere.
+{
+  const parsesDuringSort = await page.evaluate(async () => {
+    let n = 0;
+    const orig = DOMParser.prototype.parseFromString;
+    DOMParser.prototype.parseFromString = function (...a) {
+      n++;
+      return orig.apply(this, a);
+    };
+    // Re-sanitize every rendered comment body the way a re-render does.
+    const html = await window.__hnlens.html();
+    const bodies = [...document.querySelectorAll('.comment-body')].map((el) => el.innerHTML);
+    for (const b2 of bodies) {
+      html.sanitize(b2);
+      html.stripHtml(b2);
+    }
+    DOMParser.prototype.parseFromString = orig;
+    return { n, bodies: bodies.length };
+  });
+  check(
+    'a comment already sanitized once is not re-parsed on re-render',
+    parsesDuringSort.bodies > 0 && parsesDuringSort.n <= parsesDuringSort.bodies,
+    `${parsesDuringSort.n} parse(s) for ${parsesDuringSort.bodies} bodies`
+  );
+}
+
 await b.close();
 console.log(`\n${fails.length === 0 ? 'RESULT: COMMENT ORG + RANKING PASS \u2713' : `RESULT: ${fails.length} FAILED`}`);
 process.exit(fails.length ? 1 : 0);

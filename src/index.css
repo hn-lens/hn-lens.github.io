@@ -1247,14 +1247,26 @@ button:not(:disabled) {
 }
 [data-layout='compact'] .sc-favicon,
 [data-layout='compact'] .sc-rank,
-[data-layout='compact'] .sc-meta,
-[data-layout='compact'] .sc-tldr,
+[data-layout='compact'] .sc-meta {
+  display: none;
+}
 /* The inline top-comment preview stays out of this layout: `.sc-body` is a single flex ROW here, and
    the preview is a SIBLING of the title, so as a same-row flex item ~660px wide it made the title
    absorb all the shrink and collapse to ~10-30px — the headline replaced by an ellipsis on every
    viewport, reachable with zero deliberate action (the terminal/cyberpunk designs default to this
    layout). Density is this layout's entire purpose; the preview is disclosed as unavailable here
    instead (see the feed header note). */
+/* The AI summary DOES show here. It was in the hidden list above, but unlike the other suppressed
+   elements it is only rendered AFTER the reader presses ✨ TL;DR — so hiding it meant the button
+   really called the model (a real, billable request on a cloud provider, with the content sent) and
+   then displayed nothing at all, with no error. An element whose presence means "the reader asked
+   for this" must not be suppressed for density. It takes its own full-width row below the headline. */
+[data-layout='compact'] .sc-tldr {
+  flex: 0 0 100%;
+  min-width: 0;
+  margin-left: 0;
+  margin-top: 0.25rem;
+}
 [data-layout='compact'] .sc-topcomment {
   display: none;
 }
@@ -1286,6 +1298,7 @@ button:not(:disabled) {
    explainer on desktop: not visible, not tabbable, no hover fallback, while its three siblings in
    the same row were all reachable. Reveal it in the same overlay. The "why" CHIPS stay hidden (this
    layout is one line per story and they are prose); only the control comes back. */
+@media (hover: hover) {
 [data-layout='compact'] .story-card:hover .sc-reasons,
 [data-layout='compact'] .story-card:focus-within .sc-reasons {
   display: flex;
@@ -1330,6 +1343,13 @@ button:not(:disabled) {
 [data-layout='compact'] .story-card:focus-within .sc-meta {
   visibility: hidden;
 }
+}
+/* The overlay rules above are scoped to `@media (hover: hover)` — POINTER DEVICES ONLY.
+   On touch, `:hover` is sticky and resolves between touchstart and click, so the overlay yanked the
+   in-flow action row out from under the finger and ALL FOUR per-card actions became dead: 8/8 cells
+   failed on a phone, and one tap navigated to a different story. Touch already shows the actions in
+   flow (the `hover: none` block above), which is the right answer there — the overlay exists only to
+   keep the one-line density on a mouse. */
 @media (hover: none) {
   [data-layout='compact'] .sc-reasons,
   [data-layout='compact'] .sc-actions {
@@ -1815,6 +1835,19 @@ mark {
   font-weight: 600;
   border-radius: 2px;
   padding: 0 2px;
+}
+
+/* Placeholder text uses the AA-normalised token, not Preflight's default.
+   Tailwind v4 ships `::placeholder { color: color-mix(in oklab, currentcolor 50%, transparent) }`,
+   which is sub-AA in 55 of 62 design x mode cells (worst 2.39:1, and 3.25 in the DEFAULT theme).
+   That matters more here than in a typical app: Settings -> AI prompts renders the default system and
+   user prompts EXCLUSIVELY as placeholder text, so the app's entire AI-transparency payload — the
+   thing a privacy-minded reader opens Settings to read — was the least legible text in the product.
+   `--muted` is contrast-normalised against every surface, and a leaf-text contrast walk cannot see a
+   pseudo-element, which is why this survived several audits. */
+::placeholder {
+  color: var(--muted);
+  opacity: 1; /* Firefox lowers placeholder opacity by default, undoing the token's guarantee. */
 }
 
 /* The inline top-comment preview and the placeholder that reserves its space share ONE height, so

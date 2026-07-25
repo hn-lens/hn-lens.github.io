@@ -111,6 +111,15 @@ onEngagement(() => {
   queryClient.invalidateQueries({ queryKey: ['content'] });
 });
 
+// Own scroll restoration ourselves.
+//
+// With the browser's default 'auto', going Back makes it restore ITS remembered offset for that
+// history entry — after our own restore has run — so a saved 509px came back as 33px and the feature
+// looked broken from the save side. In a hash-routed SPA the browser's remembered value is for a
+// document that has since re-rendered anyway, so it is not the one worth keeping; `Feed` records and
+// restores a per-feed offset that survives tab switches too, which browser restoration cannot do.
+if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ErrorBoundary>
