@@ -39,9 +39,11 @@ npm run verify
   extend or add the matching harness under `scripts/`.
 - **Keep heavy ML libraries lazy.** `@huggingface/transformers` and `@mlc-ai/web-llm` are
   loaded only via dynamic `import()` so they stay out of the main bundle.
-- **Everything stays local.** There is no backend; user data lives in IndexedDB and
-  localStorage. The only optional non-local features (linked-article text fetch, cloud LLM
-  summaries) are off by default and clearly labelled.
+- **Local-first.** There is no backend; user data lives in IndexedDB and localStorage. One
+  enrichment call is on by default and toggleable (story favicons); two are off by default
+  (linked-article text fetch, cloud LLM summaries). All are clearly labelled in
+  Settings → Privacy and disclosed in SECURITY.md — keep that list accurate when you add or
+  change a network call.
 
 ## Commit messages
 

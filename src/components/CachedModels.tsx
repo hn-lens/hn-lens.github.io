@@ -33,7 +33,7 @@ export default function CachedModels() {
         <button
           type="button"
           onClick={() => qc.invalidateQueries({ queryKey: ['modelCache'] })}
-          className="inline-flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-xs text-muted hover:bg-surface-2"
+          className="inline-flex items-center gap-1 rounded-lg border border-edge px-2 py-1 text-xs text-muted hover:bg-surface-2"
         >
           <RotateCw className="size-3.5" /> Refresh
         </button>
@@ -64,7 +64,9 @@ export default function CachedModels() {
             <div className="truncate text-sm font-medium" title={m.id}>
               {m.label}
             </div>
-            <div className="text-xs text-subtle">
+            {/* `muted`: this is the model SIZE, read immediately before deciding to Remove — informative
+                text on surface-2, not decoration. */}
+            <div className="text-xs text-muted">
               {m.kind === 'llm' ? 'LLM' : 'Embeddings'} · {formatBytes(m.bytes)}
             </div>
           </div>
@@ -73,7 +75,7 @@ export default function CachedModels() {
             onClick={() => remove(m)}
             disabled={busy === m.id}
             aria-label={`Remove cached model ${m.label}`}
-            className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-red-500/40 px-2.5 py-1.5 text-xs text-red-600 hover:bg-red-500/10 disabled:opacity-60 dark:text-red-400"
+            className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-edge px-2.5 py-1.5 text-xs text-red-800 hover:bg-red-500/10 disabled:opacity-60 dark:text-red-200"
           >
             {busy === m.id ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
             Remove

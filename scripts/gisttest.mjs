@@ -26,6 +26,18 @@ for (const s of substantive) {
     children: Array.from({ length: s.kids }, (_, k) => ({ id: s.id * 10 + k, author: `r${k}`, text: '<p>a short reply</p>', created_at_i: now - 8000, parent_id: s.id, story_id: LONG_ID, points: null, type: 'comment', children: [] })),
   });
 }
+// A "quote-then-respond" comment (the most common HN reply shape): a BARE leading `&gt; quote`
+// before the first <p> rebuttal, and the MOST replies (5) so it should TOP the gist. Guards the
+// MEDIUM-2 fix: ThreadGist.clean used stripHtml().split('\n'), but stripHtml collapses newlines →
+// the split was a no-op → a comment whose flattened text started with '>' was dropped ENTIRELY, so
+// the single most-discussed comment was silently omitted from the "most-discussed" digest.
+const QUOTE_AUTHOR = 'quoteperson';
+longChildren.push({
+  id: 96, author: QUOTE_AUTHOR,
+  text: `&gt; the parent comment claimed a specific thing here<p>Here is the substantive rebuttal explaining exactly why that is wrong, with concrete reasoning worth reading.</p>`,
+  created_at_i: now - 9000, parent_id: LONG_ID, story_id: LONG_ID, points: null, type: 'comment',
+  children: Array.from({ length: 5 }, (_, k) => ({ id: 960 + k, author: `qr${k}`, text: '<p>reply</p>', created_at_i: now - 8000, parent_id: 96, story_id: LONG_ID, points: null, type: 'comment', children: [] })),
+});
 for (let i = 0; i < 11; i++) {
   longChildren.push({ id: 200 + i, author: `u${i}`, text: '<p>thanks</p>', created_at_i: now - 7000, parent_id: LONG_ID, story_id: LONG_ID, points: null, type: 'comment', children: [] });
 }
@@ -77,6 +89,23 @@ await page.waitForTimeout(250);
 const gistText = await gist.innerText();
 check('expanded gist lists the most-substantive comment (alice, with replies)', /alice/.test(gistText) && /replies/.test(gistText), gistText.replace(/\s+/g, ' ').slice(0, 120));
 check('gist excludes trivial one-word comments (no "thanks")', !/thanks/i.test(gistText));
+// MEDIUM-2: a quote-then-respond comment (leading "&gt; …") that is the MOST-replied must appear in
+// the gist — its substantive rebuttal, not the quoted line. Pre-fix it was dropped whole (blank).
+check('the most-replied quote-then-respond comment IS in the gist (leading > not dropped)', /quoteperson/.test(gistText) && /substantive rebuttal/.test(gistText), gistText.replace(/\s+/g, ' ').slice(0, 200));
+check('the quoted line itself is filtered from the gist snippet (not the rebuttal)', !/parent comment claimed/i.test(gistText));
+
+// MEDIUM-2 SIBLING: the LLM comment selector (llm.ts cleanComment/collectComments — feeds every AI
+// summary/TL;DR/Ask) had the SAME stripHtml().split('\n') quote-drop the gist fixed. Grep-the-siblings:
+// reuse the same most-replied quote-then-respond comment (id 96) and assert the LLM path keeps it (the
+// rebuttal), not drops it. Pre-fix collectComments returned '' for it → excluded at the length gate.
+const llmSel = await page.evaluate(async (children) => {
+  const llm = await window.__hnlens.llm();
+  const infos = llm.collectComments(children); // applies cleanComment + the >=40-char gate
+  const q = infos.find((c) => c.author === 'quoteperson');
+  return { authors: infos.map((c) => c.author), quoteText: q ? q.text : null };
+}, longChildren);
+check('LLM collectComments keeps the quote-then-respond comment (sibling of the gist fix)', llmSel.authors.includes('quoteperson'), JSON.stringify(llmSel.authors).slice(0, 160));
+check('LLM comment cleaning keeps the rebuttal + drops the quoted line', !!llmSel.quoteText && /substantive rebuttal/.test(llmSel.quoteText) && !/parent comment claimed/i.test(llmSel.quoteText), (llmSel.quoteText || '(dropped)').slice(0, 120));
 
 // clicking a gist item scrolls to that comment (it exists in the DOM)
 await gist.getByText('alice').first().click();

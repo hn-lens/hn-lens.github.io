@@ -70,6 +70,30 @@ export async function getItems(ids: number[], concurrency = 8, ttl?: number): Pr
   return arr.filter((x): x is HnItem => !!x && !x.deleted && !x.dead);
 }
 
+/**
+ * CACHE-ONLY item read — never touches the network, whatever the age of the copy.
+ *
+ * Background paths (content-profile building, learned-ranker training) run after EVERY engagement
+ * and must not do network I/O: `getItem` falls through to a fetch whenever the IndexedDB copy is
+ * older than ITEM_TTL, which is true of all of yesterday's history, so a bare `for … await getItem`
+ * over the engaged set fired hundreds of SEQUENTIAL requests in the background. These consumers
+ * want "whatever we already know about this item", not freshness — the items are ones the user
+ * already opened, so they were cached when that happened.
+ */
+export async function getCachedItems(ids: number[]): Promise<HnItem[]> {
+  const out: HnItem[] = [];
+  for (const id of ids) {
+    const mem = memItems.get(id);
+    if (mem) {
+      if (!mem.item.deleted && !mem.item.dead) out.push(mem.item);
+      continue;
+    }
+    const row = await db.items.get(id);
+    if (row?.item && !row.item.deleted && !row.item.dead) out.push(row.item);
+  }
+  return out;
+}
+
 export async function getFeedIds(
   kind: Exclude<FeedKind, 'foryou' | 'read'>,
   ttl = LIST_TTL
@@ -98,11 +122,19 @@ export async function getFeedIds(
 
 /** Blended candidate pool for the "For You" re-ranker (top + best + fresh). */
 export async function getForYouCandidateIds(limit = 170, ttl?: number): Promise<number[]> {
-  const [top, best, fresh] = await Promise.all([
+  // Partial-outage resilient: if ONE source list is down with no cache, the other two still yield
+  // candidates, so For You degrades gracefully rather than erroring entirely. Only a TOTAL outage
+  // (all three rejected) re-throws, so the feed then shows its error/Retry state (not a wrong
+  // "nothing here"). Was `Promise.all`, which failed the whole pool on any single list's failure.
+  const settled = await Promise.allSettled([
     getFeedIds('top', ttl),
     getFeedIds('best', ttl),
     getFeedIds('new', ttl),
   ]);
+  if (settled.every((r) => r.status === 'rejected')) {
+    throw (settled[0] as PromiseRejectedResult).reason;
+  }
+  const [top, best, fresh] = settled.map((r) => (r.status === 'fulfilled' ? r.value : []));
   const seen = new Set<number>();
   const merged: number[] = [];
   // Include fresh stories so a high recency weight can actually surface them.

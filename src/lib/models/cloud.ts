@@ -167,20 +167,32 @@ export async function cloudGenerate(
     const text = (data.candidates?.[0]?.content?.parts ?? []).map((p) => p.text ?? '').join('').trim();
     if (!text) {
       const reason = data.promptFeedback?.blockReason || data.candidates?.[0]?.finishReason || '';
-      // MAX_TOKENS with no text usually means a "thinking" model spent the budget thinking —
-      // the caller gives cloud generous headroom, so surface a clear, actionable error.
-      throw new Error(
-        `Gemini returned no text${reason ? ` (${reason})` : ''}. Try a non-thinking model (e.g. gemini-2.0-flash) or a shorter thread.`
-      );
+      // Give the RIGHT remedy per reason: a SAFETY/blocked response isn't fixed by switching
+      // models; a MAX_TOKENS one (a "thinking" model spending its budget) is. Anything else
+      // gets a generic retry hint.
+      const blocked = /SAFETY|BLOCK|PROHIBITED|RECITATION/i.test(reason);
+      const remedy = blocked
+        ? 'the content was blocked by the provider\u2019s safety filters — try a different story.'
+        : /MAX_TOKENS|LENGTH/i.test(reason)
+          ? 'try a non-thinking model (e.g. gemini-2.0-flash) or a shorter thread.'
+          : 'try again, or a different model.';
+      throw new Error(`Gemini returned no text${reason ? ` (${reason})` : ''}. ${remedy}`);
     }
     return text;
   }
 
   if (provider === 'openai') {
+    // Reasoning models (o1/o3/o4...) reject `max_tokens` (need `max_completion_tokens`) and
+    // any non-default `temperature`, and they spend tokens on hidden reasoning — so give them
+    // token headroom and omit temperature. Regular gpt-* models take the normal params.
+    const reasoning = /^o\d/.test(model);
+    const body: Record<string, unknown> = reasoning
+      ? { model, messages, max_completion_tokens: Math.max(maxTokens, 4096) }
+      : { model, messages, temperature, max_tokens: maxTokens };
     const res = await cloudFetch('OpenAI', 'https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({ model, messages, temperature, max_tokens: maxTokens }),
+      body: JSON.stringify(body),
     });
     if (!res.ok) throw new Error(await errMessage('OpenAI', res));
     const data = (await res.json()) as { choices?: Array<{ message?: { content?: string }; finish_reason?: string }> };

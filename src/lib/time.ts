@@ -30,7 +30,22 @@ export function domainOf(url?: string): string {
 
 export function faviconUrl(domain: string, size = 32): string {
   if (!domain) return '';
-  return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=${size}`;
+  // Go DIRECT to faviconV2 rather than via the s2/favicons alias.
+  //
+  // This used to route through s2 on the stated grounds that "s2 serves a default icon (200)"
+  // whereas faviconV2 404s, making the redirect the lesser evil. That premise was simply false, and
+  // measuring it is what showed so: s2 301-redirects EVERY domain to this same faviconV2 endpoint
+  // and then returns whatever it returns — `example.com` is a 404 through both paths. So the app was
+  // paying for the redirect and getting the 404s anyway. Favicons were 40% of the requests on a
+  // default feed page, half of them pure redirect overhead, repeated on every Load-more.
+  //
+  // Going direct removes one request per domain and changes nothing else: a domain with no known
+  // favicon still 404s, and `Favicon.tsx` already handles that by falling back to a letter monogram
+  // via onError. (This endpoint is exactly where s2 was sending us, so it is no less official than
+  // before — but it is an undocumented Google endpoint either way, which is precisely why the
+  // feature is behind the `remoteFavicons` privacy toggle and degrades to monograms when it fails.)
+  const target = encodeURIComponent(`https://${domain}`);
+  return `https://t0.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=${target}&size=${size}`;
 }
 
 /** Only allow http(s) links as hrefs (guards against javascript:/data: URLs). */

@@ -2,11 +2,13 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { Brain, ChevronDown, ChevronRight, Cpu, Settings2, SlidersHorizontal, Sparkles, X } from 'lucide-react';
-import { eventCount, recentRead } from '../../lib/interactions';
+import { recentRead } from '../../lib/interactions';
+import { useEventCount } from '../../hooks/useLocalData';
 import { useModelStore } from '../../lib/models/registry';
 import type { ProviderState } from '../../lib/models/registry';
 import { loadModel, MIN_TRAIN_SAMPLES } from '../../lib/ranking/logistic';
-import { usePrefs } from '../../lib/prefs';
+import { rankerGate } from '../../lib/ranking/strategies';
+import { hasCloudKey, usePrefs } from '../../lib/prefs';
 import { safeUrl } from '../../lib/time';
 import { cn } from '../../lib/cn';
 import HnAccount from './HnAccount';
@@ -25,6 +27,8 @@ const FEED_LABEL: Record<FeedKind, string> = {
   read: 'Read',
 };
 
+const PROVIDER_LABEL: Record<string, string> = { gemini: 'Gemini', openai: 'OpenAI', anthropic: 'Anthropic' };
+
 function statusColor(s: ProviderState['status']): string {
   if (s === 'ready') return 'bg-up';
   if (s === 'loading') return 'bg-accent';
@@ -37,13 +41,18 @@ export default function Sidebar({ feed, searching }: { feed: FeedKind; searching
   const llm = useModelStore((s) => s.llm);
   const embeddingsEnabled = usePrefs((s) => s.embeddingsEnabled);
   const llmEnabled = usePrefs((s) => s.llmEnabled);
+  const llmProvider = usePrefs((s) => s.llmProvider);
+  const apiKeys = usePrefs((s) => s.apiKeys);
+  // A BYO cloud provider serves AI over HTTP with no local model — so "LLM off" would be
+  // misleading here; show the active cloud provider instead.
+  const cloud = hasCloudKey({ llmProvider, apiKeys });
   const useLearnedRanker = usePrefs((s) => s.useLearnedRanker);
   const followedDomains = usePrefs((s) => s.followedDomains);
   const followedUsers = usePrefs((s) => s.followedUsers);
   const toggleFollowDomain = usePrefs((s) => s.toggleFollowDomain);
   const toggleFollowUser = usePrefs((s) => s.toggleFollowUser);
 
-  const countQ = useQuery({ queryKey: ['eventCount'], queryFn: eventCount, staleTime: 10000 });
+  const signalCount = useEventCount();
   const readQ = useQuery({ queryKey: ['recentRead'], queryFn: () => recentRead(6), staleTime: 15000 });
   // Learned-reranker progress so the user can SEE personalization getting closer to
   // (or having reached) the activation gate — otherwise the 12-interaction threshold is
@@ -51,7 +60,9 @@ export default function Sidebar({ feed, searching }: { feed: FeedKind; searching
   // the explainer shows) and is invalidated by the auto-trainer.
   const rankerQ = useQuery({ queryKey: ['ranker'], enabled: useLearnedRanker, queryFn: loadModel, staleTime: Infinity });
   const trainedN = rankerQ.data?.n ?? 0;
-  const rankerActive = trainedN >= MIN_TRAIN_SAMPLES;
+  // Use the SAME gate as scoring/the explainer (rankerTrained) — enough samples AND enough
+  // positives — so the sidebar never claims "on" while the model isn't actually applied.
+  const rankerState = rankerGate(rankerQ.data);
   const [tuneOpen, setTuneOpen] = useState(false);
   const [showSignals, setShowSignals] = useState(false);
 
@@ -83,13 +94,21 @@ export default function Sidebar({ feed, searching }: { feed: FeedKind; searching
             </p>
             {feed === 'foryou' && useLearnedRanker && (
               <p className="mt-2 text-xs text-subtle">
-                {/* "story interactions" (the stories the reranker has trained on) is
-                    deliberately distinct wording from the raw "signals recorded locally"
-                    log below — different counts (training examples vs every event), so the
-                    same word for both doesn't read as a contradiction. */}
-                {rankerActive
-                  ? `Learned reranker on — tuned to ${trainedN} of your story interactions.`
-                  : `Learning your taste — ${trainedN}/${MIN_TRAIN_SAMPLES} story interactions until the learned reranker switches on. It trains itself as you read.`}
+                {/* The count is the number of TRAINING EXAMPLES the model fit on — positives
+                    (stories you read/saved/clicked) AND negatives (ones you skipped or marked
+                    not-interested) — so we say "examples from your activity", not "your
+                    interactions", to avoid overstating deliberate engagement (most are passive
+                    skips). It's a distinct count from the raw "signals recorded" log below. */}
+                {/* Phrase the clause that ACTUALLY failed (see `rankerGate`). Collapsing every
+                    not-yet-on state into "read a few stories" told a reader who had read 40 to
+                    read more — the problem was a degenerate fit, which reading cannot fix. */}
+                {rankerState === 'trained'
+                  ? `Learned reranker on — tuned to ${trainedN} examples from your activity.`
+                  : rankerState === 'too-few-samples'
+                    ? `Learning your taste — ${trainedN}/${MIN_TRAIN_SAMPLES} examples from your activity until the reranker switches on. It trains itself as you read.`
+                    : rankerState === 'degenerate'
+                      ? `Learning your taste — your activity so far doesn't separate the stories you engage with from the ones you skip, so the reranker has nothing to learn from yet. Reading a wider mix will give it something to work with.`
+                      : `Learning your taste — read a few stories (not just scroll past them) so the reranker has enough signal to switch on. It trains itself as you read.`}
               </p>
             )}
             <Link
@@ -148,9 +167,11 @@ export default function Sidebar({ feed, searching }: { feed: FeedKind; searching
               to="/settings"
               className="-mx-1 flex items-center gap-2 rounded-md px-1 py-1 hover:bg-surface-2 hover:text-fg"
             >
-              <span className={cn('size-2 rounded-full', statusColor(llm.status))} />
+              <span className={cn('size-2 rounded-full', cloud ? 'bg-up' : statusColor(llm.status))} />
               <span className="text-muted">LLM</span>
-              <span className="ml-auto text-subtle">{llmEnabled ? llm.status : 'off →'}</span>
+              <span className="ml-auto text-subtle">
+                {cloud ? `via ${PROVIDER_LABEL[llmProvider] ?? 'cloud'}` : llmEnabled ? llm.status : 'off →'}
+              </span>
             </Link>
           </div>
         </section>
@@ -190,7 +211,7 @@ export default function Sidebar({ feed, searching }: { feed: FeedKind; searching
                     type="button"
                     onClick={() => toggleFollowDomain(d)}
                     title={`Unfollow ${d}`}
-                    className="group inline-flex items-center gap-1 rounded-full bg-accent/10 px-2 py-0.5 text-xs text-accent hover:bg-accent/20"
+                    className="group inline-flex items-center gap-1 rounded-full bg-accent/10 px-2 py-0.5 text-xs text-fg hover:bg-accent/20"
                   >
                     {d} <X className="size-3 opacity-50 group-hover:opacity-100" />
                   </button>
@@ -207,7 +228,7 @@ export default function Sidebar({ feed, searching }: { feed: FeedKind; searching
                       type="button"
                       onClick={() => toggleFollowUser(u)}
                       title={`Unfollow ${u}`}
-                      className="group inline-flex items-center gap-1 rounded-full bg-accent/10 px-2 py-0.5 text-xs text-accent hover:bg-accent/20"
+                      className="group inline-flex items-center gap-1 rounded-full bg-accent/10 px-2 py-0.5 text-xs text-fg hover:bg-accent/20"
                     >
                       @{u} <X className="size-3 opacity-50 group-hover:opacity-100" />
                     </button>
@@ -219,10 +240,10 @@ export default function Sidebar({ feed, searching }: { feed: FeedKind; searching
         )}
 
         <button type="button" onClick={() => setShowSignals(true)} className="px-1 text-left text-xs text-subtle hover:text-accent hover:underline">
-          {(countQ.data ?? 0).toLocaleString()} signals recorded locally
+          {signalCount.toLocaleString()} signals recorded locally
         </button>
         {showSignals && <SignalsDialog onClose={() => setShowSignals(false)} />}
-        <p className="px-1 text-xs text-subtle">
+        <p className="px-1 text-xs text-muted">
           Press <kbd className="rounded border border-border bg-surface-2 px-1">?</kbd> for keyboard
           shortcuts
         </p>

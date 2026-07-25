@@ -80,6 +80,40 @@ await page.waitForTimeout(400);
 const recovered = await page.evaluate(() => [...document.querySelectorAll('article h3')].map((h) => h.textContent.trim()));
 check('Retry after recovery loads the feed', recovered.some((t) => /Story 900/.test(t)), JSON.stringify(recovered).slice(0, 90));
 
+// --- one straggling item must not hold up first paint ---
+// The feed materialises a page of items as a bounded pool and paints when the pool settles, so TTFC
+// is set by the SLOWEST item. Against the generic 10s network deadline a single hung item stretched
+// first paint from ~1.4s to 10.4s. A timed-out item is a tolerated gap (getItems filters nulls), so
+// the page must still paint, minus that one card, well inside the old bound.
+{
+  const page2 = await (await b.newContext()).newPage();
+  const IDS = Array.from({ length: 12 }, (_, i) => 700 + i);
+  const STALL = IDS[3];
+  await page2.route(/hacker-news\.firebaseio\.com|hn\.algolia\.com|google\.com\/s2/, async (r) => {
+    const u = r.request().url();
+    const json = (b2) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(b2) });
+    if (/topstories/.test(u)) return json(IDS);
+    const m = /\/item\/(\d+)\.json/.exec(u);
+    if (m) {
+      const id = Number(m[1]);
+      // One item never answers — exactly the straggler shape.
+      if (id === STALL) return new Promise(() => {});
+      return json({ id, type: 'story', title: `Story ${id}`, url: `https://e.com/${id}`, by: 'a', score: 10, descendants: 1, time: Math.floor(Date.now() / 1000) - 3600 });
+    }
+    return json({});
+  });
+  await page2.evaluate?.(() => {}); // no-op keeps the shape uniform
+  const t0 = Date.now();
+  await page2.goto(`${BASE}#/?feed=top`, { waitUntil: 'domcontentloaded' });
+  await page2.waitForSelector('article', { timeout: 20000 }).catch(() => {});
+  const ttfc = Date.now() - t0;
+  const cards = await page2.locator('article').count();
+  check('a single hung item does not hold first paint past the item deadline',
+    ttfc < 9000, `ttfc=${ttfc}ms`);
+  check('the feed still paints the items that DID arrive', cards >= IDS.length - 2, `${cards} cards of ${IDS.length}`);
+  await page2.close();
+}
+
 await b.close();
 console.log(`\n${fails.length === 0 ? 'RESULT: FEED ERROR-STATE PASS \u2713' : `RESULT: ${fails.length} FAILED`}`);
 process.exit(fails.length ? 1 : 0);

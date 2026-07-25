@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { ChevronDown, ChevronRight, CornerDownRight, ListTree } from 'lucide-react';
-import { stripHtml } from '../../lib/html';
+import { htmlToText } from '../../lib/html';
 import type { AlgoliaComment, AlgoliaItem } from '../../types';
 
 // A fast, no-download heuristic digest of a long thread for readers who won't enable
@@ -14,9 +14,15 @@ function countDescendants(c: AlgoliaComment): number {
 }
 
 function clean(html: string | null): string {
-  return stripHtml(html)
+  // htmlToText (NOT stripHtml) preserves paragraph line breaks, so the per-line quote filter works:
+  // stripHtml collapses newlines to spaces, making split('\n') a no-op — a comment whose flattened
+  // text STARTED with a quote marker ("&gt; …", the common HN quote-then-respond reply) was dropped
+  // ENTIRELY (its filtered text became '' and failed the length gate), so the "most-discussed" gist
+  // silently omitted the most-replied comment. Now only the quoted LINES are dropped and the
+  // substantive rebuttal survives.
+  return htmlToText(html)
     .split('\n')
-    .filter((l) => !/^\s*>/.test(l)) // drop quoted lines
+    .filter((l) => !/^\s*>/.test(l)) // drop quoted lines (HN quotes render as "> …")
     .join(' ')
     .replace(/\s+/g, ' ')
     .trim();
@@ -47,9 +53,12 @@ function topComments(children: AlgoliaComment[], count: number): Pick[] {
 
 export default function ThreadGist({ tree }: { tree: AlgoliaItem }) {
   const [open, setOpen] = useState(false);
-  const total = tree.children.reduce((n, c) => n + 1 + countDescendants(c), 0);
+  // Tolerate a malformed/empty tree (a 200 without a children array) — every other tree
+  // consumer guards this; an unguarded .reduce here would white-screen the whole /item page.
+  const children = tree?.children ?? [];
+  const total = children.reduce((n, c) => n + 1 + countDescendants(c), 0);
   if (total < GIST_MIN_COMMENTS) return null;
-  const picks = topComments(tree.children, GIST_COUNT);
+  const picks = topComments(children, GIST_COUNT);
   if (!picks.length) return null;
 
   const jump = (id: number) => {

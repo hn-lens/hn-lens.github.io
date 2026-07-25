@@ -1,28 +1,50 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef} from 'react';
 import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import { X } from 'lucide-react';
 import { db } from '../lib/db';
 import { timeAgo } from '../lib/time';
-import type { InteractionEvent } from '../types';
+import type { InteractionEvent, InteractionType } from '../types';
 
 // Human labels for the raw event types stored in db.events.
-const TYPE_LABEL: Record<string, string> = {
+//
+// EXHAUSTIVE Record<InteractionType, …> rather than Record<string, …>: as a loose string map it
+// silently lagged the union, so this transparency dialog showed raw identifiers ("unsave · 1",
+// "unhide · 1") to anyone who un-saved a story or hit Undo on "Not interested" — the classic gap
+// where the forward action is listed and its reversal is forgotten. It also listed `search`, which
+// is never emitted. Exhaustive typing means a new InteractionType cannot compile without a label.
+const TYPE_LABEL: Record<InteractionType, string> = {
   open_link: 'Opened article',
   open_comments: 'Opened discussion',
   impression: 'Seen in feed',
   save: 'Saved',
-  hide: 'Hidden',
+  unsave: 'Removed from saved',
+  hide: 'Not interested',
+  unhide: 'Undid “not interested”',
+  follow_domain: 'Followed site',
+  unfollow_domain: 'Unfollowed site',
+  follow_user: 'Followed user',
+  unfollow_user: 'Unfollowed user',
   upvote_out: 'Opened on HN',
   summarize: 'Summarized',
   dwell: 'Read time',
   search: 'Searched',
 };
 
+/** Label for a stored event type. Rows come from IndexedDB, so the value is `string` at runtime and
+ * could predate a type rename — fall back to the raw id rather than rendering "undefined". */
+function labelFor(t: string): string {
+  return TYPE_LABEL[t as InteractionType] ?? t;
+}
+
 // The count in Settings ("N signals recorded") is data ABOUT the user — clicking it should
 // show exactly what those signals are, not be a dead end. This lists the real db.events rows
 // (type, item, domain/author, when) so nothing about the local profile is hidden.
+import { useModalBehavior } from '../hooks/useModalBehavior';
+
 export default function SignalsDialog({ onClose }: { onClose: () => void }) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalBehavior(dialogRef);
   const [events, setEvents] = useState<InteractionEvent[] | null>(null);
   const [counts, setCounts] = useState<Array<[string, number]>>([]);
   const [total, setTotal] = useState(0);
@@ -47,10 +69,12 @@ export default function SignalsDialog({ onClose }: { onClose: () => void }) {
       onClick={onClose}
       role="dialog"
       aria-modal="true"
+      ref={dialogRef}
+      tabIndex={-1}
       aria-label="Recorded signals"
     >
       <div
-        className="flex max-h-[85vh] w-full max-w-2xl flex-col rounded-xl border border-border bg-surface shadow-2xl"
+        className="flex max-h-[85vh] w-full min-w-0 max-w-2xl flex-col rounded-xl border border-border bg-surface shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-3 border-b border-border p-4">
@@ -58,7 +82,11 @@ export default function SignalsDialog({ onClose }: { onClose: () => void }) {
             <h2 className="text-sm font-semibold">Signals recorded locally</h2>
             <p className="mt-0.5 text-xs text-subtle">
               Everything HN Lens has learned from your activity — stored only in this browser. Delete these (by
-              type, or all) in Settings → Data.
+              type, or all) in{' '}
+              <Link to="/settings?section=data" onClick={onClose} className="text-accent hover:underline">
+                Settings → Data
+              </Link>
+              .
             </p>
           </div>
           <button type="button" aria-label="Close" onClick={onClose} className="shrink-0 rounded-lg p-1 text-muted hover:bg-surface-2 hover:text-fg">
@@ -70,7 +98,7 @@ export default function SignalsDialog({ onClose }: { onClose: () => void }) {
           <div className="flex flex-wrap gap-1.5 border-b border-border p-3">
             {counts.map(([t, n]) => (
               <span key={t} className="rounded-full bg-surface-2 px-2 py-0.5 text-xs text-muted">
-                {TYPE_LABEL[t] ?? t} · <span className="font-medium text-fg">{n}</span>
+                {labelFor(t)} · <span className="font-medium text-fg">{n}</span>
               </span>
             ))}
           </div>
@@ -81,7 +109,11 @@ export default function SignalsDialog({ onClose }: { onClose: () => void }) {
           {events !== null && events.length === 0 && <p className="p-3 text-sm text-muted">No signals recorded yet.</p>}
           {events?.map((e, i) => (
             <div key={e.id ?? i} className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-xs hover:bg-surface-2">
-              <span className="w-28 shrink-0 font-medium text-fg">{TYPE_LABEL[e.type] ?? e.type}</span>
+              {/* The label may shrink; the PAYLOAD may not. A fixed w-28 (126px at Large) plus a
+                  shrink-0 time column left the middle absorbing the whole squeeze — at 320px only
+                  48px of a needed 197px remained, so the item, domain, @author and dwell that are
+                  the dialog's entire reason to exist were truncated away on every phone. */}
+              <span className="w-20 min-w-0 shrink truncate font-medium text-fg sm:w-28 sm:shrink-0">{labelFor(e.type)}</span>
               <span className="min-w-0 flex-1 truncate text-muted">
                 {e.itemId ? (
                   <Link to={`/item/${e.itemId}`} onClick={onClose} className="text-accent hover:underline">

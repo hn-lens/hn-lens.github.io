@@ -1,11 +1,11 @@
 import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useInfiniteQuery } from '@tanstack/react-query';
 import { search } from '../../lib/hn/algolia';
 import { useHiddenIds, useSavedIds, useSeenMap } from '../../hooks/useLocalData';
 import { usePrefs } from '../../lib/prefs';
 import { makeContext } from '../../lib/ranking/strategies';
 import { isFiltered } from '../../lib/ranking/features';
-import { cn } from '../../lib/cn';
 import StoryCard from './StoryCard';
 import StorySkeleton from './StorySkeleton';
 import type { AlgoliaHit, HnItem } from '../../types';
@@ -32,7 +32,7 @@ export default function SearchResults({ query }: { query: string }) {
 
   // Muted domains/users/keywords + min-points apply to search too, not just For You.
   const filterCtx = useMemo(
-    () => makeContext(prefs, { domains: {}, authors: {}, domainCounts: {}, authorCounts: {} }),
+    () => makeContext(prefs, { domains: {}, authors: {}, domainCounts: {}, authorCounts: {}, perItem: {} }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [prefs.mutedDomains, prefs.mutedUsers, prefs.keywordsMute, prefs.minPoints]
   );
@@ -53,26 +53,26 @@ export default function SearchResults({ query }: { query: string }) {
     seenIds.add(it.id);
     return true;
   });
+  // Algolia's `nbHits` counts the UNFILTERED match set, but `items` has had the user's own hard
+  // filters (muted domains/users/keywords, minimum points, hidden) applied locally. Reporting the
+  // raw total alone let the header say "87 results" directly above "No results." — blaming the
+  // backend for the user's own filter, with no route out. Report what is actually shown, and make
+  // the empty state name the real cause (parity with the feed's filter-aware empty state).
   const total = q.data?.pages[0]?.nbHits ?? 0;
+  const shown = items.length;
 
   return (
     <div className="space-y-2.5">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-muted">
-          {total.toLocaleString()} results for{' '}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="min-w-0 break-words text-sm text-muted">
+          {shown < total && items.length > 0
+            ? `${shown.toLocaleString()} of ${total.toLocaleString()} results for `
+            : `${total.toLocaleString()} results for `}
           <span className="font-medium text-fg">“{query}”</span>
         </p>
-        <div className="flex items-center gap-1 text-xs">
+        <div className="seg shrink-0" role="group" aria-label="Sort results">
           {(['relevance', 'new'] as const).map((s) => (
-            <button
-              key={s}
-              type="button"
-              onClick={() => setSort(s)}
-              className={cn(
-                'rounded-md px-2 py-1 capitalize',
-                sort === s ? 'bg-surface-2 text-fg' : 'text-muted hover:text-fg'
-              )}
-            >
+            <button key={s} type="button" aria-pressed={sort === s} onClick={() => setSort(s)} className="seg-btn capitalize">
               {s === 'new' ? 'newest' : 'relevance'}
             </button>
           ))}
@@ -89,7 +89,7 @@ export default function SearchResults({ query }: { query: string }) {
           <button
             type="button"
             onClick={() => void q.refetch()}
-            className="mt-2 rounded-lg border border-border px-3 py-1.5 text-sm hover:bg-surface-2"
+            className="mt-2 rounded-lg border border-edge px-3 py-1.5 text-sm hover:bg-surface-2"
           >
             Retry
           </button>
@@ -105,14 +105,32 @@ export default function SearchResults({ query }: { query: string }) {
         />
       ))}
       {!q.isLoading && !q.isError && items.length === 0 && (
-        <div className="text-sm text-muted">No results.</div>
+        total > 0 ? (
+          <div className="rounded-xl border border-border bg-surface p-8 text-center">
+            <p className="text-sm text-muted">
+              Your filters are hiding all {total.toLocaleString()} results for{' '}
+              <span className="font-medium text-fg">“{query}”</span>.
+            </p>
+            <p className="mt-1 text-xs text-subtle">
+              Muted domains, users or keywords — or the minimum-points setting — removed every match.
+            </p>
+            <Link
+              to="/settings"
+              className="mt-4 inline-block rounded-lg border border-edge px-3 py-1.5 text-sm hover:bg-surface-2"
+            >
+              Check filters
+            </Link>
+          </div>
+        ) : (
+          <div className="text-sm text-muted">No results.</div>
+        )
       )}
       {q.hasNextPage && (
         <button
           type="button"
           onClick={() => void q.fetchNextPage()}
           disabled={q.isFetchingNextPage}
-          className="w-full rounded-xl border border-border bg-surface py-3 text-sm text-muted hover:bg-surface-2"
+          className="w-full rounded-xl border border-edge bg-surface py-3 text-sm text-muted hover:bg-surface-2"
         >
           {q.isFetchingNextPage ? 'Loading…' : 'Load more'}
         </button>

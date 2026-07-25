@@ -7,17 +7,52 @@ export function Section({
   title,
   description,
   children,
+  id,
 }: {
   title: string;
   description?: string;
   children: ReactNode;
+  id?: string; // anchor id for the Settings table-of-contents / deep-links
 }) {
   return (
-    <section className="rounded-xl border border-border bg-surface p-4 sm:p-5">
+    // scroll-mt keeps the section title clear of the sticky top nav when scrolled to.
+    <section id={id} className="scroll-mt-20 rounded-xl border border-border bg-surface p-4 sm:p-5">
       <h2 className="text-base font-semibold">{title}</h2>
       {description && <p className="mt-0.5 text-sm text-muted">{description}</p>}
       <div className="mt-4 space-y-4">{children}</div>
     </section>
+  );
+}
+
+/**
+ * The VISUAL of a switch (track + thumb) — presentational only, no button/role/handlers. Shared
+ * by the Settings `Toggle` (below) AND the feed-header "Top comments" switch so both render one
+ * consistent, legible recipe (before, they were two divergent hand-rolled switches — one invisible
+ * OFF in light themes, one washed-out). Legible BY CONSTRUCTION across every theme×mode: an
+ * always-visible `--edge` border (≥3:1), an OFF thumb in `--muted` (≥4.5:1 vs the track), and an ON
+ * track of solid `--accent` with an `--accent-fg` thumb (the guaranteed text-on-accent color). The
+ * thumb is vertically CENTERED (top-1/2 + -translate-y-1/2) so it can't sit low inside the border.
+ */
+export function SwitchVisual({ checked, size = 'md' }: { checked: boolean; size?: 'sm' | 'md' }) {
+  const sm = size === 'sm';
+  return (
+    <span
+      className={cn(
+        'relative inline-block shrink-0 rounded-full border transition-colors',
+        sm ? 'h-4 w-7' : 'h-6 w-11',
+        checked ? 'border-accent bg-accent' : 'border-edge bg-surface-2'
+      )}
+    >
+      <span
+        className={cn(
+          'absolute top-1/2 -translate-y-1/2 rounded-full shadow-sm transition-all',
+          sm ? 'size-3' : 'size-5',
+          checked
+            ? cn(sm ? 'left-[14px]' : 'left-[22px]', 'bg-accent-fg')
+            : 'left-0.5 bg-muted'
+        )}
+      />
+    </span>
   );
 }
 
@@ -44,17 +79,9 @@ export function Toggle({
         aria-checked={checked}
         aria-label={label}
         onClick={() => onChange(!checked)}
-        className={cn(
-          'relative mt-0.5 inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors',
-          checked ? 'bg-accent' : 'bg-surface-2'
-        )}
+        className="mt-0.5 shrink-0 rounded-full"
       >
-        <span
-          className={cn(
-            'inline-block size-5 rounded-full bg-white shadow-sm transition-transform',
-            checked ? 'translate-x-[1.375rem]' : 'translate-x-0.5'
-          )}
-        />
+        <SwitchVisual checked={checked} size="md" />
       </button>
     </label>
   );
@@ -69,6 +96,7 @@ export function Slider({
   onChange,
   hint,
   inactive,
+  decimals = 1,
 }: {
   label: string;
   value: number;
@@ -78,12 +106,15 @@ export function Slider({
   onChange: (v: number) => void;
   hint?: string;
   inactive?: boolean;
+  // Decimal places for the value read-out. Defaults to 1 (right for the 0.0–2.0 ranking
+  // weights); pass 0 for integer-valued sliders (e.g. Minimum points) so it doesn't show "0.0".
+  decimals?: number;
 }) {
   return (
     <label className="block">
       <div className="mb-1 flex items-center justify-between text-sm">
         <span className={cn('font-medium', inactive && 'text-subtle')}>{label}</span>
-        <span className="tabular-nums text-muted">{value.toFixed(1)}</span>
+        <span className="tabular-nums text-muted">{value.toFixed(decimals)}</span>
       </div>
       <input
         type="range"
@@ -118,7 +149,7 @@ export function Select<T extends string>({
         value={value}
         aria-label={label}
         onChange={(e) => onChange(e.target.value as T)}
-        className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-accent"
+        className="w-full rounded-lg border border-edge bg-surface px-3 py-2 text-sm outline-none focus:border-accent"
       >
         {options.map((o) => (
           <option key={o.value} value={o.value}>
@@ -157,10 +188,11 @@ export function TagEditor({
         {values.map((v) => (
           <span
             key={v}
-            className="inline-flex items-center gap-1 rounded-full bg-surface-2 px-2 py-0.5 text-xs"
+            className="inline-flex max-w-full items-center gap-1 rounded-full bg-surface-2 px-2 py-0.5 text-xs"
           >
-            {v}
-            <button type="button" onClick={() => onChange(values.filter((x) => x !== v))}>
+            {/* break a long domain/keyword tag so the chip can't overflow the page at 320px+Large */}
+            <span className="min-w-0 [overflow-wrap:anywhere]">{v}</span>
+            <button type="button" className="shrink-0" onClick={() => onChange(values.filter((x) => x !== v))}>
               <X className="size-3 text-subtle hover:text-fg" />
             </button>
           </span>
@@ -178,12 +210,12 @@ export function TagEditor({
           }}
           placeholder={placeholder}
           aria-label={label}
-          className="flex-1 rounded-lg border border-border bg-surface px-3 py-1.5 text-sm outline-none focus:border-accent"
+          className="min-w-0 flex-1 rounded-lg border border-edge bg-surface px-3 py-1.5 text-sm outline-none focus:border-accent"
         />
         <button
           type="button"
           onClick={add}
-          className="rounded-lg border border-border px-3 py-1.5 text-sm hover:bg-surface-2"
+          className="rounded-lg border border-edge px-3 py-1.5 text-sm hover:bg-surface-2"
         >
           Add
         </button>

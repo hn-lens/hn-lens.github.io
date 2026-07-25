@@ -49,7 +49,7 @@ await page.route(/hn\.algolia\.com\/api\/v1\/items\/(\d+)/, (r) => {
   const id = Number(r.request().url().match(/items\/(\d+)/)[1]);
   r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id, created_at_i: now - 3600, author: `u${id}`, title: mkItem(id).title, url: mkItem(id).url, text: mkItem(id).text, points: 10, story_id: id, parent_id: null, type: 'story', children: commentChildren(id) }) });
 });
-await page.route(/google\.com\/s2\/favicons/, (r) => r.fulfill({ status: 200, body: '' }));
+await page.route(/google\.com\/s2\/favicons|gstatic\.com\/faviconV2/, (r) => r.fulfill({ status: 200, body: '' }));
 
 const reset = async (patch = {}) => {
   await page.evaluate((p) => {

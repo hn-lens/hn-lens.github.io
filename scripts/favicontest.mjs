@@ -21,9 +21,10 @@ const b = await chromium.launch({ headless: true });
 const ctx = await b.newContext({ viewport: { width: 1280, height: 1000 } });
 const page = ctx.pages()[0] || (await ctx.newPage());
 
-// Count (and harmlessly fulfill) every request to the Google favicon service.
+// Count (and harmlessly fulfill) every request to the Google favicon service. faviconUrl() uses
+// the s2/favicons endpoint (which 301s to faviconV2); match both forms so the counter is robust.
 let faviconReqs = 0;
-await page.route(/google\.com\/s2\/favicons/, (r) => {
+await page.route(/google\.com\/s2\/favicons|gstatic\.com\/faviconV2/, (r) => {
   faviconReqs++;
   // 1x1 transparent GIF so the <img> resolves without a real network hit.
   r.fulfill({ status: 200, contentType: 'image/gif', body: Buffer.from('R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==', 'base64') });
@@ -63,7 +64,7 @@ const gotoTop = async () => {
   await page.waitForSelector('article', { timeout: 15000 });
   await page.waitForTimeout(600); // let lazy favicon <img>s in view resolve
 };
-const remoteImgCount = () => page.evaluate(() => document.querySelectorAll('img[src*="s2/favicons"]').length);
+const remoteImgCount = () => page.evaluate(() => document.querySelectorAll('img[src*="s2/favicons"], img[src*="faviconV2"]').length);
 
 // --- ON (default): the remote favicon image is used ---
 await page.evaluate(() => window.__hnlens.prefs.getState().set({ defaultFeed: 'top', minPoints: 0, remoteFavicons: true }));
@@ -104,6 +105,22 @@ await page.waitForSelector('h1', { timeout: 15000 });
 await page.waitForTimeout(700);
 check('remoteFavicons OFF: the /item discussion page makes ZERO favicon requests', faviconReqs === 0, `${faviconReqs} request(s)`);
 check('remoteFavicons OFF: the /item discussion header renders no remote favicon <img>', (await remoteImgCount()) === 0, `${await remoteImgCount()} favicon imgs`);
+
+// --- the app's PRIVACY COPY must not make an absolute claim the code contradicts ---
+// Regression for: the Settings "Privacy tradeoff" box said the reader proxy is "the only feature
+// that isn't fully on-device" while `remoteFavicons` defaults ON and calls Google per story domain
+// (and model weights come from third-party CDNs, and a cloud LLM is available). A privacy-branded
+// app's most-read warning must enumerate, not absolutise — a user who turns the proxy off should not
+// be told the app is now fully local when it isn't.
+{
+  await page.goto(`${BASE}#/settings`, { waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(600);
+  const copy = await page.evaluate(() => document.body.innerText);
+  const absolutes = [/the only feature that isn.t fully on-device/i, /everything else stays in your browser/i];
+  const offenders = absolutes.filter((re2) => re2.test(copy)).map(String);
+  check('Settings privacy copy makes no absolute "only non-local feature" claim', offenders.length === 0, offenders.join(' | ') || 'none');
+  check('Settings privacy copy still discloses favicons as a non-local call', /favicon/i.test(copy), '');
+}
 
 await b.close();
 console.log(`\n${fails.length === 0 ? 'RESULT: FAVICON PRIVACY TOGGLE PASS \u2713' : `RESULT: ${fails.length} FAILED`}`);

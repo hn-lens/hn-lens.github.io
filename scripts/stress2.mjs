@@ -42,7 +42,7 @@ await page.locator('article').first().getByRole('button', { name: /Save/ }).clic
 await page.waitForTimeout(200);
 await page.getByRole('banner').getByRole('button', { name: 'Saved items' }).click();
 await page.waitForSelector('article', { timeout: 20000 });
-const hideOnSaved = await page.locator('article').first().getByRole('button', { name: 'Hide' }).count();
+const hideOnSaved = await page.locator('article').first().getByRole('button', { name: 'Not interested' }).count();
 log('  Hide button on Saved card:', hideOnSaved === 0 ? 'absent ✓' : 'PRESENT (bug)');
 
 // P5: drawer closes on browser back navigation

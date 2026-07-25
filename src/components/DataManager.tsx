@@ -1,13 +1,15 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Loader2, RotateCw, Trash2 } from 'lucide-react';
+import { Eye, Loader2, RotateCw, Trash2 } from 'lucide-react';
 import { getDataBreakdown, clearDataCategory } from '../lib/dataUsage';
 import type { DataCategory, DataCategoryId } from '../lib/dataUsage';
 import { formatBytes } from '../lib/models/storage';
+import HiddenDialog from './HiddenDialog';
 
 export default function DataManager() {
   const qc = useQueryClient();
   const [busy, setBusy] = useState<DataCategoryId | ''>('');
+  const [showHidden, setShowHidden] = useState(false);
   const q = useQuery({ queryKey: ['dataBreakdown'], queryFn: getDataBreakdown, staleTime: 0 });
   const cats = q.data ?? [];
 
@@ -29,7 +31,7 @@ export default function DataManager() {
         <button
           type="button"
           onClick={() => qc.invalidateQueries({ queryKey: ['dataBreakdown'] })}
-          className="inline-flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-xs text-muted hover:bg-surface-2"
+          className="inline-flex items-center gap-1 rounded-lg border border-edge px-2 py-1 text-xs text-muted hover:bg-surface-2"
         >
           <RotateCw className="size-3.5" /> Refresh
         </button>
@@ -50,24 +52,37 @@ export default function DataManager() {
           >
             <div className="min-w-0">
               <div className="text-sm font-medium">{c.label}</div>
-              <div className="text-xs text-subtle">
+              <div className="text-xs text-muted">
                 {empty ? 'none' : `${c.count.toLocaleString()} ${c.unit}`}
                 {c.bytes > 0 ? ` · ${formatBytes(c.bytes)}` : ''} — {c.description}
               </div>
             </div>
-            <button
-              type="button"
-              onClick={() => remove(c)}
-              disabled={empty || busy === c.id}
-              aria-label={`Delete ${c.label}`}
-              className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-red-500/40 px-2.5 py-1.5 text-xs text-red-700 hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-40 dark:text-red-300"
-            >
-              {busy === c.id ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
-              Delete
-            </button>
+            <div className="flex shrink-0 items-center gap-1.5">
+              {c.id === 'hidden' && !empty && (
+                <button
+                  type="button"
+                  onClick={() => setShowHidden(true)}
+                  className="inline-flex items-center gap-1 rounded-lg border border-edge px-2.5 py-1.5 text-xs text-muted hover:bg-surface-2 hover:text-fg"
+                >
+                  <Eye className="size-3.5" /> View
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => remove(c)}
+                disabled={empty || busy === c.id}
+                aria-label={`Delete ${c.label}`}
+                className="inline-flex items-center gap-1 rounded-lg border border-edge px-2.5 py-1.5 text-xs text-red-800 hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-40 dark:text-red-200"
+              >
+                {busy === c.id ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
+                Delete
+              </button>
+            </div>
           </div>
         );
       })}
+
+      {showHidden && <HiddenDialog onClose={() => setShowHidden(false)} />}
     </div>
   );
 }

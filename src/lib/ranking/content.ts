@@ -15,7 +15,7 @@
 // no CORS), so "content" here means titles, HN self-text, and HN comments — all of
 // which are fetchable — never the external page text.
 import { db, kvGet, kvSet } from '../db';
-import { getItem } from '../hn/client';
+import { getCachedItems } from '../hn/client';
 import { getEngagedItemIds, getDislikedItemIds } from '../interactions';
 import { fetchItemTree } from '../hn/algolia';
 import { getCachedArticle } from '../hn/article';
@@ -60,13 +60,10 @@ export interface ContentProfile {
   withComments: boolean;
 }
 
+// CACHE-ONLY: this runs on every engagement (the ['content'] query is invalidated there), so it
+// must not fetch. See `getCachedItems`.
 async function itemsFor(ids: number[]): Promise<HnItem[]> {
-  const out: HnItem[] = [];
-  for (const id of ids) {
-    const it = await getItem(id);
-    if (it) out.push(it);
-  }
-  return out;
+  return getCachedItems(ids);
 }
 
 /** Flatten a comment tree into cleaned text snippets (>= 40 chars). */
@@ -239,8 +236,12 @@ export function simLiked(vec: number[] | undefined, p: ContentProfile, excludeId
 }
 
 /**
- * Content signals (relevance + termAffinity) for a set of items. Pass `loo: true`
- * when scoring TRAINING items so each is removed from its own profile.
+ * Content signals (relevance + termAffinity) for a set of items.
+ *
+ * Pass `loo: true` whenever an item might be IN the profile it is being scored against — which is
+ * both training AND serving. Without it an engaged item scores highly for resembling itself, which
+ * is self-reinforcement rather than taste: it measurably lifted a saved story from rank 5 to rank 1.
+ * Excluding the candidate is a no-op for anything not already in the profile.
  */
 export async function computeContentSignals(
   model: string,

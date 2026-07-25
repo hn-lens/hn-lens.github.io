@@ -1,6 +1,5 @@
-import { db } from '../db';
-import { getItem } from '../hn/client';
-import { computeAffinities, isBounce } from '../interactions';
+import { getCachedItems } from '../hn/client';
+import { classifyEngagement, computeAffinities, eventsSnapshot } from '../interactions';
 import { usePrefs } from '../prefs';
 import { computeFeatures, featureVector } from './features';
 import { makeContext } from './strategies';
@@ -8,11 +7,6 @@ import { buildContentProfile, computeContentSignals } from './content';
 import { saveModel, trainRanker } from './logistic';
 import type { LogisticModel, Sample } from './logistic';
 import type { HnItem } from '../../types';
-
-// "Strong" engagement — deliberate actions that always count as a positive,
-// regardless of read time. A bare link-open is "weak" and can be demoted to a
-// negative if the user bounced straight back (see below).
-const STRONG = new Set(['open_comments', 'save', 'upvote_out', 'summarize']);
 
 export interface TrainResult {
   model: LogisticModel;
@@ -34,50 +28,28 @@ export interface TrainingData {
  * evaluate the exact same samples the trainer fits on (loss curve / AUC).
  */
 export async function buildTrainingSamples(): Promise<TrainingData> {
-  const events = await db.events.toArray();
-  const strong = new Set<number>(); // save / open_comments / upvote_out / summarize
-  const opened = new Set<number>(); // open_link (weak)
-  const impressed = new Set<number>();
-  const hidden = new Set<number>();
-  const bounced = new Set<number>(); // opened but returned almost immediately
-
-  for (const e of events) {
-    if (!e.itemId) continue;
-    if (STRONG.has(e.type)) strong.add(e.itemId);
-    else if (e.type === 'open_link') opened.add(e.itemId);
-    else if (e.type === 'impression') impressed.add(e.itemId);
-    else if (e.type === 'hide') hidden.add(e.itemId);
-    else if (e.type === 'dwell' && isBounce(e.value)) bounced.add(e.itemId);
-  }
-
-  // Positive = any strong action, or a link-open the user actually read (not a
-  // bounce). A bounce with no deeper engagement flips to a negative — so
-  // "clicked and came straight back" trains the model *against* that story.
-  const engaged = new Set<number>();
-  for (const id of strong) engaged.add(id);
-  for (const id of opened) if (!bounced.has(id)) engaged.add(id);
+  // Shared with the other derivations (see interactions.eventsSnapshot) — same rows, one read.
+  const events = await eventsSnapshot();
+  // Dwell-aware engagement classes — the SAME `classifyEngagement` (interactions.ts) the content
+  // profile's LIKED set uses, so labels and content features can't drift (a bounce is a negative in
+  // BOTH). `engaged` is the positive set (strong actions + genuine reads + discussion stays +
+  // imported declared engagement + non-bounced opens, with hidden removed — MONOTONIC).
+  const { engaged, bounced, impressed, hidden } = classifyEngagement(events);
 
   const negatives = new Set<number>();
   for (const id of impressed) if (!engaged.has(id)) negatives.add(id);
   for (const id of bounced) if (!engaged.has(id)) negatives.add(id);
-  for (const id of hidden) {
-    engaged.delete(id);
-    negatives.add(id);
-  }
+  for (const id of hidden) negatives.add(id); // hidden already removed from `engaged` by the classifier
 
   // Resolve the actual items first so content signals can be computed for the
   // whole training set at once (needed for leave-one-out).
   const prefs = usePrefs.getState();
-  const engagedItems: HnItem[] = [];
-  const negativeItems: HnItem[] = [];
-  for (const id of engaged) {
-    const it = await getItem(id);
-    if (it) engagedItems.push(it);
-  }
-  for (const id of negatives) {
-    const it = await getItem(id);
-    if (it) negativeItems.push(it);
-  }
+  // CACHE-ONLY (see `getCachedItems`). Training runs in the background after every engagement and
+  // must do NO network I/O — the article path already honoured that, but this item loop fell through
+  // to a fetch for anything older than ITEM_TTL, i.e. all of yesterday's history, hundreds of
+  // requests SEQUENTIALLY. These are items the user already opened, so they are already cached.
+  const engagedItems: HnItem[] = await getCachedItems([...engaged]);
+  const negativeItems: HnItem[] = await getCachedItems([...negatives]);
   const allItems = [...engagedItems, ...negativeItems];
 
   // Content signals (embedding relevance + title/comment term affinity) with
@@ -88,11 +60,23 @@ export async function buildTrainingSamples(): Promise<TrainingData> {
     embeddings: prefs.embeddingsEnabled,
     fetchArticle: prefs.fetchArticleText,
   });
+  // `articleTerms` MUST mirror the SERVING path (`useFeed`), or the model learns a weight for a
+  // title-only termAffinity/relevance distribution and then applies it to a title+article one at
+  // serve time — a train-serve skew that silently mis-scales the feature (and the calibrated
+  // P(engage) the explainer shows) for exactly the stories the reader proxy fetched. Reads the
+  // article CACHE only (`cachedArticleTerms`), so training still performs no network I/O.
   const { simById, termById } = await computeContentSignals(prefs.embeddingModel, allItems, profile, {
     loo: true,
+    articleTerms: prefs.fetchArticleText,
   });
 
-  const ctx = makeContext(prefs, await computeAffinities(), { simById, termById });
+  const affinities = await computeAffinities();
+  const ctx = makeContext(prefs, affinities, { simById, termById });
+
+  // NOTE: leave-one-out for the behavioural features now lives in `computeFeatures` (features.ts),
+  // so it applies to the SERVE path as well as this one — a story must not be scored on the affinity
+  // it generated itself, whether we are fitting on it or ranking it. The training-only copy that used
+  // to live here was removed; keeping both subtracted twice.
   const samples: Sample[] = [];
   const sampleIds: number[] = [];
   const push = (items: HnItem[], y: number) => {

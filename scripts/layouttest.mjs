@@ -233,6 +233,174 @@ check(`all ${themeIds.length} designs render in light & dark`, !themeBroke, them
 
 check('no console errors across all layouts + themes', errs.length === 0, errs.slice(0, 3).join(' | '));
 
+// The `media` + `feature` layouts surface `.sc-num`; on FOR YOU (the only feed that passes BOTH a
+// `rank` and an `index`) the redundant `.sc-rank` must be hidden so the index doesn't render TWICE
+// (regression for the double-rank-number bug — mirrors list/compact).
+await page.evaluate(() => window.__hnlens.prefs.getState().set({ defaultFeed: 'foryou', hideReadInFeed: false }));
+for (const lay of ['media', 'feature']) {
+  await page.evaluate((l) => {
+    window.__hnlens.prefs.getState().setLayout(l);
+    location.hash = '#/?feed=foryou';
+  }, lay);
+  await page.waitForSelector('article.story-card', { timeout: 15000 });
+  await page.waitForTimeout(200);
+  const dbl = await page.evaluate(() => {
+    const vis = (el) => !!el && getComputedStyle(el).display !== 'none' && el.offsetParent !== null;
+    return [...document.querySelectorAll('article.story-card')].some(
+      (c) => vis(c.querySelector('.sc-rank')) && vis(c.querySelector('.sc-num'))
+    );
+  });
+  check(`${lay} layout on For You shows only ONE rank number (no double)`, !dbl, dbl ? 'both .sc-rank AND .sc-num visible' : 'single');
+}
+
+// --- DENSITY MUST NOT AMPUTATE: compact keeps the card actions + explainer reachable ---
+// Regression for: `compact` `display:none`d the whole action row (Save / Not-interested /
+// Personalize) AND the "Why #N?" explainer. The `terminal` and `cyberpunk` DESIGNS default to this
+// layout, so users who picked only a colour scheme silently lost every per-card action, with no
+// hover fallback and no alternative path. Reveal-on-hover is fine on a pointer device; on touch
+// (no hover) they must simply be present.
+{
+  await page.evaluate(() => window.__hnlens.prefs.getState().setLayout('compact'));
+  await page.waitForTimeout(350);
+  const reachable = await page.evaluate(() => {
+    const card = document.querySelector('.story-card');
+    if (!card) return null;
+    const vis = (sel) => {
+      const el = card.querySelector(sel);
+      if (!el) return 'missing';
+      return getComputedStyle(el).display;
+    };
+    return { actions: vis('.sc-actions'), reasons: vis('.sc-reasons') };
+  });
+  check('compact still RENDERS the action row (hidden only until hover)', reachable && reachable.actions !== 'missing', JSON.stringify(reachable));
+  check('compact still RENDERS the rank explainer', reachable && reachable.reasons !== 'missing', JSON.stringify(reachable));
+}
+// On a touch device (no hover) the controls must be visible outright — "reveal on hover" is
+// unreachable there.
+{
+  const tctx = await b.newContext({ viewport: { width: 390, height: 780 }, hasTouch: true, isMobile: true });
+  const tp = await tctx.newPage();
+  await tp.route(/hacker-news\.firebaseio\.com/, (r) => {
+    const u = r.request().url();
+    const j = (x) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(x) });
+    if (/(top|best|new)stories/.test(u)) return j(IDS);
+    if (/(ask|show|job)stories/.test(u)) return j([]);
+    const m = u.match(/item\/(\d+)/);
+    if (m) return j(mk(Number(m[1])));
+    if (u.includes('/user/')) return j({ id: 'x', karma: 1, created: now });
+    return j(null);
+  });
+  await tp.route(/hn\.algolia\.com|google\.com\/s2/, (r) => r.fulfill({ status: 200, body: '{}' }));
+  await tp.goto(BASE, { waitUntil: 'domcontentloaded' });
+  await tp.waitForFunction(() => window.__hnlens && window.__hnlens.prefs, null, { timeout: 20000 });
+  await tp.evaluate(() => window.__hnlens.prefs.getState().setLayout('compact'));
+  await tp.waitForSelector('article', { timeout: 15000 }).catch(() => {});
+  await tp.waitForTimeout(400);
+  const touchVisible = await tp.evaluate(() => {
+    const card = document.querySelector('.story-card');
+    if (!card) return null;
+    const a = card.querySelector('.sc-actions');
+    return a ? getComputedStyle(a).display : 'missing';
+  });
+  check('on a TOUCH device compact shows the actions outright (no hover to reveal them)',
+    touchVisible === 'flex', `display=${touchVisible}`);
+  await tctx.close();
+}
+
+// --- an ON control that this layout ignores must SAY SO (no silent no-op) ---
+// Regression for: `compact` doesn't render the inline top-comment preview (it would crush the
+// headline), but the feed's "Top comments" switch stayed visible, enabled and ON while doing
+// nothing — and users reach this layout by picking a DESIGN, never asking for it. A CSS comment
+// promised this disclosure for a whole round before it actually existed.
+{
+  await page.evaluate(() => {
+    const s = window.__hnlens.prefs.getState();
+    s.set({ showTopComments: true });
+    s.setLayout('compact');
+  });
+  await page.waitForTimeout(400);
+  const noted = await page.evaluate(() => /not shown in Compact layout/i.test(document.body.innerText));
+  check('compact discloses that the ON "Top comments" switch is not shown here', noted, `noted=${noted}`);
+  await page.evaluate(() => window.__hnlens.prefs.getState().setLayout('cards'));
+  await page.waitForTimeout(300);
+  const gone = await page.evaluate(() => /not shown in Compact layout/i.test(document.body.innerText));
+  check('the disclosure disappears in a layout that DOES show previews', !gone, `stillShown=${gone}`);
+}
+
+// --- the reading TEXT-SIZE axis must survive every layout ---
+// The axis works by scaling the ROOT font size, so only rem-based text follows it. The story title
+// was fixed in the COMPONENT to use rem, but 8 of the 14 layouts re-pinned `.sc-title` to px in
+// `index.css`, silently defeating that fix everywhere it mattered — and in `list` and `newspaper`
+// the grey preview then rendered LARGER than the headline at the Large setting, inverting the card
+// hierarchy for the reader who explicitly asked for bigger text. A component-level fix is not done
+// until the layout overrides agree with it, so assert the EFFECT in every layout.
+{
+  const layouts = await page.evaluate(() => window.__hnlens.themes().LAYOUT_IDS ?? []);
+  const bad = [];
+  for (const layout of layouts) {
+    const sizes = {};
+    for (const size of ['md', 'lg']) {
+      sizes[size] = await page.evaluate(
+        async ([l, ts]) => {
+          const s = window.__hnlens.prefs.getState();
+          s.setLayout(l);
+          // MUST be the action, not `set({textSize})`: the plain setter updates the store without
+          // applying the data-textsize attribute, so a naive probe measures 'md' twice and passes.
+          s.setTextSize(ts);
+          await new Promise((r) => setTimeout(r, 120));
+          const t = document.querySelector('.sc-title');
+          return t ? parseFloat(getComputedStyle(t).fontSize) : 0;
+        },
+        [layout, size]
+      );
+    }
+    // Large must actually enlarge the headline. Equal sizes mean the layout pinned it in px.
+    if (sizes.md > 0 && sizes.lg <= sizes.md + 0.01) bad.push(`${layout} md=${sizes.md} lg=${sizes.lg}`);
+  }
+  check(
+    'the reading text-size setting scales the story headline in EVERY layout',
+    bad.length === 0,
+    bad.length ? bad.join(' | ') : `${layouts.length} layouts scale`
+  );
+  await page.evaluate(() => {
+    const s = window.__hnlens.prefs.getState();
+    s.setLayout('cards');
+    s.setTextSize('md');
+  });
+  await page.waitForTimeout(200);
+}
+
+// --- a HOVER affordance must not change the height of the row being hovered ---
+// `compact` reveals its per-card actions on hover. Revealing them IN FLOW grew the row from 27px to
+// 127px and pushed every row below down ~100px, so moving the pointer toward a story slid that story
+// out from under the cursor and the click landed on a different one. It reaches users who only chose
+// the terminal or cyberpunk DESIGN, since both default to this layout.
+{
+  await page.evaluate(() => window.__hnlens.prefs.getState().setLayout('compact'));
+  await page.waitForTimeout(400);
+  const rows = await page.locator('.story-card').count();
+  check('compact fixture has enough rows to measure a shift', rows >= 3, `${rows} rows`);
+  if (rows >= 3) {
+    const tops = () =>
+      page.evaluate(() => [...document.querySelectorAll('.story-card')].map((a) => Math.round(a.getBoundingClientRect().top)));
+    const before = await tops();
+    await page.locator('.story-card').nth(1).hover({ force: true });
+    await page.waitForTimeout(350);
+    const after = await tops();
+    const maxShift = Math.max(...before.map((v, i) => Math.abs((after[i] ?? v) - v)));
+    check('hovering a compact row does NOT move the rows below it', maxShift <= 1, `max shift ${maxShift}px`);
+    const reachable = await page.evaluate(() => {
+      const a = document.querySelectorAll('.story-card')[1]?.querySelector('.sc-actions');
+      if (!a) return false;
+      const cs = getComputedStyle(a);
+      return cs.display !== 'none' && a.getBoundingClientRect().width > 10;
+    });
+    check('...and the actions are still revealed (reachable, just out of flow)', reachable, `reachable=${reachable}`);
+  }
+  await page.evaluate(() => window.__hnlens.prefs.getState().setLayout('cards'));
+  await page.waitForTimeout(250);
+}
+
 await b.close();
 console.log(`\n${fails.length === 0 ? 'RESULT: LAYOUTS RESTRUCTURE THE DOM \u2713' : `RESULT: ${fails.length} FAILED`}`);
 process.exit(fails.length ? 1 : 0);

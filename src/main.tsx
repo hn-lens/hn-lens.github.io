@@ -10,6 +10,7 @@ import { usePrefs } from './lib/prefs';
 import { queryClient } from './lib/query';
 import { initDwellTracking } from './lib/dwell';
 import { initAutoTrain } from './lib/ranking/autotrain';
+import { loadModel } from './lib/ranking/logistic';
 import { getReadItemIds, onEngagement } from './lib/interactions';
 import { probeWebgpu } from './lib/models/registry';
 // Ranking/personalization internals — lightweight app modules already in the
@@ -26,6 +27,7 @@ import * as contentMod from './lib/ranking/content';
 import * as autotrainMod from './lib/ranking/autotrain';
 import * as articleMod from './lib/hn/article';
 import * as registryMod from './lib/models/registry';
+import * as themesMod from './lib/themes';
 
 // Best-effort cache cleanup on startup (non-blocking).
 void pruneCaches();
@@ -51,10 +53,13 @@ void probeWebgpu();
   logistic: () => logisticMod,
   features: () => featuresMod,
   strategies: () => strategiesMod,
+  topComment: () => import('./lib/hn/topComment'),
+  html: () => import('./lib/html'),
   content: () => contentMod,
   autotrain: () => autotrainMod,
   article: () => articleMod,
   registry: () => registryMod, // model status store (WebGPU state) — for UI harnesses
+  themes: () => themesMod, // THEME_IDS / LAYOUT_IDS — for the theme-contrast harness
   prefs: usePrefs,
 };
 
@@ -73,6 +78,13 @@ void queryClient.prefetchQuery({
   staleTime: Infinity,
   gcTime: Infinity,
 });
+
+// Prime the learned-reranker model into the shared ['ranker'] cache at startup so every
+// surface that shows the trained count — the For You sidebar progress, Settings, and the
+// "Why #N?" dialog — reflects the SAME stored model from first paint (the sidebar query
+// uses staleTime: Infinity, so a returning user shouldn't briefly see "0/12 · still
+// learning" while Settings already shows the trained model). autotrain keeps it fresh.
+void queryClient.prefetchQuery({ queryKey: ['ranker'], queryFn: loadModel });
 
 // Close the learning loop: record read-time and keep the model auto-trained.
 initDwellTracking();

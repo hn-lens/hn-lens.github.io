@@ -41,7 +41,7 @@ await page.route(/hn\.algolia\.com\/api\/v1\/items\/(\d+)/, (r) => {
   r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id, created_at_i: now - 3600, author: `user${id}`, title: mk(id).title, url: mk(id).url, points: 100, story_id: id, parent_id: null, type: 'story', children: [{ id: id * 10, created_at_i: now - 100, author: 'c', text: 'A stable comment for the visual snapshot.', parent_id: id, story_id: id, points: 3, type: 'comment', children: [] }] }) });
 });
 await page.route(/hn\.algolia\.com\/api\/v1\/search/, (r) => r.fulfill({ status: 200, body: '{"nbHits":0,"hits":[]}' }));
-await page.route(/google\.com\/s2\/favicons/, (r) => r.fulfill({ status: 200, body: '' }));
+await page.route(/google\.com\/s2\/favicons|gstatic\.com\/faviconV2/, (r) => r.fulfill({ status: 200, body: '' }));
 await page.addStyleTag({ content: '*,*::before,*::after{animation:none!important;transition:none!important;caret-color:transparent!important}' }).catch(() => {});
 
 await page.goto(BASE, { waitUntil: 'domcontentloaded' });

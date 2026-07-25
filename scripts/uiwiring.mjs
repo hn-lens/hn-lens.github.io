@@ -17,6 +17,10 @@ const check = async (name, field, expected) => {
   results.push({ name, pass, got, expected });
   console.log(`${pass ? 'PASS' : 'FAIL'}  ${name}  (${field} = ${JSON.stringify(got)})`);
 };
+const checkRaw = (name, pass, detail = '') => {
+  results.push({ name, pass });
+  console.log(`${pass ? 'PASS' : 'FAIL'}  ${name}${detail ? `  (${detail})` : ''}`);
+};
 
 await page.getByRole('button', { name: 'Settings & models' }).click();
 await page.getByText('For You ranking weights').waitFor({ timeout: 10000 });
@@ -28,6 +32,15 @@ await page.getByRole('combobox', { name: 'Layout (structure)' }).selectOption('c
 await check('Layout select', 'layout', 'compact');
 await page.getByRole('combobox', { name: 'Light / dark mode' }).selectOption('dark');
 await check('Light/dark mode select', 'theme', 'dark');
+await page.getByRole('combobox', { name: 'Reading text size' }).selectOption('lg');
+await check('Reading text size select', 'textSize', 'lg');
+// Effect (not just the store): the reading-size axis sets data-textsize on <html> and
+// actually scales the root font-size.
+const tsDom = await page.evaluate(() => ({
+  attr: document.documentElement.dataset.textsize,
+  rootPx: parseFloat(getComputedStyle(document.documentElement).fontSize),
+}));
+await checkRaw('Reading text size applies to the DOM (data-textsize=lg, root font grows)', tsDom.attr === 'lg' && tsDom.rootPx > 16, JSON.stringify(tsDom));
 await page.getByRole('combobox', { name: 'Default feed' }).selectOption('new');
 await check('Default feed select', 'defaultFeed', 'new');
 await page.getByRole('combobox', { name: 'Embedding model' }).selectOption('Xenova/bge-small-en-v1.5');
@@ -144,12 +157,14 @@ await page.evaluate(() => {
   s.setThemeName('dracula');
   s.setTheme('dark');
   s.setLayout('zen');
+  s.setTextSize('lg');
 });
 await page.waitForTimeout(100);
 const domBefore = await page.evaluate(() => ({
   theme: document.documentElement.dataset.theme,
   dark: document.documentElement.classList.contains('dark'),
   layout: document.documentElement.dataset.layout,
+  textsize: document.documentElement.dataset.textsize,
 }));
 await page.getByRole('button', { name: /Reset all settings/i }).click();
 await page.waitForTimeout(200);
@@ -163,10 +178,11 @@ const domAfter = await page.evaluate(() => ({
   theme: document.documentElement.dataset.theme,
   dark: document.documentElement.classList.contains('dark'),
   layout: document.documentElement.dataset.layout,
+  textsize: document.documentElement.dataset.textsize,
 }));
 const domReverted =
-  domBefore.theme === 'dracula' && domBefore.dark && domBefore.layout === 'zen' &&
-  domAfter.theme !== 'dracula' && !domAfter.dark && domAfter.layout !== 'zen';
+  domBefore.theme === 'dracula' && domBefore.dark && domBefore.layout === 'zen' && domBefore.textsize === 'lg' &&
+  domAfter.theme !== 'dracula' && !domAfter.dark && domAfter.layout !== 'zen' && domAfter.textsize === 'md';
 results.push({ name: 'Reset all settings reverts the live DOM', pass: domReverted, got: { domBefore, domAfter } });
 console.log(`${domReverted ? 'PASS' : 'FAIL'}  Reset reverts DOM (theme ${domBefore.theme}->${domAfter.theme}, dark ${domBefore.dark}->${domAfter.dark}, layout ${domBefore.layout}->${domAfter.layout})`);
 

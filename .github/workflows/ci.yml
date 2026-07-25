@@ -1,0 +1,60 @@
+name: CI
+
+# Runs the real gate on every pull request and on pushes to main.
+#
+# Until now `deploy.yml` was the only workflow: it triggered on push-to-main only and ran
+# `npm ci && npm run build`. So the 50-check gate that guards this project existed but never ran in
+# CI, a contributor's pull request got no automated feedback at all, and `main` could go red without
+# anything noticing. A public repo that accepts contributions needs the opposite.
+#
+# This runs the `standard` tier (`npm run verify`) — typecheck, lint, the generated-notices and
+# internal-reference checks, the production build, and every deterministic browser harness. It does
+# NOT run the `full` tier: that needs a real WebGPU adapter and downloads ~1GB of model weights,
+# which no hosted runner has.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Read-only: this workflow must never be able to publish anything. Deployment stays in deploy.yml.
+permissions:
+  contents: read
+
+concurrency:
+  # One run per branch/PR; a new push supersedes an in-flight run.
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      # CI can only reach the public registry. A lockfile whose `resolved` URLs point at a private
+      # mirror breaks `npm ci` here, so pin the registry explicitly (same guard as deploy.yml).
+      - name: Use public npm registry
+        run: npm config set registry https://registry.npmjs.org
+      - run: npm ci
+      # The browser harnesses drive Playwright's own Chromium; --with-deps installs the system
+      # libraries it needs on a bare runner.
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Verify (typecheck, lint, build, harnesses, personalization proof)
+        run: npm run verify
+      # Keep the evidence when something fails — the harnesses write reports and screenshots that
+      # are far more useful than a red X.
+      - name: Upload test artifacts
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: test-artifacts
+          path: scripts/.artifacts/
+          if-no-files-found: ignore
+          retention-days: 7

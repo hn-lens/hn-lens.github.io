@@ -111,7 +111,7 @@ await page.waitForSelector('article', { timeout: 15000 });
 await page.keyboard.press('j');
 await page.keyboard.press('j');
 await page.waitForTimeout(120);
-// open the comments drawer for story 301 (first card)
+// open the comments page for story 301 (first card)
 await page.locator('article').first().getByRole('button', { name: 'Open comments' }).click();
 await page.waitForFunction(() => document.querySelector('[id^="comment-"]'), null, { timeout: 15000 });
 await page.waitForTimeout(300);
@@ -136,6 +136,58 @@ await page.keyboard.press('Enter'); // collapse the selected comment
 await page.waitForTimeout(250);
 const bodiesAfter = await page.locator('[id^="comment-"] .hn-html').count();
 check('Enter collapses the selected comment (replies hidden)', bodiesAfter < bodiesBefore, `${bodiesBefore} → ${bodiesAfter}`);
+
+// ---- 'c' opens comments from the selected feed card (regression, run last) ----
+// The card control is aria-label="Open comments (N)", so the shortcut must match by PREFIX,
+// not the exact "Open comments" (which silently no-op'd). For a link story this is the only
+// keyboard path to the discussion. Reload to get a clean feed + reset the nav index.
+await page.goto(`${BASE}#/?feed=top`, { waitUntil: 'domcontentloaded' });
+await page.reload({ waitUntil: 'domcontentloaded' });
+await page.waitForSelector('article', { timeout: 15000 });
+await page.waitForTimeout(300);
+await page.keyboard.press('j'); // select the first feed card
+await page.waitForTimeout(150);
+await page.keyboard.press('c');
+await page.waitForTimeout(400);
+check('"c" opens the discussion from the selected feed card', /#\/item\/\d+/.test(page.url()), page.url());
+
+// --- global shortcuts must be INERT while a modal is open ---
+// They stayed live behind every dialog: `j` scrolled the page underneath a modal that had already
+// set body{overflow:hidden}, `l` switched tab and unmounted the dialog, and `s` silently SAVED a
+// story the reader could not see (its toast hidden behind the overlay). Escape must still work.
+{
+  await page.goto(BASE, { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('article', { timeout: 20000 });
+  await page.waitForTimeout(400);
+  await page.keyboard.press('?'); // open the shortcuts dialog
+  await page.waitForSelector('[aria-modal="true"]', { timeout: 8000 });
+  const savedBefore = await page.evaluate(async () => (await (await window.__hnlens.db()).db.saved.toArray()).length);
+  const yBefore = await page.evaluate(() => window.scrollY);
+  const urlBefore = page.url();
+
+  for (const k of ['j', 'j', 'j', 's', 'l', '/']) await page.keyboard.press(k);
+  await page.waitForTimeout(500);
+
+  const savedAfter = await page.evaluate(async () => (await (await window.__hnlens.db()).db.saved.toArray()).length);
+  const yAfter = await page.evaluate(() => window.scrollY);
+  const stillOpen = await page.locator('[aria-modal="true"]').count();
+  check('a modal blocks the SAVE shortcut (no invisible saves)', savedAfter === savedBefore, `${savedBefore} -> ${savedAfter}`);
+  check('a modal blocks scroll shortcuts', Math.abs(yAfter - yBefore) <= 2, `${yBefore} -> ${yAfter}`);
+  check('a modal is not unmounted by the tab shortcut', stillOpen > 0 && page.url() === urlBefore, `open=${stillOpen} url=${page.url() === urlBefore}`);
+
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(300);
+  check('Escape still closes the modal', (await page.locator('[aria-modal="true"]').count()) === 0, 'closed');
+
+  // ...and the shortcuts work again once it is closed (not permanently disabled).
+  const y0 = await page.evaluate(() => window.scrollY);
+  await page.keyboard.press('j');
+  await page.keyboard.press('j');
+  await page.waitForTimeout(300);
+  const y1 = await page.evaluate(() => window.scrollY);
+  const sel = await page.evaluate(() => !!document.querySelector('.kbd-selected'));
+  check('shortcuts resume after the modal closes', sel || y1 !== y0, `selected=${sel} y ${y0}->${y1}`);
+}
 
 await b.close();
 console.log(`\n${fails.length === 0 ? 'RESULT: KEYBOARD COVERS ALL NAV \u2713' : `RESULT: ${fails.length} FAILED`}`);

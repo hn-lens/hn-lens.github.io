@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef} from 'react';
 
 const SHORTCUTS: Array<[string, string]> = [
   ['j / k', 'Next / previous story (or comment)'],
+  ['[ / ]', 'Prev / next comment (skip replies)'],
   ['h / l', 'Previous / next feed tab'],
   ['Tab / ⇧Tab', 'Move focus anywhere (sidebar, controls, links)'],
   ['o  or  Enter', 'Open story / collapse the comment'],
@@ -10,10 +11,10 @@ const SHORTCUTS: Array<[string, string]> = [
   ['g', 'Jump to the top'],
   ['/', 'Focus search'],
   ['?', 'Toggle this help'],
-  ['Esc', 'Close drawer / help'],
+  ['Esc', 'Close this help'],
 ];
 
-// j/k navigate the CURRENT list: comments when a thread is open (drawer or /item),
+// j/k navigate the CURRENT list: comments when a discussion page is open (/item),
 // otherwise the feed cards. Everything else (sidebar cards, every control) is
 // reachable with native Tab / Shift+Tab + Enter — that's the universal nav; the
 // vim keys are accelerators on top of it.
@@ -39,8 +40,12 @@ function switchTab(dir: -1 | 1): void {
   if (next !== cur) tabs[next].click();
 }
 
+import { useModalBehavior } from '../hooks/useModalBehavior';
+
 export default function KeyboardShortcuts() {
+  const dialogRef = useRef<HTMLDivElement>(null);
   const [helpOpen, setHelpOpen] = useState(false);
+  useModalBehavior(dialogRef, helpOpen);
 
   useEffect(() => {
     let index = -1;
@@ -81,6 +86,17 @@ export default function KeyboardShortcuts() {
       }
       if (typing) return;
 
+      // A modal is open ⇒ the global shortcuts are OFF.
+      //
+      // They stayed live behind every dialog, defeating both protections `useModalBehavior` exists
+      // to provide: `j`/`k` scrolled the page underneath a modal that had set body{overflow:hidden}
+      // (0→1009px, and 0→2293px behind the help dialog), `l` switched feed tab and unmounted the
+      // dialog from under the reader, `/` moved focus outside the supposedly focus-trapped surface —
+      // and `s` silently SAVED a story the reader could not even see, with the toast hidden behind
+      // the overlay. A shortcut that acts on content the user cannot see is acting without consent.
+      // Escape is deliberately handled ABOVE this line: closing the dialog must always work.
+      if (document.querySelector('[aria-modal="true"]')) return;
+
       switch (e.key) {
         case '/':
           e.preventDefault();
@@ -97,6 +113,24 @@ export default function KeyboardShortcuts() {
           e.preventDefault();
           select(index < 0 ? 0 : index - 1);
           break;
+        case '[':
+        case ']': {
+          // Depth-aware nav: jump to the next/previous comment at a depth <= the
+          // current one, i.e. skip the current comment's whole subtree of replies.
+          const { items, kind } = navItems();
+          if (kind !== 'comment' || !items.length) break;
+          e.preventDefault();
+          const depthOf = (el?: HTMLElement) => Number(el?.dataset.depth ?? 0);
+          const curDepth = index >= 0 ? depthOf(items[index]) : 0;
+          const dir = e.key === ']' ? 1 : -1;
+          for (let s = index + dir; s >= 0 && s < items.length; s += dir) {
+            if (depthOf(items[s]) <= curDepth) {
+              select(s);
+              break;
+            }
+          }
+          break;
+        }
         case 'h':
           e.preventDefault();
           switchTab(-1);
@@ -119,7 +153,7 @@ export default function KeyboardShortcuts() {
         case 'c': {
           const { el, kind } = current();
           if (kind === 'comment') clickIn(el, 'button[aria-label="Collapse comment"], button[aria-label="Expand comment"]');
-          else clickIn(el, 'button[aria-label="Open comments"]');
+          else clickIn(el, 'button[aria-label^="Open comments"]');
           break;
         }
         case 's': {
@@ -143,10 +177,18 @@ export default function KeyboardShortcuts() {
       onClick={() => setHelpOpen(false)}
       role="dialog"
       aria-modal="true"
+      ref={dialogRef}
+      tabIndex={-1}
       aria-label="Keyboard shortcuts"
     >
+      {/* Clamp + scroll, like every other dialog in the app. This was the one modal with neither,
+          and `useModalBehavior` sets body{overflow:hidden} while it is open — so in any landscape
+          phone orientation the card spilled past the bottom of the screen with no scroll container
+          anywhere and the last rows were simply unreachable (measured +28 to +156px). What got cut
+          off was the "everything is also reachable with Tab/Shift+Tab + Enter" note: the
+          accessibility escape hatch, lost exactly where keyboard help matters most. */}
       <div
-        className="w-full max-w-sm rounded-xl border border-border bg-surface p-5 shadow-2xl"
+        className="max-h-[85vh] w-full min-w-0 max-w-sm overflow-y-auto rounded-xl border border-border bg-surface p-5 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <h2 className="mb-3 text-sm font-semibold">Keyboard shortcuts</h2>
@@ -160,7 +202,7 @@ export default function KeyboardShortcuts() {
             </div>
           ))}
         </dl>
-        <p className="mt-3 text-xs text-subtle">
+        <p className="mt-3 text-xs text-muted">
           Everything is also reachable with <kbd className="rounded border border-border bg-surface-2 px-1 text-[10px]">Tab</kbd> / <kbd className="rounded border border-border bg-surface-2 px-1 text-[10px]">⇧Tab</kbd> + <kbd className="rounded border border-border bg-surface-2 px-1 text-[10px]">Enter</kbd>.
         </p>
       </div>

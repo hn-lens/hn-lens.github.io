@@ -92,18 +92,21 @@ await step('search edge cases (empty + special chars)', async () => {
   await snap('search-special');
 });
 
-await step('open comments drawer + collapse + sort + close', async () => {
+await step('open comments (full page) + sort + back to feed', async () => {
   await page.goto(BASE, { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('article', { timeout: 40000 });
   await page.getByRole('button', { name: 'Open comments' }).first().click();
-  await page.getByText(/comments/i).first().waitFor({ timeout: 40000 });
+  // The card now navigates to the full /item discussion page (the drawer was removed).
+  await page.waitForFunction(() => location.hash.includes('/item/'), null, { timeout: 40000 });
+  await page.getByRole('button', { name: /Back to feed/i }).waitFor({ timeout: 40000 });
   await page.waitForTimeout(1500);
-  await snap('drawer');
-  // sort by most replies
-  const mr = page.getByRole('button', { name: 'most replies' });
+  await snap('discussion');
+  // sort by most replies (present only when the discussion has comments)
+  const mr = page.getByRole('button', { name: 'Most replies', exact: true });
   if (await mr.count()) await mr.first().click();
   await page.waitForTimeout(400);
-  await page.getByRole('button', { name: 'Close' }).click();
+  await page.getByRole('button', { name: /Back to feed/i }).click();
+  await page.waitForSelector('article', { timeout: 20000 });
   await page.waitForTimeout(300);
 });
 
@@ -124,7 +127,7 @@ await step('hide removes the hidden card', async () => {
   await page.waitForSelector('article', { timeout: 40000 });
   await page.waitForTimeout(600);
   const firstTitle = (await page.locator('article h3').first().innerText()).trim();
-  await page.locator('article').first().getByRole('button', { name: 'Hide' }).click();
+  await page.locator('article').first().getByRole('button', { name: 'Not interested' }).click();
   await page.waitForTimeout(700);
   // The feed backfills the slot, so count can stay; assert the hidden title is gone.
   const stillThere = await page.locator('article h3', { hasText: firstTitle }).count();
@@ -239,7 +242,18 @@ await step('HN account: connect + import', async () => {
     const imp = page.getByRole('button', { name: /Use my history to personalize/i });
     if (await imp.count()) {
       await imp.click();
-      await page.getByText(/Imported|failed/i).waitFor({ timeout: 30000 });
+      // Scope to the sidebar + require the actual import-status shape ("Imported N
+      // posts" / "Import failed") — a page-wide getByText(/Imported|failed/i) collides
+      // with random seeded feed text that happens to contain "failed" (mirrors the
+      // robust wait in hnaccounttest).
+      await page.waitForFunction(
+        () =>
+          /Imported \d+ posts|Import failed/i.test(
+            document.querySelector('.app-sidebar')?.innerText ?? ''
+          ),
+        null,
+        { timeout: 30000 }
+      );
       await snap('hn-imported');
     }
   }

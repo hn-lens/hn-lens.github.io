@@ -51,7 +51,7 @@ check('3 saves collapse to a single "Saved" toast (de-duped)', afterSaves === 1,
 
 // ---- cap: many toasts at once never exceed the cap (3) ----
 for (const id of [704, 705, 706, 707]) {
-  await cardOf(id).getByRole('button', { name: 'Hide', exact: true }).click();
+  await cardOf(id).getByRole('button', { name: 'Not interested', exact: true }).click();
   await page.waitForTimeout(120);
 }
 const afterHides = await toastCount();

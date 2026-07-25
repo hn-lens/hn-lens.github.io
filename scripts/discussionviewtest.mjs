@@ -7,10 +7,10 @@
 //       read by NO component, so turning it off did nothing (a dead control).
 //
 //   [B] The "new since last visit" comment badge must work when a discussion is
-//       opened from a feed card (the comments DRAWER) — not only on /item. Before the
-//       fix, StoryCard.onOpenComments pre-marked the story "seen" before CommentsView
-//       captured the previous seen timestamp, so lastVisit ≈ now and NO comment was
-//       ever flagged "new" on the drawer path.
+//       opened from a feed card (which now navigates to the full /item page). Before the
+//       original fix, StoryCard.onOpenComments pre-marked the story "seen" before
+//       CommentsView captured the previous seen timestamp, so lastVisit ≈ now and NO
+//       comment was ever flagged "new" on the feed-open path. Guards that on the page path.
 //
 // Hermetic: fully mocked HN API, chromium, no WebGPU. (Without WebGPU the AI summary
 // control renders its "needs WebGPU" box, which is still the control being gated — so
@@ -62,7 +62,7 @@ await page.route(/hn\.algolia\.com\/api\/v1\/items\/(\d+)/, (r) => {
   const id = Number(r.request().url().match(/items\/(\d+)/)[1]);
   r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(mkTree(id)) });
 });
-await page.route(/google\.com\/s2\/favicons/, (r) => r.fulfill({ status: 200, body: '' }));
+await page.route(/google\.com\/s2\/favicons|gstatic\.com\/faviconV2/, (r) => r.fulfill({ status: 200, body: '' }));
 
 await page.goto(BASE, { waitUntil: 'domcontentloaded' });
 await page.waitForFunction(() => window.__hnlens && window.__hnlens.prefs, null, { timeout: 20000 });
@@ -76,7 +76,7 @@ const summaryControlVisible = () =>
   page.evaluate(() => /AI discussion summary|AI summaries need WebGPU/i.test(document.body.innerText));
 // The discoverability CTA shown when local AI is OFF (so the feature isn't invisible).
 const ctaVisible = () =>
-  page.evaluate(() => /Enable local AI|Summarize this discussion/i.test(document.body.innerText));
+  page.evaluate(() => /Enable local AI|Summarize or ask about this discussion/i.test(document.body.innerText));
 
 // ===== [A] showAiSummaries gates the comments AI summary control =====
 console.log('\n[A] "Show AI summary controls in comments" (showAiSummaries) gates the control');
@@ -117,8 +117,8 @@ check('showAiSummaries OFF hides the CTA too (fully opts out)', !(await ctaVisib
 // restore default for later sections
 await page.evaluate(() => window.__hnlens.prefs.getState().set({ showAiSummaries: true }));
 
-// ===== [B] "new since last visit" badge on the FEED → DRAWER path =====
-console.log('\n[B] "new since last visit" badge works when opening a discussion from a feed card (drawer)');
+// ===== [B] "new since last visit" badge on the FEED → full /item PAGE path =====
+console.log('\n[B] "new since last visit" badge works when opening a discussion from a feed card (full page)');
 await page.evaluate(async () => {
   const i = await window.__hnlens.interactions();
   await i.clearAllData();
@@ -130,7 +130,8 @@ await page.evaluate(async (t) => {
   await dbMod.db.seen.put({ id: 1000, ts: (t - 50000) * 1000 });
 }, now);
 
-// Open the discussion via the CARD's "Open comments" button (the drawer path).
+// Open the discussion via the CARD's "Open comments" button — now navigates to the full
+// /item discussion page (the drawer was removed for a clean, readable HackerWeb-style view).
 await page.goto(BASE, { waitUntil: 'domcontentloaded' });
 await page.getByRole('button', { name: 'Top', exact: true }).click();
 await page.waitForSelector('article[data-id="1000"]', { timeout: 15000 });
@@ -141,17 +142,17 @@ await page.evaluate(async (t) => {
   await dbMod.db.seen.put({ id: 1000, ts: (t - 50000) * 1000 });
 }, now);
 await page.locator('article[data-id="1000"]').getByRole('button', { name: 'Open comments' }).click();
-await page.waitForFunction(() => document.querySelector('aside[role="dialog"]')?.innerText?.match(/comment/i), null, { timeout: 15000 });
-await page.waitForTimeout(700);
-const drawerNew = await page.evaluate(() => {
-  const d = document.querySelector('aside[role="dialog"]');
-  if (!d) return -1;
-  return [...d.querySelectorAll('span')].filter((s) => s.textContent.trim() === 'new').length;
+// The card navigates to the full discussion page (not a drawer).
+await page.waitForFunction(() => location.hash.includes('/item/1000'), null, { timeout: 15000 });
+await page.waitForFunction(() => document.querySelector('[id^="comment-"]'), null, { timeout: 15000 });
+await page.waitForTimeout(500);
+const feedOpenNew = await page.evaluate(() => {
+  const main = document.querySelector('main');
+  if (!main) return -1;
+  return [...main.querySelectorAll('span')].filter((s) => s.textContent.trim() === 'new').length;
 });
-check('drawer path: comments newer than last visit show a "new" badge', drawerNew >= 2, `${drawerNew} badge(s) (expected 2)`);
-check('drawer path: the OLD comment is NOT flagged new', drawerNew === 2, `${drawerNew} badge(s) — should be exactly the 2 fresh ones`);
-await page.keyboard.press('Escape');
-await page.waitForTimeout(300);
+check('feed→page path: comments newer than last visit show a "new" badge', feedOpenNew >= 2, `${feedOpenNew} badge(s) (expected 2)`);
+check('feed→page path: the OLD comment is NOT flagged new', feedOpenNew === 2, `${feedOpenNew} badge(s) — should be exactly the 2 fresh ones`);
 
 // Cross-check the /item path still works (guards the fix both ways).
 await page.evaluate(async (t) => {
@@ -185,7 +186,51 @@ const savedInDb = await page.evaluate(async () => {
 });
 check('the story is persisted to db.saved from the discussion view', savedInDb);
 
+// ===== [D] The comment Sort control (a 4-option .seg) must not cause horizontal PAGE
+// overflow on a narrow phone — the segmented track wraps within its bounds instead of
+// pushing the page wider (regression: the .seg row overflowed at 320px in every theme and
+// at 390px in monospace themes). Still on /item/1000, so the Sort control is present.
+console.log('\n[D] Sort control fits narrow viewports (no page overflow)');
+for (const w of [360, 320]) {
+  await page.setViewportSize({ width: w, height: 780 });
+  await page.waitForTimeout(300);
+  const r = await page.evaluate(() => ({
+    hasSeg: !!document.querySelector('.seg[aria-label="Sort comments"]'),
+    over: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+  }));
+  check(`discussion Sort control: no horizontal page overflow at ${w}px`, r.hasSeg && r.over <= 2, JSON.stringify({ w, ...r }));
+}
+
+// --- "Back to feed" must preserve the feed you came from, and must never leave the app ---
+// It used to push "/" unconditionally, which resolves to the DEFAULT feed — so the tab was lost from
+// every non-default feed, along with a search context and the remembered paging depth. Stepping back
+// through history fixes that, but the first attempt gated on `window.history.length > 1`, which
+// counts the whole TAB's session history: anyone opening a shared link after visiting any other site
+// would have been navigated straight out of the app. Assert BOTH halves.
+{
+  // (a) arrived by clicking inside the app → returns to the exact feed URL you came from.
+  // Only `top` is populated in this fixture, so drive the real in-app path: open a discussion from
+  // a card on an explicitly-qualified feed URL and assert that qualifier survives the round trip.
+  await page.goto(`${BASE}#/?feed=top`, { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('article', { timeout: 20000 });
+  await page.locator('article').first().getByRole('button', { name: 'Open comments' }).click();
+  await page.waitForURL(/#\/item\//, { timeout: 15000 });
+  await page.getByRole('button', { name: /Back to feed/i }).click();
+  await page.waitForTimeout(600);
+  const backUrl = page.url();
+  check('Back to feed returns to the feed URL you came from', /feed=top/.test(backUrl), backUrl);
+
+  // (b) landed directly on the discussion (shared link) → goes to the feed, and STAYS in the app.
+  await page.goto(`${BASE}#/item/1`, { waitUntil: 'domcontentloaded' });
+  await page.getByRole('button', { name: /Back to feed/i }).waitFor({ timeout: 15000 });
+  await page.getByRole('button', { name: /Back to feed/i }).click();
+  await page.waitForTimeout(600);
+  const coldUrl = page.url();
+  check('Back to feed from a direct link stays in the app', coldUrl.startsWith(BASE), coldUrl);
+  check('Back to feed from a direct link lands on the feed', !/#\/item\//.test(coldUrl), coldUrl);
+}
+
 await b.close();
-console.log(`\n${fails.length === 0 ? 'RESULT: DISCUSSION VIEW (summary gate + drawer new-badge) PASS \u2713' : `RESULT: ${fails.length} FAILED \u2717`}`);
+console.log(`\n${fails.length === 0 ? 'RESULT: DISCUSSION VIEW (summary gate + feed-open new-badge) PASS \u2713' : `RESULT: ${fails.length} FAILED \u2717`}`);
 if (fails.length) fails.forEach((f) => console.log('  - ' + f));
 process.exit(fails.length ? 1 : 0);

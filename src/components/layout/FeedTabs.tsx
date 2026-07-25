@@ -59,7 +59,7 @@ export default function FeedTabs({
     <div className="relative">
       <div
         ref={scrollRef}
-        className="feed-tabs -mx-3 flex gap-1 overflow-x-auto px-3 sm:mx-0 sm:px-0"
+        className="feed-tabs no-scrollbar -mx-3 flex gap-1 overflow-x-auto px-3 sm:mx-0 sm:px-0"
       >
         {TABS.map(({ kind, label, icon: Icon }) => {
           const active = value === kind;
@@ -71,10 +71,14 @@ export default function FeedTabs({
               aria-current={active ? 'page' : undefined}
               onClick={() => onSelect(kind)}
               className={cn(
-                'inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm font-medium transition-colors',
+                'inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm transition-colors',
+                // Active state carries THREE cues: an accent border + a tinted fill + heavier
+                // weight. The LABEL is `text-fg` (not accent) because accent-on-accent-tint fails
+                // AA in many light themes — the accent lives in the border + tint (non-text, which
+                // only needs 3:1), so selection reads AND the label stays AA-legible.
                 active
-                  ? 'border-transparent bg-accent/12 text-accent'
-                  : 'border-border bg-surface text-muted hover:text-fg'
+                  ? 'border-accent bg-accent/15 font-semibold text-fg'
+                  : 'border-edge bg-surface font-medium text-muted hover:text-fg'
               )}
             >
               <Icon className="size-4" />

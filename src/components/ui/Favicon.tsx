@@ -31,7 +31,7 @@ export default function Favicon({
   if (!remoteFavicons) {
     return (
       <div className={cn(BOX, 'bg-white dark:bg-neutral-200', dim && 'opacity-60')}>
-        <span className="text-xs font-bold uppercase text-neutral-500">{domain[0]}</span>
+        <span className="text-xs font-bold uppercase text-neutral-500 dark:text-neutral-600">{domain[0]}</span>
       </div>
     );
   }
@@ -43,7 +43,7 @@ export default function Favicon({
     <div className={cn(BOX, 'relative bg-white dark:bg-neutral-200', dim && 'opacity-60')}>
       <span
         className={cn(
-          'absolute text-xs font-bold uppercase text-neutral-500',
+          'absolute text-xs font-bold uppercase text-neutral-500 dark:text-neutral-600',
           loaded && 'opacity-0'
         )}
       >

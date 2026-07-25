@@ -17,7 +17,7 @@ export default function Saved() {
           <Bookmark className="mx-auto size-8 text-subtle" />
           <p className="mt-3 text-sm text-muted">No saved stories yet.</p>
           <p className="mt-0.5 text-xs text-subtle">
-            Tap the bookmark on any story to keep it here.
+            Bookmark any story to keep it here.
           </p>
           <Link
             to="/"

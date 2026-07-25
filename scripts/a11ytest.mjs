@@ -29,7 +29,7 @@ await page.route(/hn\.algolia\.com\/api\/v1\/items\/(\d+)/, (r) => {
   r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id, created_at_i: now - 3600, author: `user${id}`, title: mk(id).title, url: mk(id).url, points: 100, story_id: id, parent_id: null, type: 'story', children: [{ id: id * 10, created_at_i: now - 100, author: 'c', text: 'A readable comment for the accessibility check.', parent_id: id, story_id: id, points: 3, type: 'comment', children: [] }] }) });
 });
 await page.route(/hn\.algolia\.com\/api\/v1\/search/, (r) => r.fulfill({ status: 200, contentType: 'application/json', body: '{"nbHits":0,"hits":[]}' }));
-await page.route(/google\.com\/s2\/favicons/, (r) => r.fulfill({ status: 200, body: '' }));
+await page.route(/google\.com\/s2\/favicons|gstatic\.com\/faviconV2/, (r) => r.fulfill({ status: 200, body: '' }));
 
 await page.goto(BASE, { waitUntil: 'domcontentloaded' });
 await page.waitForFunction(() => window.__hnlens, null, { timeout: 20000 });
@@ -71,15 +71,53 @@ await audit('Settings', async () => {
   await page.getByText('For You ranking weights').waitFor({ timeout: 10000 }).catch(() => {});
   await page.waitForTimeout(400);
 });
-await audit('Comments drawer', async () => {
+// Named for the surface it ACTUALLY audits. The comments drawer was deleted in 2026-07; this step
+// opens a discussion from a feed card, which now navigates to the full /item page.
+//
+// The `.catch(() => {})` on the click is removed deliberately: it swallowed a failed click, so if
+// the control were ever renamed this step would silently degrade to auditing the Home feed a second
+// time and still report green — an audit that cannot fail is not an audit. Let it throw.
+await audit('Discussion opened from a feed card', async () => {
   await page.goto(BASE, { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('article', { timeout: 15000 });
-  await page.locator('article').first().getByRole('button', { name: 'Open comments' }).click().catch(() => {});
+  await page.locator('article').first().getByRole('button', { name: 'Open comments' }).click();
+  // Prove we actually LEFT the feed, so the audit below is of the discussion, not of Home again.
+  await page.waitForURL(/#\/item\//, { timeout: 15000 });
   await page.waitForTimeout(900);
 });
 
+// --- MODALITY IS IMPLEMENTED, not just declared (aria-modal promises; the browser enforces nothing) ---
+// Regression for: seven hand-rolled dialogs with no shared primitive, none of which locked
+// background scroll or contained focus. The page scrolled behind the overlay (dismissing the dialog
+// left the reader somewhere else, no undo) and Tab immediately walked out into the hidden page, so
+// keyboard/screen-reader users could focus controls they cannot see and never cycle back.
+const modalFails = [];
+const mcheck = (name, pass, detail = '') => {
+  console.log(`  ${pass ? '\u2713' : '\u2717'} ${name}${detail ? ` \u2014 ${detail}` : ''}`);
+  if (!pass) modalFails.push(name);
+};
+console.log('\n=== modality: scroll lock + focus containment ===');
+await page.goto(BASE, { waitUntil: 'domcontentloaded' });
+await page.waitForSelector('article', { timeout: 15000 });
+const lockBefore = await page.evaluate(() => document.body.style.overflow || '');
+await page.keyboard.press('?');
+await page.waitForSelector('[role="dialog"][aria-modal="true"]', { timeout: 8000 });
+const lockOpen = await page.evaluate(() => document.body.style.overflow || '');
+for (let i = 0; i < 20; i++) await page.keyboard.press('Tab');
+const contained = await page.evaluate(() => {
+  const d = document.querySelector('[role="dialog"][aria-modal="true"]');
+  return d ? d.contains(document.activeElement) : null;
+});
+await page.keyboard.press('Escape');
+await page.waitForTimeout(200);
+const lockAfter = await page.evaluate(() => document.body.style.overflow || '');
+mcheck('a mounted-but-CLOSED dialog does not lock the page', lockBefore !== 'hidden', `before="${lockBefore}"`);
+mcheck('an open modal locks background scroll', lockOpen === 'hidden', `open="${lockOpen}"`);
+mcheck('focus stays INSIDE the modal across 20 real Tabs', contained === true, `contained=${contained}`);
+mcheck('closing the modal restores page scroll', lockAfter !== 'hidden', `after="${lockAfter}"`);
+
 await b.close();
 console.log('\n==================================================');
-console.log(`A11Y: ${allSevere.length === 0 ? 'no serious/critical issues \u2713' : `${allSevere.length} serious/critical \u2717`}`);
+console.log(`A11Y: ${allSevere.length === 0 && modalFails.length === 0 ? 'no serious/critical issues \u2713' : `${allSevere.length} serious/critical + ${modalFails.length} modality \u2717`}`);
 if (warns.length) console.log(`  (${warns.length} minor/moderate: ${[...new Set(warns)].slice(0, 10).join(', ')})`);
-process.exit(allSevere.length ? 1 : 0);
+process.exit(allSevere.length || modalFails.length ? 1 : 0);

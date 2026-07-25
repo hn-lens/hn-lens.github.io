@@ -4,6 +4,7 @@
 // live in Cache Storage and are managed separately (see lib/models/storage.ts +
 // CachedModels) — this covers the IndexedDB side.
 import { db } from './db';
+import { unhideAll } from '../hooks/useLocalData';
 import { queryClient } from './query';
 
 export type DataCategoryId =
@@ -43,16 +44,25 @@ export async function getDataBreakdown(): Promise<DataCategory[]> {
   let sumBytes = 0;
   let modelCount = 0;
   let modelBytes = 0;
+  let cacheKvCount = 0; // re-derivable kv caches surfaced under "Cached stories & lists" (topc:/cterms:)
+  let cacheKvBytes = 0;
   for (const row of kv) {
+    // Count `atext:` as the user-meaningful "articles" figure; the derived `aterms:` memo is deleted
+    // WITH the article category (below) but not double-counted here.
     if (row.key.startsWith('atext:')) {
       articleCount++;
       articleBytes += approxBytes(row.value);
-    } else if (row.key.startsWith('sum:')) {
+    } else if (row.key.startsWith('sum:') || row.key.startsWith('usersum:')) {
+      // `usersum:` (per-user persona summaries) are AI summaries too — `'usersum:'.startsWith('sum:')`
+      // is false, so they must be matched explicitly or they'd be uncounted AND undeletable.
       sumCount++;
       sumBytes += approxBytes(row.value);
     } else if (row.key === 'model:logistic') {
       modelCount = 1;
       modelBytes += approxBytes(row.value);
+    } else if (row.key.startsWith('topc:') || row.key.startsWith('cterms:')) {
+      cacheKvCount++;
+      cacheKvBytes += approxBytes(row.value);
     }
   }
 
@@ -75,7 +85,7 @@ export async function getDataBreakdown(): Promise<DataCategory[]> {
     { id: 'saved', label: 'Saved stories', description: 'Stories you bookmarked.', count: saved, bytes: 0, unit: 'saved' },
     { id: 'hidden', label: 'Hidden stories', description: 'Stories you hid from feeds.', count: hidden, bytes: 0, unit: 'hidden' },
     { id: 'seen', label: 'Seen / visited markers', description: 'Which stories/discussions you\u2019ve opened.', count: seen, bytes: 0, unit: 'markers' },
-    { id: 'cache', label: 'Cached stories & lists', description: 'Fetched HN items + feed lists (re-fetched as needed).', count: items + lists, bytes: 0, unit: 'items' },
+    { id: 'cache', label: 'Cached stories & lists', description: 'Fetched HN items + feed lists + comment previews (re-fetched as needed).', count: items + lists + cacheKvCount, bytes: cacheKvBytes, unit: 'items' },
   ];
 }
 
@@ -84,10 +94,18 @@ export async function clearDataCategory(id: DataCategoryId): Promise<number> {
   let removed = 0;
   switch (id) {
     case 'article':
-      removed = await db.kv.where('key').startsWith('atext:').delete();
+      // Delete the fetched bodies AND the derived term memo (`aterms:`) — otherwise article-derived
+      // terms keep feeding termAffinity after the user believes they purged all article data.
+      removed =
+        (await db.kv.where('key').startsWith('atext:').delete()) +
+        (await db.kv.where('key').startsWith('aterms:').delete());
       break;
     case 'summaries':
-      removed = await db.kv.where('key').startsWith('sum:').delete();
+      // Include `usersum:` (persona summaries) — not a `sum:`-prefixed key, so it needs its own delete
+      // or "Delete AI summaries" would silently leave persona summaries behind.
+      removed =
+        (await db.kv.where('key').startsWith('sum:').delete()) +
+        (await db.kv.where('key').startsWith('usersum:').delete());
       break;
     case 'model':
       removed = await db.kv.where('key').equals('model:logistic').delete();
@@ -101,7 +119,13 @@ export async function clearDataCategory(id: DataCategoryId): Promise<number> {
       await db.embeddings.clear();
       break;
     case 'cache':
-      removed = (await db.items.count()) + (await db.lists.count());
+      // Also drop the re-derivable kv caches (`topc:` inline top-comment previews, `cterms:` comment
+      // terms) so they're reachable per-category, not only via "Clear all" / pruneCaches.
+      removed =
+        (await db.items.count()) +
+        (await db.lists.count()) +
+        (await db.kv.where('key').startsWith('topc:').delete()) +
+        (await db.kv.where('key').startsWith('cterms:').delete());
       await db.items.clear();
       await db.lists.clear();
       break;
@@ -111,7 +135,9 @@ export async function clearDataCategory(id: DataCategoryId): Promise<number> {
       break;
     case 'hidden':
       removed = await db.hidden.count();
-      await db.hidden.clear();
+      // Route through the shared helper so this path also emits the `unhide` events that reverse
+      // the hide's affinity downvote + disliked-content entry (see `unhideAll`).
+      await unhideAll();
       break;
     case 'seen':
       removed = await db.seen.count();

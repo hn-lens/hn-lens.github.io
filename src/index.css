@@ -5,7 +5,7 @@
 
 /* ─────────────────────────────────────────────────────────────────────────────
    THEMING MODEL — two independent axes:
-     • design  → `data-theme="<id>"` on <html> (20 designs; see src/lib/themes.ts)
+     • design  → `data-theme="<id>"` on <html> (31 designs; see src/lib/themes.ts)
      • mode    → `.dark` class on <html> (light / dark / system)
    Every design defines a full token set for BOTH modes:
      • the default design 'reader' lives in :root (light) + .dark (dark);
@@ -65,8 +65,70 @@
   --color-accent-fg: var(--accent-fg);
   --color-up: var(--up);
   --color-ring: var(--ring);
+  --color-edge: var(--edge);
 
   --font-sans: var(--app-font);
+}
+
+/* Guaranteed-visible edge for INTERACTIVE controls (WCAG 1.4.11 non-text contrast). Based on
+   --muted (which is normalized to ≥4.5:1 vs BOTH surface and bg in every theme), lightened a
+   touch so a control's boundary sits just below secondary-text weight while staying ≥3:1 in
+   every design + mode — even though --border is a deliberately subtle hairline and --surface-2
+   ≈ --surface. A single declaration resolves per-theme via that theme's own --muted/--surface.
+   (Deriving from --fg instead varied wildly by theme; --muted is already contrast-calibrated.) */
+:root {
+  --edge: color-mix(in srgb, var(--muted) 85%, var(--surface));
+}
+
+/* Restore the pointer cursor on interactive buttons: Tailwind v4's preflight dropped the
+   `button { cursor: pointer }` reset, so every <button> defaulted to the text/arrow cursor and
+   didn't read as clickable. Scoped to :not(:disabled) so disabled controls keep their default
+   (and `disabled:cursor-not-allowed` utilities still apply). */
+button:not(:disabled) {
+  cursor: pointer;
+}
+
+/* Segmented controls (Discussion|Article view toggle, comment Sort control):
+   a VISIBLY-bounded group whose SELECTED segment is unmistakable, so a user can always tell
+   there are multiple options and which one is active — theme-independent (uses --edge + accent). */
+.seg {
+  display: inline-flex;
+  align-items: center;
+  /* Wrap segments within the bounded track (rather than overflow the page) when the control
+     is wider than a narrow viewport — e.g. the 4-option comment Sort control on a phone, or
+     a monospace theme that widens the labels. The track bg + border keep the group visually
+     cohesive across the wrap. */
+  flex-wrap: wrap;
+  max-width: 100%;
+  gap: 2px;
+  padding: 3px;
+  background: var(--surface-2);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-lg, 0.5rem);
+}
+.seg-btn {
+  border: 1px solid transparent;
+  border-radius: calc(var(--radius-lg, 0.5rem) - 2px);
+  padding: 0.25rem 0.6rem;
+  font-size: 0.8125rem;
+  line-height: 1.15rem;
+  color: var(--muted);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.seg-btn:hover {
+  color: var(--fg);
+}
+
+.seg-btn[aria-selected='true'],
+.seg-btn[aria-pressed='true'] {
+  /* Raised surface "thumb" (not an accent tint) so the accent LABEL keeps its full ≥4.5:1
+     contrast; selection is carried by the accent border + shadow + weight. */
+  background: var(--surface);
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.14);
 }
 
 /* ── Paper — newspaper: serif, cream stock, ink-red accent, near-square corners ── */
@@ -118,10 +180,10 @@
   --fg: #14231a;
   --muted: #3d5a45;
   --subtle: #476350;
-  --accent: #1f8f3a;
+  --accent: #197630;
   --accent-fg: #ffffff;
-  --up: #1f8f3a;
-  --ring: #1f8f3a;
+  --up: #1d8737;
+  --ring: #1d8737;
   color-scheme: light;
 }
 [data-theme='terminal'].dark {
@@ -188,8 +250,8 @@
   --border: #ece7f3;
   --fg: #2f2a3a;
   --muted: #6b6280;
-  --subtle: #766d8a;
-  --accent: #7c5cf0;
+  --subtle: #746b87;
+  --accent: #6d49ee;
   --accent-fg: #ffffff;
   --up: #2f9e6f;
   --ring: #7c5cf0;
@@ -217,12 +279,12 @@
   --surface-2: #eee8d5;
   --border: #e3ddc7;
   --fg: #073642;
-  --muted: #657b83;
+  --muted: #55686e;
   --subtle: #586e75;
-  --accent: #268bd2;
+  --accent: #1d6ba2;
   --accent-fg: #fdf6e3;
   --up: #859900;
-  --ring: #268bd2;
+  --ring: #1f71ab;
   color-scheme: light;
 }
 [data-theme='solarized'].dark {
@@ -231,12 +293,12 @@
   --surface-2: #0a4551;
   --border: #0f4d5c;
   --fg: #cfe0dd;
-  --muted: #93a1a1;
-  --subtle: #839496;
-  --accent: #2aa198;
+  --muted: #a3afaf;
+  --subtle: #8e9e9f;
+  --accent: #32c1b6;
   --accent-fg: #002b36;
   --up: #859900;
-  --ring: #2aa198;
+  --ring: #2dada3;
   color-scheme: dark;
 }
 
@@ -249,10 +311,10 @@
   --fg: #2e3440;
   --muted: #4c566a;
   --subtle: #434c5e;
-  --accent: #5e81ac;
-  --accent-fg: #eceff4;
+  --accent: #4a688e;
+  --accent-fg: #ffffff;
   --up: #4f7942;
-  --ring: #5e81ac;
+  --ring: #5477a2;
   color-scheme: light;
 }
 [data-theme='nord'].dark {
@@ -263,7 +325,7 @@
   --fg: #eceff4;
   --muted: #cbd3e1;
   --subtle: #b5becd;
-  --accent: #88c0d0;
+  --accent: #93c6d4;
   --accent-fg: #2e3440;
   --up: #a3be8c;
   --ring: #88c0d0;
@@ -279,7 +341,7 @@
   --fg: #3c3836;
   --muted: #665c54;
   --subtle: #6f6257;
-  --accent: #af3a03;
+  --accent: #aa3803;
   --accent-fg: #fbf1c7;
   --up: #79740e;
   --ring: #af3a03;
@@ -323,7 +385,7 @@
   --fg: #f8f8f2;
   --muted: #bcc0d6;
   --subtle: #a6accd;
-  --accent: #bd93f9;
+  --accent: #c39dfa;
   --accent-fg: #282a36;
   --up: #50fa7b;
   --ring: #ff79c6;
@@ -339,8 +401,8 @@
   --border: #d3c3a0;
   --fg: #3a2f22;
   --muted: #6b5a44;
-  --subtle: #79674f;
-  --accent: #8a5a2b;
+  --subtle: #705f49;
+  --accent: #7e5227;
   --accent-fg: #f4ebd8;
   --up: #5f7d3a;
   --ring: #8a5a2b;
@@ -370,10 +432,10 @@
   --fg: #0e2b33;
   --muted: #3d686f;
   --subtle: #48757d;
-  --accent: #0d8fa6;
+  --accent: #0b7385;
   --accent-fg: #ffffff;
   --up: #1f9e7a;
-  --ring: #0d8fa6;
+  --ring: #0c7f93;
   color-scheme: light;
 }
 [data-theme='ocean'].dark {
@@ -400,7 +462,7 @@
   --fg: #1c2b18;
   --muted: #4a6040;
   --subtle: #56704a;
-  --accent: #3f7d34;
+  --accent: #3a7230;
   --accent-fg: #ffffff;
   --up: #3f7d34;
   --ring: #3f7d34;
@@ -430,10 +492,10 @@
   --fg: #3a221a;
   --muted: #7a5344;
   --subtle: #8a5f4e;
-  --accent: #e2603f;
+  --accent: #b83b1c;
   --accent-fg: #ffffff;
   --up: #b57e18;
-  --ring: #e2603f;
+  --ring: #ca411f;
   color-scheme: light;
 }
 [data-theme='sunset'].dark {
@@ -460,7 +522,7 @@
   --fg: #3a1f28;
   --muted: #7a4d5c;
   --subtle: #8a5968;
-  --accent: #c43e6b;
+  --accent: #b23660;
   --accent-fg: #ffffff;
   --up: #3f9e6f;
   --ring: #c43e6b;
@@ -559,7 +621,7 @@
   --fg: #2a1440;
   --muted: #6d4a94;
   --subtle: #7d57a5;
-  --accent: #c026a8;
+  --accent: #af2399;
   --accent-fg: #ffffff;
   --up: #0f9e8e;
   --ring: #c026a8;
@@ -587,9 +649,9 @@
   --surface-2: #e6e9ef;
   --border: #dce0e8;
   --fg: #4c4f69;
-  --muted: #6c6f85;
+  --muted: #64667b;
   --subtle: #5c5f77;
-  --accent: #8839ef;
+  --accent: #8534ef;
   --accent-fg: #ffffff;
   --up: #40a02b;
   --ring: #8839ef;
@@ -622,7 +684,7 @@
   --border: #cbd5e1;
   --fg: #0f172a;
   --muted: #475569;
-  --subtle: #64748b;
+  --subtle: #606f85;
   --accent: #4f46e5;
   --accent-fg: #ffffff;
   --up: #059669;
@@ -637,7 +699,7 @@
   --fg: #e2e8f0;
   --muted: #94a3b8;
   --subtle: #8496ac;
-  --accent: #818cf8;
+  --accent: #8b95f9;
   --accent-fg: #0f172a;
   --up: #34d399;
   --ring: #818cf8;
@@ -659,10 +721,10 @@
   --fg: #3d1130;
   --muted: #883a6b;
   --subtle: #8f4577;
-  --accent: #e21f7f; /* darkened so white/dark text on the pink button passes contrast */
+  --accent: #c91a70; /* darkened so white/dark text on the pink button passes contrast */
   --accent-fg: #ffffff;
   --up: #0f9e75;
-  --ring: #e21f7f;
+  --ring: #db1c7a;
   color-scheme: light;
 }
 [data-theme='candy'].dark {
@@ -689,10 +751,10 @@
   --fg: #3a2e12;
   --muted: #6d5a2a;
   --subtle: #7c6832;
-  --accent: #b5730a;
+  --accent: #8f5b08;
   --accent-fg: #fffdf7;
   --up: #5f7d1a;
-  --ring: #b5730a;
+  --ring: #a26709;
   color-scheme: light;
 }
 [data-theme='amber'].dark {
@@ -749,10 +811,10 @@
   --fg: #0c2a1e;
   --muted: #3a6350;
   --subtle: #46705c;
-  --accent: #0a8f5b;
+  --accent: #08774c;
   --accent-fg: #ffffff;
-  --up: #0a8f5b;
-  --ring: #0a8f5b;
+  --up: #098555;
+  --ring: #098555;
   color-scheme: light;
 }
 [data-theme='emerald'].dark {
@@ -815,7 +877,7 @@
   --fg: #14160f;
   --muted: #4c5142;
   --subtle: #5a604e;
-  --accent: #4d7c0f;
+  --accent: #47730e;
   --accent-fg: #ffffff;
   --up: #4d7c0f;
   --ring: #4d7c0f;
@@ -890,7 +952,7 @@
   --fg: #1c1d22;
   --muted: #5a5f6e;
   --subtle: #6b7180;
-  --accent: #5e6ad2;
+  --accent: #525fcf;
   --accent-fg: #ffffff;
   --up: #2f9e6f;
   --ring: #5e6ad2;
@@ -954,13 +1016,23 @@
   --ring: #a78bfa;
   color-scheme: dark;
 }
-[data-theme='bento'] :is(.story-card, .bg-surface) {
+/* The neumorphic tile treatment is for SURFACES (cards/panels) — never for interactive CONTROLS.
+   `.bg-surface` is also the fill of the shared control recipe (`border border-edge bg-surface`), so
+   erasing border-color here stripped the control-grade `--edge` boundary from ~26 controls (both
+   TopNav selects, the search inputs, every inactive feed tab, all Settings selects + prompt
+   textareas, the tag-editor inputs, Load more): measured 1.00:1 border / 1.08:1 fill in BOTH modes,
+   i.e. invisible AS controls (fails WCAG 1.4.11, the non-text contrast axis). Focus did not rescue
+   it — this block is UN-LAYERED while Tailwind utilities live in `@layer utilities`, so it wins
+   regardless of specificity and even a focused input computed a transparent border. Excluding
+   anything that opted into the control boundary (`.border-edge`) or is natively a control keeps the
+   tile look exactly where it belongs. */
+[data-theme='bento'] :is(.story-card, .bg-surface):not(.border-edge, button, select, input, textarea) {
   border-color: transparent;
   box-shadow:
     0 1px 2px rgba(15, 23, 42, 0.04),
     0 10px 26px rgba(15, 23, 42, 0.07);
 }
-[data-theme='bento'].dark :is(.story-card, .bg-surface) {
+[data-theme='bento'].dark :is(.story-card, .bg-surface):not(.border-edge, button, select, input, textarea) {
   box-shadow:
     0 1px 2px rgba(0, 0, 0, 0.3),
     0 12px 30px rgba(0, 0, 0, 0.4);
@@ -1012,21 +1084,21 @@
   --bg: #eef0f5;
   --surface: #eef0f5;
   --surface-2: #e6e9f0;
-  --border: transparent;
+  --border: #d6d9e3; /* soft hairline (not transparent) so dividers/outlines still render */
   --fg: #37324a;
-  --muted: #6b6785;
-  --subtle: #726e8c;
-  --accent: #8b7bf0;
+  --muted: #66637f;
+  --subtle: #6b6783;
+  --accent: #5f49ea;
   --accent-fg: #ffffff;
   --up: #2fb08a;
-  --ring: #8b7bf0;
+  --ring: #6752eb;
   color-scheme: light;
 }
 [data-theme='clay'].dark {
   --bg: #22252e;
   --surface: #22252e;
   --surface-2: #272b35;
-  --border: transparent;
+  --border: #33374a; /* soft hairline (not transparent) so dividers/outlines still render */
   --fg: #d8dced;
   --muted: #a0a6ba;
   --subtle: #aab0c4;
@@ -1036,13 +1108,15 @@
   --ring: #a99bf5;
   color-scheme: dark;
 }
-[data-theme='clay'] :is(.story-card, .bg-surface) {
+/* Same rule as `bento` above: a surface TREATMENT must never reach interactive controls, or it
+   strips the control-grade `--edge` boundary from every `border-edge bg-surface` control. */
+[data-theme='clay'] :is(.story-card, .bg-surface):not(.border-edge, button, select, input, textarea) {
   border: 0;
   box-shadow:
     6px 6px 14px rgba(40, 46, 74, 0.12),
     -6px -6px 14px rgba(255, 255, 255, 0.8);
 }
-[data-theme='clay'].dark :is(.story-card, .bg-surface) {
+[data-theme='clay'].dark :is(.story-card, .bg-surface):not(.border-edge, button, select, input, textarea) {
   box-shadow:
     6px 6px 14px rgba(0, 0, 0, 0.5),
     -6px -6px 14px rgba(255, 255, 255, 0.04);
@@ -1062,7 +1136,7 @@
   --fg: #000000;
   --muted: #444444;
   --subtle: #333333;
-  --accent: #e30613;
+  --accent: #d90612;
   --accent-fg: #ffffff;
   --up: #007a33;
   --ring: #e30613;
@@ -1091,11 +1165,15 @@
     radial-gradient(50rem 40rem at 110% 10%, rgba(22, 224, 200, 0.12), transparent 60%);
   background-attachment: fixed;
 }
-[data-theme='sunset'] body {
+/* Light-mode only. These two washes start on a hardcoded LIGHT colour, so applying them in dark
+   mode paints a pale peach/pink band across the top of a dark page. The sibling treatments above
+   are already scoped with `.dark`; these were simply missed — which went unnoticed because the
+   opaque app root meant none of them rendered at all. */
+[data-theme='sunset']:not(.dark) body {
   background-image: linear-gradient(180deg, #fde3d0 0%, var(--bg) 42%);
   background-attachment: fixed;
 }
-[data-theme='candy'] body {
+[data-theme='candy']:not(.dark) body {
   background-image: linear-gradient(180deg, #ffe6f3 0%, var(--bg) 40%);
   background-attachment: fixed;
 }
@@ -1144,7 +1222,7 @@
   text-align: right;
 }
 [data-layout='list'] .sc-title {
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 [data-layout='list'] .sc-meta {
   font-size: 11px;
@@ -1170,10 +1248,73 @@
 [data-layout='compact'] .sc-favicon,
 [data-layout='compact'] .sc-rank,
 [data-layout='compact'] .sc-meta,
-[data-layout='compact'] .sc-reasons,
 [data-layout='compact'] .sc-tldr,
+/* The inline top-comment preview stays out of this layout: `.sc-body` is a single flex ROW here, and
+   the preview is a SIBLING of the title, so as a same-row flex item ~660px wide it made the title
+   absorb all the shrink and collapse to ~10-30px — the headline replaced by an ellipsis on every
+   viewport, reachable with zero deliberate action (the terminal/cyberpunk designs default to this
+   layout). Density is this layout's entire purpose; the preview is disclosed as unavailable here
+   instead (see the feed header note). */
+[data-layout='compact'] .sc-topcomment {
+  display: none;
+}
+/* Density must not mean AMPUTATION. This layout used to `display: none` the whole action row
+   (Save · Not-interested · Personalize ⋯ · TL;DR) AND the "Why #N?" explainer, with no hover
+   fallback and no alternative path — and because the `terminal` and `cyberpunk` DESIGNS default to
+   this layout, users who only picked a colour scheme silently lost every per-card action and the
+   flagship rank explainer. Progressive disclosure keeps the one-line density on pointer devices
+   while making the controls reachable; where there is no hover (touch) they stay visible, since
+   "reveal on hover" is unreachable there. */
+[data-layout='compact'] .sc-reasons,
 [data-layout='compact'] .sc-actions {
   display: none;
+}
+/* Reveal WITHOUT reflow. Switching these from `display:none` to in-flow `flex` on hover grew the
+   row from 27px to 127px and pushed every row below it down ~100px — so moving the pointer toward
+   a story slid that story out from under it and you clicked a different one (measured failing in
+   9 of 9 layout x viewport cells, and reaching anyone who merely picked the terminal or cyberpunk
+   DESIGN, since both default to this layout). A hover affordance must never change the height of
+   the thing being hovered.
+   So the actions appear as an OVERLAY pinned to the row: reachable, but out of flow, so nothing
+   moves. The "why" chips stay hidden here — this layout's whole point is one line per story, and
+   they are the informational part, not the interactive one. */
+[data-layout='compact'] .story-card {
+  position: relative;
+}
+[data-layout='compact'] .story-card:hover .sc-actions,
+[data-layout='compact'] .story-card:focus-within .sc-actions {
+  display: flex;
+  position: absolute;
+  right: 0.5rem;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 20;
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  margin: 0;
+  padding: 0 0.25rem;
+  border-radius: 0.5rem;
+  /* Opaque, so the controls stay legible where they sit over the title. */
+  background: var(--surface);
+  box-shadow: 0 0 0 1px var(--edge);
+}
+@media (hover: none) {
+  [data-layout='compact'] .sc-reasons,
+  [data-layout='compact'] .sc-actions {
+    display: flex;
+  }
+}
+/* When those DO appear they must take their OWN line, never compete with the title for the row —
+   and they must wrap, or the touch-sized action row overflows the page horizontally. */
+[data-layout='compact'] .sc-body {
+  flex-wrap: wrap;
+}
+[data-layout='compact'] .sc-reasons,
+[data-layout='compact'] .sc-actions {
+  flex: 0 0 100%;
+  min-width: 0;
+  flex-wrap: wrap;
+  margin-left: 0;
 }
 [data-layout='compact'] .sc-num {
   display: inline-block;
@@ -1189,14 +1330,17 @@
   flex: 1 1 auto;
   min-width: 0;
   margin: 0;
-  font-size: 13px;
+  font-size: 0.8125rem;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 [data-layout='compact'] .sc-sub {
   margin: 0;
-  flex-shrink: 0;
+  /* Allow the meta cell to shrink (was flex-shrink:0) so its author `.truncate` has a shrink
+     budget — otherwise at 320px + the "Large" text size the max-content meta overflowed the
+     page (worst on the monospace terminal/cyber designs, which default to this layout). */
+  min-width: 0;
 }
 
 /* ── magazine: responsive card grid with a full-width hero (first story) ── */
@@ -1218,7 +1362,7 @@
   grid-column: 1 / -1;
 }
 [data-layout='magazine'] .story-card:first-child .sc-title {
-  font-size: 20px;
+  font-size: 1.25rem;
 }
 
 /* ── zen: single wide centered reading column, no sidebar, large type ── */
@@ -1240,7 +1384,7 @@
   padding: 1.1rem 0.25rem;
 }
 [data-layout='zen'] .sc-title {
-  font-size: 18px;
+  font-size: 1.125rem;
   line-height: 1.4;
 }
 
@@ -1337,8 +1481,13 @@
   font-size: 18px;
   text-align: center;
 }
+/* On For You, the card gets BOTH a `.sc-rank` and a `.sc-num` (both i+1); since `media` surfaces
+   `.sc-num`, hide the redundant `.sc-rank` so the index doesn't render twice (mirrors list/compact). */
+[data-layout='media'] .sc-rank {
+  display: none;
+}
 [data-layout='media'] .sc-title {
-  font-size: 17px;
+  font-size: 1.0625rem;
   line-height: 1.35;
 }
 
@@ -1370,7 +1519,25 @@
   display: none;
 }
 [data-layout='newspaper'] .sc-title {
-  font-size: 14px;
+  font-size: 0.875rem;
+}
+/* The multi-column newspaper track is very narrow on phones (~140px). The action row is a
+   nowrap flex of shrink-0 44px touch targets whose min-content width exceeds the column,
+   forcing horizontal PAGE overflow. Let it wrap within the column (right-aligned) so no
+   action is clipped and the page never gains a horizontal scrollbar. */
+[data-layout='newspaper'] .sc-actions {
+  justify-content: flex-end;
+}
+
+/* Wrapping is a property of the ACTION ROW ITSELF, not of one layout. The row is a nowrap flex of
+   shrink-0 ~44px touch targets, so it overflows whenever available width drops below its
+   min-content width — `newspaper` is merely the narrowest way to get there. With an AI backend
+   configured the row gains a 5th button, and at 320px + Large reading text the five targets total
+   257px against a 307px card: +21px of horizontal PAGE overflow with the last action half-clipped,
+   in 9 of the 14 layouts (cards, grid, feature, magazine, media, masonry, zen, bento, rail).
+   Scoping the remedy to one layout left the other nine broken, so hoist it onto the class. */
+.sc-actions {
+  flex-wrap: wrap;
 }
 
 /* ── cover: bold full-width bands, big titles, accent left bar ── */
@@ -1388,7 +1555,7 @@
   display: none;
 }
 [data-layout='cover'] .sc-title {
-  font-size: 22px;
+  font-size: 1.375rem;
   line-height: 1.2;
   margin-top: 0.3rem;
 }
@@ -1423,6 +1590,15 @@
   grid-column: 1 / -1;
 }
 
+/* Grid-based layouts put cards in grid tracks whose default `min-width: auto` lets a card grow
+   to its min-content — so a single-column track (narrow phones) + the "Large" reading text size
+   could push the card (and the whole page) wider than the viewport. Let cards shrink instead. */
+[data-layout='grid'] .story-card,
+[data-layout='magazine'] .story-card,
+[data-layout='bento'] .story-card {
+  min-width: 0;
+}
+
 /* ── feature: one large hero story + the rest as a dense numbered list ── */
 [data-layout='feature'] .feed-list {
   gap: 0.5rem;
@@ -1431,7 +1607,7 @@
   padding: 1.3rem;
 }
 [data-layout='feature'] .story-card:first-child .sc-title {
-  font-size: 24px;
+  font-size: 1.5rem;
   line-height: 1.15;
 }
 [data-layout='feature'] .story-card:not(:first-child) {
@@ -1449,8 +1625,13 @@
   min-width: 1.6rem;
   text-align: right;
 }
+/* Non-hero feature cards surface `.sc-num`, so hide the redundant For-You `.sc-rank` (mirrors
+   list/compact/media) — otherwise the index renders twice. */
+[data-layout='feature'] .story-card:not(:first-child) .sc-rank {
+  display: none;
+}
 [data-layout='feature'] .story-card:not(:first-child) .sc-title {
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 
 /* ── masonry: staggered CSS columns, cards keep their boxes ── */
@@ -1518,11 +1699,29 @@ body {
   border-radius: 999px;
 }
 
+/* Opt-out for horizontal strips that shouldn't show a scrollbar (the feed tab bar) —
+   the global thin scrollbar above is visible on classic-scrollbar platforms even when
+   overlay scrollbars hide it in headless. Edge fades still hint the strip scrolls. */
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
 /* Rendered HN HTML (comments / story text) */
 .hn-html {
   overflow-wrap: anywhere;
   word-break: break-word;
   line-height: 1.6;
+}
+
+/* Story-card titles must break a long UNbreakable token (a long URL / package / hash /
+   compound word) instead of overflowing the card — otherwise it spills the card on narrow
+   phones, even in the default layout. */
+.sc-title {
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .hn-html p {
   margin: 0.5rem 0;
@@ -1547,6 +1746,15 @@ body {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
+/* Discussion readability (comment + story bodies): a comfortable reading size and
+   line-height, a touch larger than the surrounding UI/meta text — the HackerWeb-clean
+   feel. rem-based so the reading text-size axis scales it. Placed after .hn-html so it
+   wins the line-height (equal specificity → source order). */
+.comment-body {
+  font-size: 0.9375rem; /* ~15px at the 'md' default */
+  line-height: 1.7;
+}
+
 @keyframes shimmer {
   100% {
     transform: translateX(100%);
@@ -1564,4 +1772,55 @@ body {
   transform: translateX(-100%);
   background: linear-gradient(90deg, transparent, rgba(127, 127, 127, 0.12), transparent);
   animation: shimmer 1.4s infinite;
+}
+
+/* In-thread comment-search highlight: <mark> around matched terms uses a subtle,
+   theme-aware accent tint (browsers default to a jarring yellow that clashes with dark
+   themes). Text colour is inherited so contrast stays correct in every design. */
+mark {
+  background-color: color-mix(in srgb, var(--accent) 42%, transparent);
+  color: inherit;
+  font-weight: 600;
+  border-radius: 2px;
+  padding: 0 2px;
+}
+
+/* The inline top-comment preview and the placeholder that reserves its space share ONE height, so
+   the arriving text cannot change the card's size. Hand-matching two separate heights drifted by
+   24px on the first attempt, which is exactly the reflow this is meant to prevent — expressed in
+   rem so it tracks the reading-text-size axis along with the text it reserves for. */
+.sc-topcomment,
+.sc-topcomment-skeleton {
+  min-height: 3.6rem;
+}
+
+/* Reading TEXT SIZE axis (data-textsize on <html>): scales the root font-size so all
+   rem-based text AND spacing scale proportionally (like browser text-zoom). Modest steps
+   keep the responsive, rem-based layouts from overflowing. 'md' is the 100% default. */
+html[data-textsize='sm'] {
+  font-size: 93.75%;
+}
+html[data-textsize='lg'] {
+  font-size: 112.5%;
+}
+
+/* Touch-friendly tap targets on phones/tablets (<lg): the primary story-card action
+   buttons (Save / Not interested / Personalize / TL;DR / open) grow to >=44px so they're
+   comfortable to tap, while desktop keeps its denser 36px mouse sizing. Scoped to
+   .sc-actions so no other IconButton is affected. The `compact` layout hides .sc-actions,
+   so it's unaffected. */
+@media (max-width: 1023px) {
+  /* Every action control, including the "Open on HN" link (an <a>, not a <button>). */
+  .sc-actions button,
+  .sc-actions a {
+    min-height: 2.75rem;
+    min-width: 2.75rem;
+  }
+  /* The comments-count control opens the discussion — on a link story it's the ONLY way
+     in (the card's stretched link opens the article), so it needs a comfortable tap height
+     too (it lives in the meta row, not .sc-actions). */
+  .sc-comments {
+    min-height: 2.75rem;
+    min-width: 2.75rem;
+  }
 }

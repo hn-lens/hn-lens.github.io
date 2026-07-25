@@ -1,4 +1,9 @@
 version: 2
+
+# Security advisories are raised by Dependabot immediately, independently of the schedules below.
+# See SECURITY.md → "Dependency advisories" for the standing posture on advisories that have no
+# patched version available, and how reachability in the shipped bundle is assessed.
+
 updates:
   - package-ecosystem: npm
     directory: "/"

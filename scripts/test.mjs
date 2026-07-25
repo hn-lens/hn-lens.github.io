@@ -59,6 +59,12 @@ const TIERS = {
     steps: [
       { name: 'typecheck (tsc -b)', cmd: 'npx', args: ['tsc', '-b'] },
       { name: 'lint (oxlint)', cmd: 'npx', args: ['oxlint'] },
+      // THIRD_PARTY_NOTICES.md is generated from package.json's runtime deps and carries a real
+      // Apache-2.0 section 4(d) obligation, so a dependency bump must not be able to leave it stale.
+      { name: 'third-party notices up to date', cmd: 'node', args: ['scripts/gen-notices.mjs', '--check'] },
+      // This repo is developed privately and published publicly, so an internal hostname/tool name
+      // in a tracked file is a release blocker. Skips loudly where the local pattern list is absent.
+      { name: 'no internal references in tracked files', cmd: 'node', args: ['scripts/leakcheck.mjs'] },
       { name: 'build (vite)', cmd: 'npx', args: ['vite', 'build'], build: true },
     ],
   },
@@ -80,9 +86,11 @@ const TIERS = {
       { name: 'a11ytest (axe-core)', script: 'a11ytest' },
       { name: 'layouttest (structural layouts)', script: 'layouttest' },
       { name: 'commenttest (comment org + ranking)', script: 'commenttest' },
-      { name: 'discussionviewtest (summary gate + drawer new-badge)', script: 'discussionviewtest' },
+      { name: 'discussionviewtest (summary gate + feed-open new-badge)', script: 'discussionviewtest' },
+      { name: 'topcommenttest (inline top comment + header toggle)', script: 'topcommenttest' },
       { name: 'llmcachetest (summary sources + cache)', script: 'llmcachetest' },
       { name: 'cloudllmtest (BYO cloud LLM provider + key)', script: 'cloudllmtest' },
+      { name: 'askthreadtest (grounded ask-the-thread Q&A)', script: 'askthreadtest' },
       { name: 'articleproxytest (reader-proxy attribution + prefetch)', script: 'articleproxytest' },
       { name: 'articlerankingtest (article body in ranking)', script: 'articlerankingtest' },
       { name: 'articlelinktest (full-text link on click)', script: 'articlelinktest' },
@@ -93,11 +101,17 @@ const TIERS = {
       { name: 'weighthintstest (inactive-signal hints)', script: 'weighthintstest' },
       { name: 'reasonstest (why-chip wording thresholds)', script: 'reasonstest' },
       { name: 'rankergatetest (learned min-sample gate)', script: 'rankergatetest' },
+      { name: 'trainlabeltest (glance vs stay training labels)', script: 'trainlabeltest' },
       { name: 'diversitytest (per-domain cap in For You)', script: 'diversitytest' },
+      { name: 'themecontrasttest (WCAG contrast, all designs \u00d7 modes)', script: 'themecontrasttest' },
+      { name: 'switchtest (switch control rendering + WCAG 1.4.11)', script: 'switchtest' },
       { name: 'cardteachtest (follow/mute from a card)', script: 'cardteachtest' },
       { name: 'mobiletest (mobile tune + read access)', script: 'mobiletest' },
       { name: 'onboardingtest (first-run interests)', script: 'onboardingtest' },
       { name: 'gisttest (non-AI thread digest)', script: 'gisttest' },
+      { name: 'focustest (discussion|article dual-view)', script: 'focustest' },
+      { name: 'usertest (profile: stories + comments + AI persona summary)', script: 'usertest' },
+      { name: 'settingstoctest (settings table-of-contents nav)', script: 'settingstoctest' },
     ],
   },
   behaviour: {

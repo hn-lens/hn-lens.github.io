@@ -90,7 +90,7 @@ export default function HnAccount() {
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             placeholder="HN username"
-            className="min-w-0 flex-1 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-sm outline-none focus:border-accent"
+            className="min-w-0 flex-1 rounded-lg border border-edge bg-surface px-2.5 py-1.5 text-sm outline-none focus:border-accent"
           />
           <button
             type="submit"
@@ -99,7 +99,7 @@ export default function HnAccount() {
             Connect
           </button>
         </form>
-        {nameError && <p className="mt-1.5 text-xs text-red-600 dark:text-red-400">{nameError}</p>}
+        {nameError && <p className="mt-1.5 text-xs text-red-700 dark:text-red-300">{nameError}</p>}
       </section>
     );
   }
@@ -111,14 +111,9 @@ export default function HnAccount() {
       <div className="mb-2 flex items-center justify-between">
         <h2 className="flex items-center gap-2 text-sm font-semibold">
           <CircleUser className="size-4 text-accent" />
-          <a
-            href={`https://news.ycombinator.com/user?id=${encodeURIComponent(username)}`}
-            target="_blank"
-            rel="noreferrer"
-            className="hover:text-accent hover:underline"
-          >
+          <Link to={`/user/${encodeURIComponent(username)}`} className="hover:text-accent hover:underline">
             {username}
-          </a>
+          </Link>
         </h2>
         <button
           type="button"
@@ -144,7 +139,7 @@ export default function HnAccount() {
 
           {a.topDomains.length > 0 && (
             <div className="mt-3">
-              <p className="mb-1 text-xs text-subtle">You post most from · tap to follow</p>
+              <p className="mb-1 text-xs text-subtle">You post most from · follow any of these</p>
               <div className="flex flex-wrap gap-1.5">
                 {a.topDomains.map((d) => {
                   const followed = followedDomains.includes(d);
@@ -164,7 +159,7 @@ export default function HnAccount() {
                       className={cn(
                         'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs',
                         followed
-                          ? 'bg-accent/15 text-accent'
+                          ? 'bg-accent/15 text-fg'
                           : 'bg-surface-2 text-muted hover:bg-accent/10 hover:text-accent'
                       )}
                     >
@@ -200,7 +195,7 @@ export default function HnAccount() {
             type="button"
             onClick={doImport}
             disabled={importing}
-            className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg border border-accent/40 px-3 py-2 text-xs font-medium text-accent hover:bg-accent/10 disabled:opacity-60"
+            className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg border border-edge px-3 py-2 text-xs font-medium text-accent hover:bg-accent/10 disabled:opacity-60"
           >
             {importing ? (
               <Loader2 className="size-3.5 animate-spin" />
@@ -219,9 +214,9 @@ export default function HnAccount() {
             <p className="mt-1.5 text-xs text-muted">{importMsg}</p>
           ) : (
             importedCount > 0 && (
-              <p className="mt-1.5 flex items-center gap-1 text-xs text-up">
-                <Check className="size-3.5" /> {importedCount.toLocaleString()} of your posts &amp; discussions are
-                personalizing your feed.
+              <p className="mt-1.5 flex items-center gap-1 text-xs text-muted">
+                <Check className="size-3.5 shrink-0 text-up" /> {importedCount.toLocaleString()} of your posts &amp;
+                discussions are personalizing your feed.
               </p>
             )
           )}
@@ -235,7 +230,9 @@ function Stat({ label, value }: { label: string; value: number }) {
   return (
     <div className="rounded-lg bg-surface-2 py-1.5">
       <div className="text-sm font-semibold tabular-nums">{value.toLocaleString()}</div>
-      <div className="text-[10px] uppercase tracking-wide text-subtle">{label}</div>
+      {/* `muted`, not `subtle`: this is the LABEL for a stat the reader is here to read, and it sits
+          on the raised surface-2 tile where the decorative token measures 3.80 against a 4.5 bar. */}
+      <div className="text-[10px] uppercase tracking-wide text-muted">{label}</div>
     </div>
   );
 }

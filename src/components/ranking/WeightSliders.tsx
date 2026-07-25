@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { DEFAULT_WEIGHTS, usePrefs } from '../../lib/prefs';
 import { computeAffinities } from '../../lib/interactions';
 import { loadModel } from '../../lib/ranking/logistic';
+import { rankerTrained } from '../../lib/ranking/strategies';
 import { Slider } from '../ui/controls';
 import type { RankWeights } from '../../types';
 
@@ -18,24 +19,38 @@ export default function WeightSliders() {
   const weights = usePrefs((s) => s.weights);
   const setWeights = usePrefs((s) => s.setWeights);
   const embeddingsEnabled = usePrefs((s) => s.embeddingsEnabled);
+  const useLearnedRanker = usePrefs((s) => s.useLearnedRanker);
   const followedDomains = usePrefs((s) => s.followedDomains);
   const followedUsers = usePrefs((s) => s.followedUsers);
+  const keywordsBoost = usePrefs((s) => s.keywordsBoost);
 
   const affQ = useQuery({ queryKey: ['affinities'], queryFn: computeAffinities, staleTime: 30000 });
   const modelQ = useQuery({ queryKey: ['ranker'], queryFn: loadModel });
 
+  // The affinity TERM folds in boost keywords too (strategies.ts blend: +1.5 per boostKeyword), so
+  // an onboarded user with only interests set has an ACTIVE affinity signal — the hint must not
+  // call it inactive (that contradicts the "Why #N?" trace which credits the boost keyword).
   const hasAffinity =
     followedDomains.length > 0 ||
     followedUsers.length > 0 ||
+    keywordsBoost.length > 0 ||
     Object.values(affQ.data?.domains ?? {}).some((v) => v !== 0) ||
     Object.values(affQ.data?.authors ?? {}).some((v) => v !== 0);
-  const hasModel = (modelQ.data?.n ?? 0) > 0;
+  // The learned reranker only affects ranking when BOTH the toggle is on AND it's trained
+  // enough (rankerTrained) — the exact `activeModel` gate useFeed uses for scoring/the banner,
+  // so this slider hint can't say "active" while "Why #N?" and the feed say it's off/learning.
+  // Distinguish a deliberate OFF from "still learning" so the hint is honest either way.
+  const learnedHint = !useLearnedRanker
+    ? 'inactive — turn on the Learned reranker in Settings'
+    : rankerTrained(modelQ.data)
+      ? undefined
+      : 'inactive — trains itself automatically as you read (or “Retrain now” in Settings)';
 
   // A signal that's currently zero makes its weight a no-op — say so.
   const inactive: Partial<Record<keyof RankWeights, string>> = {
     affinity: hasAffinity ? undefined : 'inactive — grows as you follow sites/users or open stories',
     relevance: embeddingsEnabled ? undefined : 'inactive — enable Embeddings in Settings',
-    learned: hasModel ? undefined : 'inactive — “Train from history” in Settings',
+    learned: learnedHint,
   };
 
   return (

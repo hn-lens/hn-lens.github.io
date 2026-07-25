@@ -83,6 +83,8 @@ export interface AlgoliaSearchResult {
 // ---------- App ----------
 
 export type FeedKind = 'foryou' | 'top' | 'new' | 'best' | 'ask' | 'show' | 'job' | 'read';
+// The AI summary types, each with its own configurable system instruction + user template.
+export type PromptKind = 'tldr' | 'thread' | 'ask' | 'user';
 
 export interface RankWeights {
   popularity: number; // HN score
@@ -128,6 +130,7 @@ export interface InteractionEvent {
 }
 
 export type Theme = 'light' | 'dark';
+export type TextSize = 'sm' | 'md' | 'lg';
 
 // The cloud LLM providers a user can bring their own API key for.
 export type CloudProvider = 'gemini' | 'openai' | 'anthropic';
@@ -136,8 +139,9 @@ export type LlmProvider = 'local' | CloudProvider;
 
 export interface Prefs {
   theme: Theme; // light/dark MODE axis (binary toggle — no "system")
-  themeName: string; // which of the 25 visual designs (the DESIGN axis; see lib/themes.ts)
+  themeName: string; // which of the 31 visual designs (the DESIGN axis; see lib/themes.ts)
   layout: string; // structural layout id, or 'auto' to follow the design's default (LAYOUT axis)
+  textSize: TextSize; // reading text scale (root font-size) — independent of design/layout
   defaultFeed: FeedKind;
   weights: RankWeights;
   followedDomains: string[];
@@ -163,9 +167,10 @@ export interface Prefs {
   // the provider's model list once a key is set, so the user picks from what THEIR key
   // can actually access.
   cloudModels: Record<CloudProvider, string>;
-  // Custom SYSTEM INSTRUCTION per summary type (empty ⇒ the built-in default). Sent as the
-  // system message on every LLM call (local + cloud), so power users can steer the AI.
-  systemPrompts: { tldr: string; thread: string };
+  // AI prompt overrides per summary type: an editable SYSTEM instruction AND an editable
+  // USER-message TEMPLATE (with {placeholders} for the data — the whole instruction is
+  // configurable, not just the system line). Empty string on either ⇒ use the built-in default.
+  prompts: Record<PromptKind, { system: string; user: string }>;
   useLearnedRanker: boolean;
   hnUsername: string;
   // Opt-in (default off): fetch linked ARTICLE body text via free reader proxies
@@ -183,4 +188,9 @@ export interface Prefs {
   // strict privacy — favicons then render as letter monograms only, so no story domains
   // are ever sent to that service.
   remoteFavicons: boolean;
+  // Show the single best comment inline under each story card so you can read the standout
+  // take without opening the thread (default ON). Toggled from the switch in the feed header
+  // (not Settings). The comment is lazy-fetched when a card scrolls into view + cached; uses
+  // HN's own CORS API (no privacy tradeoff like the reader proxy).
+  showTopComments: boolean;
 }

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef} from 'react';
 import { Sparkles } from 'lucide-react';
 import { usePrefs } from '../lib/prefs';
 
@@ -20,17 +20,26 @@ const TOPICS: Array<{ label: string; keywords: string[] }> = [
   { label: 'Crypto', keywords: ['crypto', 'bitcoin'] },
 ];
 
+import { useModalBehavior } from '../hooks/useModalBehavior';
+
 export default function Onboarding() {
+  const dialogRef = useRef<HTMLDivElement>(null);
   const hasOnboarded = usePrefs((s) => s.hasOnboarded);
   const existingBoost = usePrefs((s) => s.keywordsBoost);
   const set = usePrefs((s) => s.set);
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
-  if (hasOnboarded) return null;
   // Don't interrupt automated runs — they represent returning users and shouldn't get
   // a first-run modal over every test. The onboarding harness opts in explicitly.
   const forced = typeof localStorage !== 'undefined' && localStorage.getItem('hn:onboard') === 'force';
-  if (!forced && typeof navigator !== 'undefined' && navigator.webdriver) return null;
+  const suppressed = !forced && typeof navigator !== 'undefined' && navigator.webdriver;
+  // ONE source of truth for "is this modal actually on screen": the hook's `active` flag must match
+  // the FULL render condition, not just one clause of it — a partial flag locked page scroll while
+  // the dialog was suppressed and never rendered.
+  const open = !hasOnboarded && !suppressed;
+  useModalBehavior(dialogRef, open);
+
+  if (!open) return null;
 
   const toggle = (label: string) =>
     setSelected((prev) => {
@@ -55,9 +64,11 @@ export default function Onboarding() {
       className="fixed inset-0 z-[60] flex items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4"
       role="dialog"
       aria-modal="true"
+      ref={dialogRef}
+      tabIndex={-1}
       aria-label="Welcome to HN Lens — pick your interests"
     >
-      <div className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-t-2xl border border-border bg-surface p-5 shadow-2xl sm:rounded-2xl">
+      <div className="max-h-[90vh] w-full min-w-0 max-w-md overflow-y-auto rounded-t-2xl border border-border bg-surface p-5 shadow-2xl sm:rounded-2xl">
         <h2 className="flex items-center gap-2 text-lg font-semibold">
           <Sparkles className="size-5 text-accent" /> Welcome to HN Lens
         </h2>
@@ -80,7 +91,7 @@ export default function Onboarding() {
                   'rounded-full border px-3 py-1.5 text-sm font-medium transition-colors ' +
                   (on
                     ? 'border-transparent bg-accent text-accent-fg'
-                    : 'border-border bg-surface text-muted hover:text-fg')
+                    : 'border-edge bg-surface text-muted hover:text-fg')
                 }
               >
                 {t.label}

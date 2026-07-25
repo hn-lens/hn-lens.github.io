@@ -17,7 +17,7 @@
 //        CAUSAL    → rank a held-out pool cold vs personalized; liked items rise
 //        EMBEDDINGS→ real cosine-similarity relevance recovers the taste
 //   3. Drive the real For-You UI over a MOCKED HN API so the screenshots show the
-//      controlled taste end-to-end, plus the Settings "trained on N examples".
+//      controlled taste end-to-end, plus the Settings reranker "Active · personalizing" status.
 //
 // Output: scripts/.artifacts/personalization-report.json (+ two screenshots),
 // consumed by scripts/personalization-report.mjs to render the visual dashboard.
@@ -271,7 +271,7 @@ await page.route(/hn\.algolia\.com/, (route) => {
   }
   return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ hits: [] }) });
 });
-await page.route(/google\.com\/s2\/favicons/, (route) => route.fulfill({ status: 200, body: '' }));
+await page.route(/google\.com\/s2\/favicons|gstatic\.com\/faviconV2/, (route) => route.fulfill({ status: 200, body: '' }));
 // Mocked free reader proxies for the opt-in article-text feature (see PHASE 9).
 await page.route(/allorigins\.win|cors\.eu\.org|codetabs\.com/, (route) =>
   route.fulfill({ status: 200, contentType: 'text/plain', body: ARTICLE_BODY })
@@ -420,13 +420,24 @@ const report = await page.evaluate(async (D) => {
   const x = features.featureVector(fs);
   const learned = predict(model, x);
   const usedLearned = model && model.n > 0 ? learned : fs.learned;
+  // The learned signal is a LOG-ODDS margin centered on YOUR base engagement rate (learnedBaseRate),
+  // squashed to ±1 by tanh — NOT a raw probability difference. Platt anchors P at the base rate, so
+  // for a minority engager a good and a mediocre story both sit in the sigmoid's flat tail and their
+  // probability gap collapses; log-odds preserves the model's ranking margin. Mirror it exactly here
+  // (recomputed independently of strategies.blend, so a drift in either side fails the identity).
+  const baseRate = model && model.n > 0 ? strategies.learnedBaseRate(model) : 0.5;
+  const logit = (v) => {
+    const c = Math.min(1 - 1e-6, Math.max(1e-6, v));
+    return Math.log(c / (1 - c));
+  };
+  const learnedPull = Math.tanh((logit(usedLearned) - logit(baseRate)) / 2);
   const w = full.weights;
   const affinityRaw = fs.domainAffinity + fs.authorAffinity + (fs.followedDomain ? 2 : 0) + (fs.followedUser ? 2 : 0) + (fs.boostKeyword ? 1.5 : 0);
   const affinity = Math.tanh(affinityRaw / 4);
   const byHand =
     w.popularity * fs.popularity + w.recency * fs.recency + w.discussion * fs.discussion +
-    w.affinity * affinity + w.relevance * fs.relevance + w.learned * (usedLearned - 0.5) * 2;
-  const learnedTermWith = w.learned * (usedLearned - 0.5) * 2;
+    w.affinity * affinity + w.relevance * fs.relevance + w.learned * learnedPull;
+  const learnedTermWith = w.learned * learnedPull;
 
   // ---- CAUSAL proof: rank the held-out pool, adding one mechanism at a time ----
   const candTopic = (id) =>
@@ -636,7 +647,12 @@ await page.waitForTimeout(600);
 await page.getByRole('button', { name: 'Retrain now' }).click().catch(() => {});
 await page.waitForTimeout(800);
 const settingsText = await page.evaluate(() => document.body.innerText);
-const trainedMatch = settingsText.match(/trained on (\d+) examples?/i);
+// The reranker status line reflects the activation gate: above the gate (this proof trains on
+// >=12 samples with >=3 positives) it reads "Active · personalizing from N examples from your activity".
+// "examples from your activity", not "interactions": most training rows are passive impressions
+// labelled as skips, so naming three deliberate actions misdescribed 81% of the data. Match the
+// number and the concept, not the old phrasing.
+const trainedMatch = settingsText.match(/personalizing from (\d+) examples/i);
 const signalsMatch = settingsText.match(/([\d,]+) interaction signals/i);
 say(`  Settings: "${trainedMatch?.[0] ?? '(no trained status)'}", "${signalsMatch?.[0] ?? '(no signal count)'}"`);
 check('Settings shows the trained model status', !!trainedMatch, trainedMatch?.[0]);

@@ -98,7 +98,7 @@ await page.waitForSelector('article', { timeout: 40000 });
 const firstTitle = (await page.locator('article h3').first().innerText()).trim();
 await page.locator('article').first().getByRole('button', { name: 'Save', exact: true }).click();
 const secondTitle = (await page.locator('article h3').nth(1).innerText()).trim();
-await page.locator('article').nth(1).getByRole('button', { name: 'Hide' }).click();
+await page.locator('article').nth(1).getByRole('button', { name: 'Not interested' }).click();
 await page.waitForTimeout(500);
 
 // ---- 4. close & reopen ----

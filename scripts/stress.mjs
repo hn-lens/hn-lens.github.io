@@ -61,7 +61,7 @@ await scenario('S2 spam save+hide', async () => {
   await page.waitForSelector('article', { timeout: 40000 });
   const save = page.locator('article').first().getByRole('button', { name: /Save/ });
   for (let i = 0; i < 8; i++) await save.click();
-  const hide = page.locator('article').nth(1).getByRole('button', { name: 'Hide' });
+  const hide = page.locator('article').nth(1).getByRole('button', { name: 'Not interested' });
   for (let i = 0; i < 3; i++) await hide.click().catch(() => {});
 });
 

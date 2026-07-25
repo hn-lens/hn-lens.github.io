@@ -81,6 +81,9 @@ check('Follow domain writes followedDomains', (await pref('followedDomains')).in
 await openMenu('Story A');
 await clickItem('Follow alice');
 check('Follow author writes followedUsers', (await pref('followedUsers')).includes('alice'), JSON.stringify(await pref('followedUsers')));
+// Follow-author must offer an Undo like the other 3 Personalize actions (follow-domain/mute-*) — it
+// was the lone exception (bare toast, no Undo). Assert the toast now has an Undo control.
+check('Follow author toast offers Undo (consistent with the other Personalize actions)', await page.getByRole('button', { name: 'Undo' }).first().isVisible().catch(() => false));
 
 // --- mute domain removes the story from the feed ---
 await openMenu('Story B');

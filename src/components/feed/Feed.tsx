@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Inbox, RotateCw } from 'lucide-react';
+import { Inbox, MessageSquare, RotateCw } from 'lucide-react';
 import { useFeed } from '../../hooks/useFeed';
 import { useSavedIds, useSeenMap } from '../../hooks/useLocalData';
 import { timeAgo } from '../../lib/time';
@@ -8,7 +8,10 @@ import { cn } from '../../lib/cn';
 import StoryCard from './StoryCard';
 import StorySkeleton from './StorySkeleton';
 import { Spinner } from '../ui/primitives';
+import { SwitchVisual } from '../ui/controls';
 import { usePrefs } from '../../lib/prefs';
+import { effectiveLayout } from '../../lib/themes';
+import { getFeedScroll, setFeedScroll } from '../../lib/feedSession';
 import type { FeedKind } from '../../types';
 
 export default function Feed({ kind, showRank }: { kind: FeedKind; showRank?: boolean }) {
@@ -19,7 +22,70 @@ export default function Feed({ kind, showRank }: { kind: FeedKind; showRank?: bo
   const hasFilters = usePrefs(
     (s) => s.minPoints > 0 || s.mutedDomains.length > 0 || s.mutedUsers.length > 0 || s.keywordsMute.length > 0
   );
+  const showTopComments = usePrefs((s) => s.showTopComments);
+  const setPref = usePrefs((s) => s.set);
+  // The one-line `compact` layout deliberately doesn't render the inline preview (it would crush the
+  // headline). A switch that is visible, enabled and ON while doing nothing is a trust break — and
+  // users land here without asking for it, since some DESIGNS default to this layout. Say so on the
+  // control itself rather than leaving it silently inert.
+  const themeName = usePrefs((s) => s.themeName);
+  const layoutPref = usePrefs((s) => s.layout);
+  const topCommentsUnavailable = effectiveLayout(themeName, layoutPref) === 'compact';
   const sentinel = useRef<HTMLDivElement | null>(null);
+
+  // Restore the reader's scroll position for this feed (see lib/feedSession).
+  //
+  // The paging half of that module was wired; this half never was, so depth restored (50 cards came
+  // back) while scrollY snapped to 0 — leaving the reader at the top of a long list they had already
+  // walked, which is arguably worse than a short one. It looked fixed if you only tested browser
+  // Back, because the browser restores scroll natively there; the in-app path had nothing.
+  //
+  // Restore in a LAYOUT effect and only once the page is actually tall enough: the restored cards
+  // render after this component mounts, and scrolling to 3860 on a page that is still 800px tall
+  // silently clamps to the bottom. Retry across a few frames, then give up rather than fight the
+  // user if they have already started scrolling themselves.
+  const restoredFor = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    const want = getFeedScroll(kind);
+    if (restoredFor.current === kind) return;
+    restoredFor.current = kind;
+    if (want <= 0) return;
+    let frames = 0;
+    let cancelled = false;
+    const tryRestore = () => {
+      if (cancelled) return;
+      if (document.documentElement.scrollHeight - window.innerHeight >= want) {
+        window.scrollTo(0, want);
+        return;
+      }
+      if (frames++ < 40) requestAnimationFrame(tryRestore);
+    };
+    requestAnimationFrame(tryRestore);
+    return () => {
+      cancelled = true;
+    };
+  }, [kind]);
+
+  // Record it continuously, throttled through rAF so a scroll never does layout work per event.
+  useEffect(() => {
+    let queued = false;
+    const onScroll = () => {
+      if (queued) return;
+      queued = true;
+      requestAnimationFrame(() => {
+        queued = false;
+        setFeedScroll(kind, window.scrollY);
+      });
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      window.removeEventListener('scroll', onScroll);
+      // Capture the final position on unmount too — navigating into a discussion does not
+      // necessarily fire a scroll event first.
+      setFeedScroll(kind, window.scrollY);
+    };
+  }, [kind]);
+
   // Re-render every 30s so the "updated Xm ago" label stays current.
   const [, setTick] = useState(0);
   useEffect(() => {
@@ -47,7 +113,7 @@ export default function Feed({ kind, showRank }: { kind: FeedKind; showRank?: bo
         <button
           type="button"
           onClick={refetch}
-          className="mt-3 inline-flex items-center gap-2 rounded-lg border border-border px-3 py-1.5 text-sm hover:bg-surface-2"
+          className="mt-3 inline-flex items-center gap-2 rounded-lg border border-edge px-3 py-1.5 text-sm hover:bg-surface-2"
         >
           <RotateCw className="size-4" /> Retry
         </button>
@@ -80,7 +146,7 @@ export default function Feed({ kind, showRank }: { kind: FeedKind; showRank?: bo
             </p>
             <Link
               to="/settings"
-              className="mt-4 inline-block rounded-lg border border-border px-3 py-1.5 text-sm hover:bg-surface-2"
+              className="mt-4 inline-block rounded-lg border border-edge px-3 py-1.5 text-sm hover:bg-surface-2"
             >
               Check filters
             </Link>
@@ -114,7 +180,7 @@ export default function Feed({ kind, showRank }: { kind: FeedKind; showRank?: bo
           <button
             type="button"
             onClick={refetch}
-            className="mt-4 inline-flex items-center gap-2 rounded-lg border border-border px-3 py-1.5 text-sm hover:bg-surface-2"
+            className="mt-4 inline-flex items-center gap-2 rounded-lg border border-edge px-3 py-1.5 text-sm hover:bg-surface-2"
           >
             <RotateCw className="size-4" /> Refresh
           </button>
@@ -132,7 +198,7 @@ export default function Feed({ kind, showRank }: { kind: FeedKind; showRank?: bo
             </p>
             <Link
               to="/settings"
-              className="mt-4 inline-block rounded-lg border border-border px-3 py-1.5 text-sm hover:bg-surface-2"
+              className="mt-4 inline-block rounded-lg border border-edge px-3 py-1.5 text-sm hover:bg-surface-2"
             >
               Check filters
             </Link>
@@ -143,7 +209,7 @@ export default function Feed({ kind, showRank }: { kind: FeedKind; showRank?: bo
             <button
               type="button"
               onClick={refetch}
-              className="mt-4 inline-flex items-center gap-2 rounded-lg border border-border px-3 py-1.5 text-sm hover:bg-surface-2"
+              className="mt-4 inline-flex items-center gap-2 rounded-lg border border-edge px-3 py-1.5 text-sm hover:bg-surface-2"
             >
               <RotateCw className="size-4" /> Refresh
             </button>
@@ -155,16 +221,42 @@ export default function Feed({ kind, showRank }: { kind: FeedKind; showRank?: bo
 
   return (
     <>
-      <div className="mb-2.5 flex items-center justify-between px-0.5 text-xs text-subtle">
-        <span>{updatedAt ? `Updated ${timeAgo(Math.floor(updatedAt / 1000))}` : ''}</span>
-        <button
-          type="button"
-          onClick={refetch}
-          disabled={isFetching}
-          className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 hover:bg-surface-2 hover:text-fg disabled:opacity-60"
-        >
-          <RotateCw className={cn('size-3.5', isFetching && 'animate-spin')} /> Refresh
-        </button>
+      {/* Wraps, like .sc-actions. This row is a nowrap flex whose control group cannot shrink, so it
+          overflowed the PAGE with "Refresh" clipped off-screen — reachable with NO non-default
+          setting, because the terminal and cyberpunk DESIGNS default to the `compact` layout, which
+          is the narrowest. Wrappability is a property of a control row, not of one layout. */}
+      <div className="mb-2.5 flex flex-wrap items-center justify-between gap-x-2 gap-y-1 px-0.5 text-xs text-subtle">
+        <span className="min-w-0 truncate">{updatedAt ? `Updated ${timeAgo(Math.floor(updatedAt / 1000))}` : ''}</span>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <button
+            type="button"
+            role="switch"
+            aria-checked={showTopComments}
+            onClick={() => setPref({ showTopComments: !showTopComments })}
+            title={
+              topCommentsUnavailable
+                ? 'Not shown in the Compact layout (one line per story) — switch layout in Settings to see previews'
+                : 'Show the top comment under each story'
+            }
+            className="inline-flex items-center gap-1.5 rounded-md px-1.5 py-1 hover:bg-surface-2 hover:text-fg"
+          >
+            <MessageSquare className="size-3.5" />
+            <span>Top comments</span>
+            {/* shared switch visual (see controls.tsx) so the feed + Settings switches match */}
+            <SwitchVisual checked={showTopComments} size="sm" />
+          </button>
+          {topCommentsUnavailable && showTopComments && (
+            <span className="text-[11px] text-subtle">not shown in Compact layout</span>
+          )}
+          <button
+            type="button"
+            onClick={refetch}
+            disabled={isFetching}
+            className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 hover:bg-surface-2 hover:text-fg disabled:opacity-60"
+          >
+            <RotateCw className={cn('size-3.5', isFetching && 'animate-spin')} /> Refresh
+          </button>
+        </div>
       </div>
 
       {/* For You is popularity-only until it has something to learn from — say so
@@ -172,7 +264,11 @@ export default function Feed({ kind, showRank }: { kind: FeedKind; showRank?: bo
       {kind === 'foryou' && !personalized && (
         <div className="mb-2.5 rounded-xl border border-border bg-surface-2 p-3 text-xs text-muted">
           <span className="font-medium text-fg">For You is warming up.</span> Until it learns your taste,
-          it&apos;s ranked by popularity. Read a few stories, follow a domain from a card&apos;s ⋯ menu, or{' '}
+          it&apos;s ranked by popularity. Read a few stories, or{' '}
+          <Link to="/settings?section=filters" className="text-accent hover:underline">
+            follow domains &amp; keywords
+          </Link>{' '}
+          and{' '}
           <Link to="/settings?section=ranking" className="text-accent hover:underline">
             tune ranking
           </Link>{' '}
@@ -190,6 +286,7 @@ export default function Feed({ kind, showRank }: { kind: FeedKind; showRank?: bo
           </Link>
         </p>
       )}
+
       <div className="feed-list">
         {cards.map((c, i) => (
         <StoryCard
@@ -212,7 +309,7 @@ export default function Feed({ kind, showRank }: { kind: FeedKind; showRank?: bo
           type="button"
           onClick={loadMore}
           disabled={isFetchingMore}
-          className="flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-surface py-3 text-sm text-muted hover:bg-surface-2 disabled:opacity-70"
+          className="flex w-full items-center justify-center gap-2 rounded-xl border border-edge bg-surface py-3 text-sm text-muted hover:bg-surface-2 disabled:opacity-70"
         >
           {isFetchingMore ? (
             <>

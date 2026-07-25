@@ -67,7 +67,7 @@ await page.route(/hn\.algolia\.com\/api\/v1\/items\/(\d+)/, (r) => {
     ],
   }) });
 });
-await page.route(/google\.com\/s2\/favicons/, (r) => r.fulfill({ status: 200, body: '' }));
+await page.route(/google\.com\/s2\/favicons|gstatic\.com\/faviconV2/, (r) => r.fulfill({ status: 200, body: '' }));
 
 await page.goto(BASE, { waitUntil: 'domcontentloaded' });
 await page.waitForFunction(() => window.__hnlens && window.__hnlens.prefs, null, { timeout: 20000 });
@@ -151,10 +151,18 @@ await page.waitForSelector('article h3', { timeout: 15000 });
 await page.waitForTimeout(400);
 const hideCard = page.locator('article').first();
 const hideTarget = Number(((await hideCard.locator('h3').innerText()).match(/Story (\d+)/) || [])[1]);
-await hideCard.getByRole('button', { name: 'Hide', exact: true }).click();
+await hideCard.getByRole('button', { name: 'Not interested', exact: true }).click();
 await page.waitForTimeout(400);
 const afterHide = await titleIds(page);
 check('hiding removes the story from the feed', !afterHide.includes(hideTarget), `hid ${hideTarget}`);
+// "Not interested" is a NEGATIVE TRAINING signal, not just a visual hide: it logs a `hide`
+// event that the learned reranker turns into a negative training example (train.ts).
+const trainedNeg = await page.evaluate(async (tid) => {
+  const dbMod = await window.__hnlens.db();
+  const evs = await dbMod.db.events.where('type').equals('hide').toArray();
+  return evs.some((e) => e.itemId === tid);
+}, hideTarget);
+check('"Not interested" logs a negative-training signal (hide event)', trainedNeg, `item ${hideTarget}`);
 const undo = page.getByRole('button', { name: /Undo/i });
 check('an Undo toast appears', await undo.count() > 0);
 if (await undo.count()) {
@@ -164,17 +172,16 @@ if (await undo.count()) {
   check('Undo restores the hidden story', afterUndo.includes(hideTarget), `restored ${hideTarget}? ${JSON.stringify(afterUndo.slice(0, 4))}`);
 }
 
-// ===== D. comments drawer shows the story's comments =====
-console.log('\n[D] comments drawer');
+// ===== D. comments open the full discussion page and show the story's comments =====
+console.log('\n[D] comments (full discussion page)');
 await page.goto(BASE, { waitUntil: 'domcontentloaded' });
 await page.getByRole('button', { name: 'Top', exact: true }).click();
 await page.waitForSelector('article', { timeout: 15000 });
 await page.locator('article').first().getByRole('button', { name: 'Open comments' }).click();
 await page.waitForTimeout(1000);
-const drawerText = await page.evaluate(() => document.body.innerText);
-check('comments drawer shows fetched comments', /substantive first comment|second opinion/.test(drawerText), '');
+const discussionText = await page.evaluate(() => document.body.innerText);
+check('discussion page shows fetched comments', /substantive first comment|second opinion/.test(discussionText), '');
 await page.screenshot({ path: join(OUT, 'comments.png') });
-await page.keyboard.press('Escape').catch(() => {});
 
 // ===== E. search returns results, and empty state is graceful =====
 console.log('\n[E] search');

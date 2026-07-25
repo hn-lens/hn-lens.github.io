@@ -31,6 +31,7 @@ let lastGeminiMaxTokens = 0;
 let lastGeminiSystem = ''; // the systemInstruction text sent on the last generate call
 let geminiEmpty = false; // when true, simulate a "thinking" model that returned no text
 let geminiListBad = false; // when true, the list-models endpoint returns 401 (bad key)
+let lastOpenaiBody = null; // the last request body sent to OpenAI chat/completions
 const json = (r, x) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(x) });
 // Gemini: one host for both list (?models) and generate (models/<m>:generateContent).
 await page.route(/generativelanguage\.googleapis\.com/, (r) => {
@@ -61,6 +62,11 @@ await page.route(/generativelanguage\.googleapis\.com/, (r) => {
 });
 await page.route(/api\.openai\.com\/v1\/chat\/completions/, (r) => {
   hits.openai++;
+  try {
+    lastOpenaiBody = JSON.parse(r.request().postData() || '{}');
+  } catch {
+    lastOpenaiBody = null;
+  }
   return json(r, { choices: [{ message: { content: 'OPENAI_SUMMARY raft' } }] });
 });
 await page.route(/api\.openai\.com\/v1\/models/, (r) =>
@@ -112,6 +118,37 @@ check('each provider endpoint was actually called once', hits.gemini >= 1 && hit
 // Cloud gets generous token headroom (thinking models spend output tokens reasoning); a
 // tiny local-model cap (the TL;DR passes 40) would starve the answer → empty output.
 check('cloud generate gives thinking models headroom (maxOutputTokens ≥ 4096)', lastGeminiMaxTokens >= 4096, `maxOutputTokens=${lastGeminiMaxTokens}`);
+
+// ---- A1: OpenAI REASONING models (o1/o3/o4) need max_completion_tokens + no temperature ----
+// The picker offers them (listModels keeps o-series ids), but they reject `max_tokens` and a
+// non-default `temperature`. Assert a reasoning model's request uses the right params.
+await page.evaluate(async () => {
+  const llm = await window.__hnlens.llm();
+  const cur = window.__hnlens.prefs.getState();
+  cur.set({ llmProvider: 'openai', apiKeys: { ...cur.apiKeys, openai: 'o-key' }, cloudModels: { ...cur.cloudModels, openai: 'o3-mini' } });
+  await llm.generate('ignored-local-model', [{ role: 'user', content: 'Summarize: hello' }], { maxTokens: 40 });
+});
+check(
+  'OpenAI reasoning model uses max_completion_tokens (not max_tokens) and omits temperature',
+  !!lastOpenaiBody &&
+    lastOpenaiBody.model === 'o3-mini' &&
+    typeof lastOpenaiBody.max_completion_tokens === 'number' &&
+    !('max_tokens' in lastOpenaiBody) &&
+    !('temperature' in lastOpenaiBody),
+  JSON.stringify(lastOpenaiBody)
+);
+// A regular gpt model still uses max_tokens + temperature.
+await page.evaluate(async () => {
+  const llm = await window.__hnlens.llm();
+  const cur = window.__hnlens.prefs.getState();
+  cur.set({ llmProvider: 'openai', apiKeys: { ...cur.apiKeys, openai: 'o-key' }, cloudModels: { ...cur.cloudModels, openai: 'gpt-4o-mini' } });
+  await llm.generate('ignored-local-model', [{ role: 'user', content: 'Summarize: hello' }], { maxTokens: 40 });
+});
+check(
+  'OpenAI regular gpt model still uses max_tokens + temperature',
+  !!lastOpenaiBody && lastOpenaiBody.model === 'gpt-4o-mini' && 'max_tokens' in lastOpenaiBody && 'temperature' in lastOpenaiBody,
+  JSON.stringify(lastOpenaiBody)
+);
 
 // A thinking-truncated / empty response must surface a CLEAR error, not a blank summary.
 const emptyErr = await page.evaluate(async () => {
@@ -173,6 +210,10 @@ await page.waitForFunction(() => /GEMINI_SUMMARY|Could not/.test(document.body.i
 await page.waitForTimeout(400);
 const afterClick = await page.evaluate(() => document.body.innerText);
 check('clicking Summarize renders the cloud provider\'s summary', /GEMINI_SUMMARY/.test(afterClick), afterClick.match(/Could not[^\n]*/)?.[0] ?? '');
+// The generated summary offers a local read-aloud (Listen) control — the summary text is
+// already local, so this works with no reader proxy. (ListenButton renders null without
+// text, so its presence confirms the summary text was wired through.)
+check('the AI summary offers a Listen (read-aloud) control', (await page.getByRole('button', { name: /^Listen$/ }).count()) >= 1);
 
 // ---- (5) listModels() queries each provider and filters to chat models ----
 const models = await page.evaluate(async () => {
@@ -232,22 +273,36 @@ const trans = await page.evaluate(async (id) => {
   const llm = await window.__hnlens.llm();
   const dbMod = await window.__hnlens.db();
   const p = window.__hnlens.prefs.getState();
-  p.set({ llmProvider: 'gemini', apiKeys: { ...p.apiKeys, gemini: 'g-key' }, systemPrompts: { tldr: 'CUSTOM_SYS_INSTRUCTION', thread: '' } });
+  // Override BOTH prompt parts: a custom system instruction AND a custom user TEMPLATE with a
+  // {title} placeholder — both must flow into the actual request, and the template's data
+  // must be substituted.
+  p.set({
+    llmProvider: 'gemini',
+    apiKeys: { ...p.apiKeys, gemini: 'g-key' },
+    prompts: { ...p.prompts, tldr: { system: 'CUSTOM_SYS_INSTRUCTION', user: 'TEMPLATE_MARK about {title}' } },
+  });
   await dbMod.db.kv.where('key').startsWith('sum:').delete();
   const item = { id, title: 'Transparency test', url: 'https://ex.com/t', text: '' };
   const r1 = await llm.summarizeItem('local', 'tldr', item, { fetchArticle: false, force: true });
   const r2 = await llm.summarizeItem('local', 'tldr', item, { fetchArticle: false }); // should be cached
-  window.__hnlens.prefs.getState().set({ systemPrompts: { tldr: 'A DIFFERENT INSTRUCTION', thread: '' } });
+  const pp = window.__hnlens.prefs.getState();
+  pp.set({ prompts: { ...pp.prompts, tldr: { system: 'A DIFFERENT INSTRUCTION', user: '' } } });
   const r3 = await llm.summarizeItem('local', 'tldr', item, { fetchArticle: false }); // key changed → miss
   return {
     reqRoles: r1.request.map((m) => m.role),
     sysContent: r1.request.find((m) => m.role === 'system')?.content ?? '',
+    userContent: r1.request.find((m) => m.role === 'user')?.content ?? '',
     r2cached: r2.cached,
     r3cached: r3.cached,
   };
 }, STORY_ID + 1);
 check('summary result returns the full request (system + user messages)', trans.reqRoles.includes('system') && trans.reqRoles.includes('user'), JSON.stringify(trans.reqRoles));
 check('the request carries the CUSTOM system instruction', /CUSTOM_SYS_INSTRUCTION/.test(trans.sysContent), trans.sysContent.slice(0, 40));
+check(
+  'the USER message uses the custom template with the data substituted',
+  /TEMPLATE_MARK/.test(trans.userContent) && /Transparency test/.test(trans.userContent),
+  trans.userContent.slice(0, 60)
+);
 // lastGeminiSystem reflects the MOST RECENT generate call (r3, after the instruction was
 // changed) — so it proves the current custom system instruction flows to the wire.
 check('the custom system instruction is sent in the actual provider request', /A DIFFERENT INSTRUCTION/.test(lastGeminiSystem), lastGeminiSystem.slice(0, 40));
@@ -259,13 +314,19 @@ check('changing the system instruction re-summarizes (cache invalidated)', trans
 // not covered by the card's stretched title link (a z-index bug that made them dead). ----
 await page.evaluate(async () => {
   await (await window.__hnlens.interactions()).clearAllData();
-  window.__hnlens.prefs.getState().set({ defaultFeed: 'top', minPoints: 0, llmProvider: 'gemini', apiKeys: { gemini: 'g-key', openai: '', anthropic: '' }, showAiSummaries: true, systemPrompts: { tldr: '', thread: '' } });
+  window.__hnlens.prefs.getState().set({ defaultFeed: 'top', minPoints: 0, llmProvider: 'gemini', apiKeys: { gemini: 'g-key', openai: '', anthropic: '' }, showAiSummaries: true, prompts: { tldr: { system: '', user: '' }, thread: { system: '', user: '' }, ask: { system: '', user: '' }, user: { system: '', user: '' } } });
   location.hash = '#/';
 });
 await page.reload({ waitUntil: 'domcontentloaded' });
 await page.waitForFunction(() => window.__hnlens, null, { timeout: 20000 });
 await page.getByRole('button', { name: 'Top', exact: true }).click();
 await page.waitForSelector('article', { timeout: 15000 });
+// The sidebar "Local models" LLM row must reflect the ACTIVE cloud backend, not read "off"
+// (which was misleading while a cloud provider was serving AI).
+{
+  const sbLlm = await page.evaluate(() => document.querySelector('.app-sidebar')?.innerText ?? '');
+  check('sidebar LLM row shows the active cloud provider, not "off", when cloud is keyed', /via Gemini/.test(sbLlm), sbLlm.split('\n').find((l) => /via Gemini/.test(l)) ?? sbLlm.slice(0, 80));
+}
 // Match the TL;DR control by name PREFIX — the label carries an honest source hint
 // ("TL;DR (discussion)" when article text is off, "· local LLM" without a cloud key).
 await page.locator('article').first().getByRole('button', { name: /^TL;DR/ }).first().click();

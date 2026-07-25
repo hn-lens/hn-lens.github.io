@@ -6,12 +6,27 @@ const BASE = process.env.BASE || 'http://localhost:4173/';
 const PROFILE = '/tmp/hnlens-eval-profile'; // persistent => model weights cached across runs
 const MODEL = process.env.LLM_ID || 'Llama-3.2-1B-Instruct-q4f16_1-MLC';
 
-const ctx = await chromium.launchPersistentContext(PROFILE, {
-  headless: true,
-  args: ['--enable-unsafe-webgpu', '--enable-features=Vulkan', '--use-angle=metal'],
-  viewport: { width: 1200, height: 900 },
-});
-const page = ctx.pages()[0] || (await ctx.newPage());
+// Needs a REAL WebGPU adapter (see modeltest). CDP_URL targets an already-running browser that has
+// one; otherwise use the local persistent profile so weights are cached across runs.
+const CDP_URL = process.env.CDP_URL || '';
+const cdpBrowser = CDP_URL ? await chromium.connectOverCDP(CDP_URL) : null;
+const ctx = cdpBrowser
+  ? cdpBrowser.contexts()[0] || (await cdpBrowser.newContext())
+  : await chromium.launchPersistentContext(PROFILE, {
+      headless: true,
+      args: ['--enable-unsafe-webgpu', '--enable-features=Vulkan', '--use-angle=metal'],
+      viewport: { width: 1200, height: 900 },
+    });
+// See modeltest: a CDP-attached browser outlives this script, so a page we open must be closed even
+// on a crash. Only close a page we CREATED (never a pre-existing tab of the user's).
+const preexisting = ctx.pages()[0];
+const page = preexisting || (await ctx.newPage());
+if (!preexisting) {
+  const close = async () => { try { await page.close(); } catch { /* already gone */ } };
+  for (const sig of ['exit', 'SIGINT', 'SIGTERM', 'uncaughtException', 'unhandledRejection']) {
+    process.once(sig, (e) => { void close(); if (e instanceof Error) { console.error(e); process.exit(1); } });
+  }
+}
 page.on('pageerror', (e) => console.log('PAGEERR', e.message));
 
 await page.goto(BASE, { waitUntil: 'domcontentloaded' });
@@ -133,5 +148,13 @@ for (const s of stories) {
   console.log(`\n${result.summary.trim()}`);
 }
 
-await ctx.close();
+// Only tear down a context WE created. Over CDP this IS the real browser's context, so closing it
+// would take every other tab the user has open with it. Disconnect instead, and close only a page
+// we opened ourselves.
+if (cdpBrowser) {
+  if (!preexisting) await page.close().catch(() => {});
+  await cdpBrowser.close().catch(() => {});
+} else {
+  await ctx.close();
+}
 console.log('\n\n(eval done)');

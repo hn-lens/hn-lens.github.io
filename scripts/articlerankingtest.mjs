@@ -71,6 +71,61 @@ check('cachedArticleTerms tokenizes the cached body (no network)', r.at.includes
 check('computeContentSignals(articleTerms:true) ranks the article-matching candidate higher', r.withFlag42 > r.withFlag43 + 0.05, `42=${r.withFlag42} vs 43=${r.withFlag43}`);
 check('computeContentSignals(articleTerms:false) ignores article body (titles equally neutral)', Math.abs(r.noFlag42 - r.noFlag43) < 0.01, `42=${r.noFlag42} vs 43=${r.noFlag43}`);
 
+// --- TRAIN/SERVE PARITY: training must see the SAME termAffinity distribution as serving ---
+// Regression for a silent train-serve skew: the SERVING path (useFeed) folded each candidate's cached
+// article body into termAffinity, but the TRAINING path omitted `articleTerms` — so the model fitted a
+// weight against a near-zero title-only signal and then applied it to a much larger serve-time one,
+// mis-scaling that feature (and the calibrated P(engage) the explainer prints) for exactly the stories
+// the reader proxy had fetched. Drives the REAL buildTrainingSamples() and asserts the training feature
+// vector actually carries the article-derived termAffinity (feature index 6).
+const TERM_AFFINITY_IX = 6;
+const parity = await page.evaluate(async (ix) => {
+  const i = await window.__hnlens.interactions();
+  const dbMod = await window.__hnlens.db();
+  const train = window.__hnlens.train();
+  const t = Date.now();
+  const mk = (id, title) => ({ id, type: 'story', by: `a${id}`, title, url: `https://p${id}.example.com/x`, score: 50, descendants: 3, time: Math.floor(t / 1000) - 3600 });
+  const run = async (fetchArticleText) => {
+    await i.clearAllData();
+    await dbMod.db.kv.where('key').startsWith('atext:').delete();
+    await dbMod.db.kv.where('key').startsWith('aterms:').delete();
+    window.__hnlens.prefs.getState().set({ fetchArticleText, embeddingsEnabled: false, useLearnedRanker: true });
+    // 5001: NEUTRAL title, but a cached article body full of the distinctive terms.
+    // 5002/5003: engaged peers whose TITLES carry those terms → with leave-one-out they (not 5001)
+    // supply the liked-term profile, so 5001 can only score if its ARTICLE body is read.
+    // 5009: an impressed-but-ignored negative, so training has both classes.
+    const items = [
+      mk(5001, 'an unremarkable weekend note'),
+      mk(5002, 'quokka telemetry ingest pipeline'),
+      mk(5003, 'quokka telemetry sharding notes'),
+      mk(5009, 'completely unrelated gardening post'),
+    ];
+    await dbMod.db.items.bulkPut(items.map((it) => ({ id: it.id, item: it, cachedAt: t })));
+    await dbMod.kvSet('atext:5001', { text: 'quokka telemetry ingest sharding pipeline internals '.repeat(6), proxy: 'AllOrigins' });
+    const evs = [];
+    for (const id of [5001, 5002, 5003]) {
+      evs.push({ type: 'open_link', itemId: id, domain: `p${id}.example.com`, author: `a${id}`, ts: t - 50000 });
+      evs.push({ type: 'dwell', itemId: id, domain: `p${id}.example.com`, author: `a${id}`, value: 70000, ts: t - 49000 });
+    }
+    evs.push({ type: 'impression', itemId: 5009, domain: 'p5009.example.com', author: 'a5009', ts: t - 48000 });
+    await dbMod.db.events.bulkAdd(evs);
+    const { samples, sampleIds } = await train.buildTrainingSamples();
+    const k = sampleIds.indexOf(5001);
+    return k < 0 ? null : +(samples[k].x[ix] ?? 0).toFixed(4);
+  };
+  return { on: await run(true), off: await run(false) };
+}, TERM_AFFINITY_IX);
+check(
+  'TRAINING folds the article body into termAffinity when the reader proxy is ON (no train/serve skew)',
+  parity.on !== null && parity.on > 0.05,
+  `trainingTermAffinity(on)=${parity.on}`
+);
+check(
+  'TRAINING still ignores the article body when the reader proxy is OFF (flag respected)',
+  parity.off !== null && Math.abs(parity.off) < 0.01,
+  `trainingTermAffinity(off)=${parity.off}`
+);
+
 await b.close();
 console.log(`\n${fails.length === 0 ? 'RESULT: ARTICLE RANKING PASS \u2713' : `RESULT: ${fails.length} FAILED`}`);
 process.exit(fails.length ? 1 : 0);

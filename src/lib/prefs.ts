@@ -8,9 +8,11 @@ import {
   isValidLayoutPref,
   isValidThemeId,
 } from './themes';
-import type { CloudProvider, FeedKind, LlmProvider, Prefs, RankWeights, Theme } from '../types';
+import type { CloudProvider, FeedKind, LlmProvider, Prefs, PromptKind, RankWeights, TextSize, Theme } from '../types';
 
 const LLM_PROVIDERS: LlmProvider[] = ['local', 'gemini', 'openai', 'anthropic'];
+const TEXT_SIZES: TextSize[] = ['sm', 'md', 'lg'];
+const isValidTextSize = (s: unknown): s is TextSize => TEXT_SIZES.includes(s as TextSize);
 
 /** Whether a cloud LLM provider is selected AND has an API key — i.e. AI summaries can
  *  run without WebGPU / a local model download. Light + pure (safe to call in render). */
@@ -31,6 +33,7 @@ const DEFAULT_PREFS: Prefs = {
   theme: 'light',
   themeName: DEFAULT_THEME_ID,
   layout: DEFAULT_LAYOUT_PREF,
+  textSize: 'md',
   defaultFeed: 'foryou',
   weights: DEFAULT_WEIGHTS,
   followedDomains: [],
@@ -48,13 +51,19 @@ const DEFAULT_PREFS: Prefs = {
   llmProvider: 'local',
   apiKeys: { gemini: '', openai: '', anthropic: '' },
   cloudModels: { gemini: '', openai: '', anthropic: '' },
-  systemPrompts: { tldr: '', thread: '' },
+  prompts: {
+    tldr: { system: '', user: '' },
+    thread: { system: '', user: '' },
+    ask: { system: '', user: '' },
+    user: { system: '', user: '' },
+  },
   useLearnedRanker: true,
   hnUsername: '',
   fetchArticleText: false,
   hasOnboarded: false,
   hideReadInFeed: true,
   remoteFavicons: true,
+  showTopComments: true,
 };
 
 function toggle(list: string[], value: string): string[] {
@@ -94,6 +103,13 @@ export function applyLayout(themeName: string, layoutPref: string): void {
   document.documentElement.dataset.layout = effectiveLayout(themeName, layoutPref);
 }
 
+// Apply the reading TEXT SIZE by setting data-textsize on <html>; CSS scales the root
+// font-size, so all rem-based text + spacing scales proportionally (a reading-comfort axis
+// independent of the design/layout). Invalid values fall back to the default.
+export function applyTextSize(size: string): void {
+  document.documentElement.dataset.textsize = isValidTextSize(size) ? size : 'md';
+}
+
 interface PrefsStore extends Prefs {
   set: (p: Partial<Prefs>) => void;
   setWeights: (w: Partial<RankWeights>) => void;
@@ -101,6 +117,7 @@ interface PrefsStore extends Prefs {
   toggleTheme: () => void;
   setThemeName: (name: string) => void;
   setLayout: (layout: string) => void;
+  setTextSize: (size: TextSize) => void;
   setDefaultFeed: (f: FeedKind) => void;
   toggleFollowDomain: (d: string) => void;
   toggleMuteDomain: (d: string) => void;
@@ -133,6 +150,10 @@ export const usePrefs = create<PrefsStore>()(
         applyLayout(get().themeName, layout);
         set({ layout });
       },
+      setTextSize: (size) => {
+        applyTextSize(size);
+        set({ textSize: size });
+      },
       setDefaultFeed: (f) => set({ defaultFeed: f }),
       toggleFollowDomain: (d) =>
         set((s) => ({
@@ -161,6 +182,7 @@ export const usePrefs = create<PrefsStore>()(
         applyTheme(DEFAULT_PREFS.theme);
         applyThemeName(DEFAULT_PREFS.themeName);
         applyLayout(DEFAULT_PREFS.themeName, DEFAULT_PREFS.layout);
+        applyTextSize(DEFAULT_PREFS.textSize);
         set({ ...DEFAULT_PREFS });
       },
     }),
@@ -171,6 +193,7 @@ export const usePrefs = create<PrefsStore>()(
         theme: s.theme,
         themeName: s.themeName,
         layout: s.layout,
+        textSize: s.textSize,
         defaultFeed: s.defaultFeed,
         weights: s.weights,
         followedDomains: s.followedDomains,
@@ -188,19 +211,21 @@ export const usePrefs = create<PrefsStore>()(
         llmProvider: s.llmProvider,
         apiKeys: s.apiKeys,
         cloudModels: s.cloudModels,
-        systemPrompts: s.systemPrompts,
+        prompts: s.prompts,
         useLearnedRanker: s.useLearnedRanker,
         hnUsername: s.hnUsername,
         fetchArticleText: s.fetchArticleText,
         hasOnboarded: s.hasOnboarded,
         hideReadInFeed: s.hideReadInFeed,
         remoteFavicons: s.remoteFavicons,
+        showTopComments: s.showTopComments,
       }),
       onRehydrateStorage: () => (state) => {
         if (!state) {
           applyTheme(systemTheme()); // seed new users from their OS preference once
           applyThemeName(DEFAULT_THEME_ID);
           applyLayout(DEFAULT_THEME_ID, DEFAULT_LAYOUT_PREF);
+          applyTextSize('md');
           return;
         }
         // Migrate the old "system" (null) mode to a concrete light/dark once.
@@ -209,6 +234,7 @@ export const usePrefs = create<PrefsStore>()(
         applyTheme(theme);
         applyThemeName(state.themeName);
         applyLayout(state.themeName, state.layout);
+        applyTextSize(state.textSize);
         // Migrate away from models that are no longer offered (e.g. an old
         // default like Gemma 3 or SmolLM2 that produced poor output). Runs on
         // every load so removing a model from the catalog auto-heals stale prefs.
@@ -228,6 +254,10 @@ export const usePrefs = create<PrefsStore>()(
             patch.layout = DEFAULT_LAYOUT_PREF;
             applyLayout(patch.themeName ?? state.themeName, DEFAULT_LAYOUT_PREF);
           }
+          if (!isValidTextSize(state.textSize)) {
+            patch.textSize = 'md';
+            applyTextSize('md');
+          }
           // Heal an invalid/legacy LLM provider and ensure the api-key map exists with
           // all provider slots (so a partial persisted object can't crash the picker).
           if (!LLM_PROVIDERS.includes(state.llmProvider)) patch.llmProvider = 'local';
@@ -239,9 +269,22 @@ export const usePrefs = create<PrefsStore>()(
           if (typeof models.gemini !== 'string' || typeof models.openai !== 'string' || typeof models.anthropic !== 'string') {
             patch.cloudModels = { gemini: models.gemini ?? '', openai: models.openai ?? '', anthropic: models.anthropic ?? '' };
           }
-          const sys = (state.systemPrompts ?? {}) as Partial<{ tldr: string; thread: string }>;
-          if (typeof sys.tldr !== 'string' || typeof sys.thread !== 'string') {
-            patch.systemPrompts = { tldr: sys.tldr ?? '', thread: sys.thread ?? '' };
+          // Migrate the old systemPrompts {tldr,thread} (system-only) → prompts
+          // {kind:{system,user}}, and ensure the full 4-kind shape exists so a partial
+          // persisted object can't crash the editor.
+          const oldSys = (state as unknown as { systemPrompts?: { tldr?: string; thread?: string } }).systemPrompts;
+          const p = (state.prompts ?? {}) as Partial<Record<PromptKind, { system?: string; user?: string }>>;
+          const promptKinds: PromptKind[] = ['tldr', 'thread', 'ask', 'user'];
+          const badPrompts =
+            !state.prompts ||
+            promptKinds.some((k) => typeof p[k]?.system !== 'string' || typeof p[k]?.user !== 'string');
+          if (badPrompts) {
+            patch.prompts = {
+              tldr: { system: p.tldr?.system ?? oldSys?.tldr ?? '', user: p.tldr?.user ?? '' },
+              thread: { system: p.thread?.system ?? oldSys?.thread ?? '', user: p.thread?.user ?? '' },
+              ask: { system: p.ask?.system ?? '', user: p.ask?.user ?? '' },
+              user: { system: p.user?.system ?? '', user: p.user?.user ?? '' },
+            };
           }
           if (Object.keys(patch).length) usePrefs.setState(patch);
         });

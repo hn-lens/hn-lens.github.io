@@ -7,6 +7,7 @@ import { mdLite } from '../../lib/html';
 import { safeUrl } from '../../lib/time';
 import { Spinner } from '../ui/primitives';
 import SummaryActions from '../SummaryActions';
+import ListenButton from './ListenButton';
 import type { ChatMessage, SummaryResult, SummarySources } from '../../lib/models/llm';
 import type { AlgoliaItem, HnItem } from '../../types';
 
@@ -40,10 +41,10 @@ export default function ThreadSummary({ story, tree }: { story: HnItem; tree: Al
     return (
       <div className="rounded-xl border border-border bg-surface-2 p-3 text-xs text-muted">
         <span className="inline-flex items-center gap-1.5 font-medium text-fg">
-          <Sparkles className="size-3.5 text-accent" /> Summarize this discussion
+          <Sparkles className="size-3.5 text-accent" /> Summarize or ask about this discussion
         </span>{' '}
         with a local on-device model, or your own cloud API key.{' '}
-        <Link to="/settings" className="font-medium text-accent hover:underline">
+        <Link to="/settings?section=ai-summaries" className="font-medium text-accent hover:underline">
           Set up AI
         </Link>{' '}
         — local runs entirely in your browser; cloud sends content to the provider you choose.
@@ -56,7 +57,7 @@ export default function ThreadSummary({ story, tree }: { story: HnItem; tree: Al
     return (
       <div className="rounded-xl border border-border bg-surface-2 p-3 text-xs text-muted">
         Local AI summaries need WebGPU (recent Chrome/Edge). This browser or GPU can&apos;t run it —{' '}
-        <Link to="/settings" className="text-accent hover:underline">
+        <Link to="/settings?section=ai-summaries" className="text-accent hover:underline">
           use a cloud API key instead
         </Link>
         .
@@ -68,7 +69,7 @@ export default function ThreadSummary({ story, tree }: { story: HnItem; tree: Al
     setLoading(true);
     setText('');
     try {
-      const { summarizeItem, describeSources } = await import('../../lib/models/llm');
+      const { summarizeItem, describeSources, describeProvenance } = await import('../../lib/models/llm');
       const res: SummaryResult = await summarizeItem(llmModel, 'thread', story, {
         tree,
         fetchArticle: fetchArticleText,
@@ -77,7 +78,12 @@ export default function ThreadSummary({ story, tree }: { story: HnItem; tree: Al
       });
       setText(res.text);
       setSources(res.sources);
-      setSourceLine(describeSources(res.sources)); // single source of truth (no local copy)
+      // Include WHICH backend produced it — the reader proxy was already disclosed here while the
+      // on-device-vs-cloud fact, which matters more, was not. One shared describer, no local copy.
+      {
+        const prov = describeProvenance(res.sources);
+        setSourceLine(describeSources(res.sources) + (prov ? ` · ${prov}` : ''));
+      }
       setArticleText(res.articleText);
       setCached(res.cached);
       setRequest(res.request);
@@ -129,8 +135,8 @@ export default function ThreadSummary({ story, tree }: { story: HnItem; tree: Al
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <span>
               Based on <span className="font-medium text-fg">{sourceLine}</span>
-              {sources.articleProxy && <span className="ml-1 text-subtle">· via {sources.articleProxy}</span>}
-              {cached && <span className="ml-1 text-subtle">· cached</span>}
+              {sources.articleProxy && <span className="ml-1 text-muted">· via {sources.articleProxy}</span>}
+              {cached && <span className="ml-1 text-muted">· cached</span>}
             </span>
             {articleText && (
               <button
@@ -144,9 +150,9 @@ export default function ThreadSummary({ story, tree }: { story: HnItem; tree: Al
             )}
           </div>
           {sources.articleAvailable && (
-            <p className="mt-1 text-subtle">
+            <p className="mt-1 text-muted">
               Only comments were used.{' '}
-              <Link to="/settings" className="text-accent hover:underline">
+              <Link to="/settings?section=ai-summaries" className="text-accent hover:underline">
                 Enable “Fetch linked-article text”
               </Link>{' '}
               for article-based summaries.
@@ -155,7 +161,7 @@ export default function ThreadSummary({ story, tree }: { story: HnItem; tree: Al
           {showSources && articleText && (
             <div className="mt-1.5">
               {safeUrl(story.url) && (
-                <p className="mb-1 text-[11px] text-subtle">
+                <p className="mb-1 text-[11px] text-muted">
                   Extracted from{' '}
                   <a
                     href={safeUrl(story.url)}
@@ -173,8 +179,9 @@ export default function ThreadSummary({ story, tree }: { story: HnItem; tree: Al
               </p>
             </div>
           )}
-          <div className="mt-2">
-            <SummaryActions request={request} onRefresh={() => run(true)} refreshing={loading} />
+          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+            <SummaryActions request={request} onRefresh={() => run(true)} refreshing={loading} kind="thread" />
+            <ListenButton text={text ?? ''} className="inline-flex items-center gap-1 text-xs text-muted hover:text-fg" />
           </div>
         </div>
       )}

@@ -3,16 +3,18 @@ import { useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, Cpu, GraduationCap, Loader2, RotateCcw, Trash2 } from 'lucide-react';
 import { usePrefs } from '../lib/prefs';
+import { cn } from '../lib/cn';
 import { LAYOUTS, THEMES } from '../lib/themes';
 import { Section, Select, Slider, TagEditor, Toggle } from '../components/ui/controls';
 import { useModelStore } from '../lib/models/registry';
 import { EMBEDDING_MODELS, LLM_MODELS } from '../lib/models/catalog';
 import { CLOUD_PROVIDER_INFO, CLOUD_PROVIDERS, cloudModelFor, listModels } from '../lib/models/cloud';
 import type { CloudModel } from '../lib/models/cloud';
-import { DEFAULT_SYSTEM } from '../lib/models/prompts';
+import { DEFAULT_PROMPTS, PROMPT_KINDS, PROMPT_META } from '../lib/models/prompts';
 import { warmupEmbeddings } from '../lib/models/embeddings';
 import { trainFromHistory } from '../lib/ranking/train';
-import { loadModel } from '../lib/ranking/logistic';
+import { loadModel, MIN_TRAIN_SAMPLES, MIN_TRAIN_POSITIVES } from '../lib/ranking/logistic';
+import { rankerGate, rankerTrained } from '../lib/ranking/strategies';
 import { clearAllData, eventCount } from '../lib/interactions';
 import { READER_PROXIES } from '../lib/hn/article';
 import type { ReaderProxy } from '../lib/hn/article';
@@ -22,8 +24,9 @@ import WeightSliders from '../components/ranking/WeightSliders';
 import CachedModels from '../components/CachedModels';
 import DataManager from '../components/DataManager';
 import SignalsDialog from '../components/SignalsDialog';
+import HiddenDialog from '../components/HiddenDialog';
 import HnAccount from '../components/layout/HnAccount';
-import type { FeedKind, Theme } from '../types';
+import type { FeedKind, TextSize, Theme } from '../types';
 
 // The proxy's own host, derived from the URL it builds (source of truth = article.ts).
 function proxyHost(p: ReaderProxy): string {
@@ -58,8 +61,20 @@ export default function Settings() {
     setTrainMsg('');
     try {
       const res = await trainFromHistory();
+      // Report the clause that actually failed (see `rankerGate`) rather than always blaming the
+      // sample count — a degenerate fit is not something more reading fixes.
+      const gate = rankerGate(res.model);
+      const notYet =
+        gate === 'degenerate'
+          ? "It can't personalize yet: your activity so far doesn't separate the stories you engage with from the ones you skip, so there's no pattern to fit."
+          : `It'll start personalizing once you have ${MIN_TRAIN_SAMPLES}+ interactions including ${MIN_TRAIN_POSITIVES}+ stories you engaged with.`;
       setTrainMsg(
-        `Trained on ${res.positives} liked + ${res.negatives} skipped items (total ${res.model.n}).`
+        `Trained on ${res.positives} liked + ${res.negatives} skipped items (total ${res.model.n}). ` +
+          (!prefs.useLearnedRanker
+            ? "Turn on “Use learned reranker” above to apply it to your For You feed."
+            : gate === 'trained'
+              ? "It's now personalizing your For You feed."
+              : notYet)
       );
       await qc.invalidateQueries({ queryKey: ['ranker'] });
     } catch (err) {
@@ -84,6 +99,7 @@ export default function Settings() {
   const [cloudModelsLoading, setCloudModelsLoading] = useState(false);
   const [cloudModelsErr, setCloudModelsErr] = useState('');
   const [showSignals, setShowSignals] = useState(false);
+  const [showHidden, setShowHidden] = useState(false);
   const [searchParams] = useSearchParams();
 
   // Deep-link: other surfaces link here with ?section=<id> (e.g. the AI summary's "Edit
@@ -142,12 +158,16 @@ export default function Settings() {
   };
 
   return (
-    <main className="mx-auto max-w-3xl space-y-5 px-3 py-5 sm:px-4">
-      <h1 className="text-xl font-semibold">Settings &amp; models</h1>
+    <main className="mx-auto max-w-3xl px-3 py-5 sm:px-4 lg:max-w-5xl">
+      <h1 className="mb-4 text-xl font-semibold">Settings &amp; models</h1>
+      <div className="lg:grid lg:grid-cols-[13rem_minmax(0,1fr)] lg:gap-6">
+        <SettingsToc />
+        <div className="min-w-0 space-y-5">
+          <div id="account" className="scroll-mt-20">
+            <HnAccount />
+          </div>
 
-      <HnAccount />
-
-      <Section title="Appearance & feed">
+      <Section id="appearance" title="Appearance & feed">
         <Select<string>
           label="Theme design (palette + typography)"
           value={prefs.themeName}
@@ -168,6 +188,16 @@ export default function Settings() {
             { value: 'dark', label: 'Dark' },
           ]}
           onChange={(v) => prefs.setTheme(v)}
+        />
+        <Select<TextSize>
+          label="Reading text size"
+          value={prefs.textSize}
+          options={[
+            { value: 'sm', label: 'Small' },
+            { value: 'md', label: 'Default' },
+            { value: 'lg', label: 'Large' },
+          ]}
+          onChange={(v) => prefs.setTextSize(v)}
         />
         <Select<FeedKind>
           label="Default feed"
@@ -191,7 +221,7 @@ export default function Settings() {
         />
       </Section>
 
-      <div id="ranking">
+      <div id="ranking" className="scroll-mt-20">
         <Section
           title="For You ranking weights"
           description="Blend the signals used to re-rank your feed. Only affects the For You feed; changes apply when you return to it. Tip: you can also tune these live from the For You sidebar."
@@ -201,8 +231,9 @@ export default function Settings() {
       </div>
 
       <Section
+        id="reranker"
         title="Learned reranker (logistic regression)"
-        description="Trains locally on your clicks, saves, reads (dwell time), and hides to predict what you'll engage with. When enabled, it retrains automatically as you browse — the button below just forces an immediate retrain."
+        description="Trains locally on your activity — the stories you read, save or hide, and the ones you scroll past — to predict what you'll engage with. When enabled, it retrains automatically as you browse; the button below just forces an immediate retrain."
       >
         <Toggle
           checked={prefs.useLearnedRanker}
@@ -220,15 +251,25 @@ export default function Settings() {
             Retrain now
           </button>
           <span className="text-xs text-muted">
-            {modelQ.data && modelQ.data.n > 0
-              ? `Trained on ${modelQ.data.n} examples${modelQ.data.updatedAt ? ` · ${timeAgo(Math.floor(modelQ.data.updatedAt / 1000))}` : ''}`
-              : 'Not trained yet'}
+            {(() => {
+              const m = modelQ.data;
+              if (!m || m.n === 0) return 'Not trained yet';
+              const when = m.updatedAt ? ` · ${timeAgo(Math.floor(m.updatedAt / 1000))}` : '';
+              // Mirror the feed's WHOLE activeModel gate — useLearnedRanker AND rankerTrained — so
+              // this never claims "Active" while the reranker is toggled off or still dormant.
+              if (!prefs.useLearnedRanker) return `Off · trained on ${m.n} examples from your activity (turn on above to apply)`;
+              if (rankerTrained(m)) return `Active · personalizing from ${m.n} examples from your activity${when}`;
+              return m.n < MIN_TRAIN_SAMPLES
+                ? `Still learning · ${m.n}/${MIN_TRAIN_SAMPLES} interactions — not applied yet`
+                : `Still learning · read ${MIN_TRAIN_POSITIVES}+ stories to activate — not applied yet${when}`;
+            })()}
           </span>
         </div>
         {trainMsg && <p className="text-xs text-muted">{trainMsg}</p>}
       </Section>
 
       <Section
+        id="embeddings"
         title="Embeddings (Transformers.js)"
         description="Runs a small sentence-embedding model in your browser so For You can rank by how similar a story is to what you've been reading (the 'relevance' signal)."
       >
@@ -249,7 +290,7 @@ export default function Settings() {
             type="button"
             onClick={loadEmb}
             disabled={embLoading}
-            className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm hover:bg-surface-2 disabled:opacity-60"
+            className="inline-flex items-center gap-2 rounded-lg border border-edge px-3 py-2 text-sm hover:bg-surface-2 disabled:opacity-60"
           >
             {embLoading ? <Loader2 className="size-4 animate-spin" /> : <Cpu className="size-4" />}
             Load / test model
@@ -258,6 +299,7 @@ export default function Settings() {
         </div>
       </Section>
 
+      <div id="article-text" className="scroll-mt-20">
       <Section
         title="Article text (reader proxies)"
         description="By default the app can't read linked article bodies — browsers block cross-site reads (CORS), so 'content' is limited to titles, HN self-text, and comments. Turn this on to feed real page text into ranking + AI summaries. When on, the app fetches an article's text when you open it, AND speculatively prefetches a few top feed stories you haven't clicked (so the ranker has content to learn from). No setup: it uses free public reader services (AllOrigins → cors.eu.org → codetabs), trying the next if one is down."
@@ -273,45 +315,50 @@ export default function Settings() {
           <ol className="space-y-1">
             {READER_PROXIES.map((p, i) => (
               <li key={p.name} className="flex items-baseline gap-2">
-                <span className="text-subtle tabular-nums">{i + 1}.</span>
+                <span className="text-muted tabular-nums">{i + 1}.</span>
                 <span className="font-medium text-fg">{p.name}</span>
-                <span className="truncate text-subtle">{proxyHost(p)}</span>
+                <span className="truncate text-muted">{proxyHost(p)}</span>
               </li>
             ))}
           </ol>
-          <p className="mt-1.5 text-subtle">
+          <p className="mt-1.5 text-muted">
             The first that answers is used; if it&apos;s down/rate-limited the next is tried. Whichever
             served the text is shown on each summary as “Based on … · via &lt;proxy&gt;”, with a link to the
             source and the extracted text.
           </p>
         </div>
         {prefs.fetchArticleText && (
-          <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5 text-xs text-amber-600 dark:text-amber-400">
+          <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5 text-xs text-amber-800 dark:text-amber-200">
             <AlertTriangle className="mt-0.5 size-4 shrink-0" />
             <span>
               Privacy tradeoff: article URLs are sent to a free third-party reader service — not just ones you
-              open, but also a few top feed stories the app prefetches for ranking. It&apos;s the only feature
-              that isn&apos;t fully on-device — everything else stays in your browser.
+              open, but also a few top feed stories the app prefetches for ranking. It&apos;s the most
+              revealing of the app&apos;s few non-local calls; the others are story favicons (on by default,
+              below), downloading AI model weights, and a cloud AI provider if you configure one. Ranking,
+              training and your history never leave your browser.
             </span>
           </div>
         )}
       </Section>
+      </div>
 
       <Section
+        id="privacy"
         title="Privacy"
-        description="HN Lens runs entirely in your browser — reading history, ranking, and models never leave your device. The two exceptions are opt-in and listed here: linked-article text (above) and story favicons."
+        description="HN Lens runs entirely in your browser — reading history, ranking, and personalization never leave your device. The two always-relevant exceptions are toggles here: linked-article text (above) and story favicons. AI-related calls (the one-time on-device model download, and a cloud provider if you configure one) are described in the AI section above; read-aloud uses your platform's voice, which may be a network voice."
       >
         <Toggle
           checked={prefs.remoteFavicons}
           onChange={(v) => prefs.set({ remoteFavicons: v })}
           label="Load story favicons from Google's favicon service"
-          description="On by default. Turn off for strict privacy: favicons show as letter monograms only, so the domains of stories you view are never sent to google.com/s2/favicons."
+          description="On by default. Turn off for strict privacy: favicons show as letter monograms only, so the domains of stories you view are never sent to Google's favicon service."
         />
       </Section>
 
       <Section
+        id="ai-summaries"
         title="AI summaries"
-        description="Powers TL;DRs and discussion summaries. Use the on-device model (fully private, needs WebGPU + a one-time download) or bring your own cloud API key (faster/stronger, but sends the summary content to that provider)."
+        description="Powers TL;DRs and discussion summaries. Use the on-device model (your content never leaves the browser; needs WebGPU, and the one-time weight download comes from huggingface.co) or bring your own cloud API key (faster/stronger, but sends the summary content to that provider)."
       >
         <Select
           label="AI provider"
@@ -356,7 +403,7 @@ export default function Settings() {
                 type="button"
                 onClick={loadLlm}
                 disabled={llmLoading || !gpu}
-                className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm hover:bg-surface-2 disabled:opacity-60"
+                className="inline-flex items-center gap-2 rounded-lg border border-edge px-3 py-2 text-sm hover:bg-surface-2 disabled:opacity-60"
               >
                 {llmLoading ? <Loader2 className="size-4 animate-spin" /> : <Cpu className="size-4" />}
                 Load model
@@ -378,7 +425,7 @@ export default function Settings() {
                   prefs.set({ apiKeys: { ...prefs.apiKeys, [prefs.llmProvider]: e.target.value } });
                   setCloudModelsErr(''); // a stale "invalid key" error shouldn't linger while editing
                 }}
-                className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-accent"
+                className="w-full rounded-lg border border-edge bg-surface px-3 py-2 text-sm outline-none focus:border-accent"
               />
             </label>
             <p className="text-xs text-muted">
@@ -401,7 +448,7 @@ export default function Settings() {
                     aria-label="AI model"
                     value={cloudModelFor(prefs.llmProvider, prefs.cloudModels[prefs.llmProvider])}
                     onChange={(e) => prefs.set({ cloudModels: { ...prefs.cloudModels, [prefs.llmProvider]: e.target.value } })}
-                    className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-accent"
+                    className="w-full rounded-lg border border-edge bg-surface px-3 py-2 text-sm outline-none focus:border-accent"
                   >
                     {(() => {
                       // Always include the CHOSEN model as an option — otherwise, after a
@@ -427,7 +474,7 @@ export default function Settings() {
                   type="button"
                   onClick={loadCloudModels}
                   disabled={cloudModelsLoading || !prefs.apiKeys[prefs.llmProvider].trim()}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-sm hover:bg-surface-2 disabled:opacity-60"
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-edge px-3 py-2 text-sm hover:bg-surface-2 disabled:opacity-60"
                 >
                   {cloudModelsLoading ? <Loader2 className="size-4 animate-spin" /> : null}
                   Load models
@@ -447,61 +494,96 @@ export default function Settings() {
                 <span className="font-medium">Privacy:</span> summaries you request send the story title, top
                 comments {prefs.fetchArticleText ? '+ fetched article text ' : ''}and your API key directly from
                 your browser to {CLOUD_PROVIDER_INFO[prefs.llmProvider].label}. The key is stored only in this
-                browser (localStorage). The on-device model keeps everything local.
+                browser (localStorage). With the on-device model your content never leaves the browser — only the
+                one-time model download touches the network.
               </span>
             </div>
           </div>
         )}
       </Section>
 
-      <div id="ai-prompts">
+      <div id="ai-prompts" className="scroll-mt-20">
       <Section
         title="AI prompts (advanced)"
-        description="The system instruction sent on every AI summary (local + cloud). Leave blank to use the default; your text is sent as the system message. Changing it re-summarizes."
+        description="The EXACT instructions sent to the model for each summary type — BOTH the system instruction and the user-message template. The template's {placeholders} are filled with the story data at request time, so the whole prompt is visible and editable. Leave a field blank to use the built-in default; changing either re-summarizes."
       >
-        {(['tldr', 'thread'] as const).map((k) => (
-          <div key={k} className="space-y-1">
-            <div className="flex items-center justify-between">
-              <label htmlFor={`sys-${k}`} className="text-sm font-medium">
-                {k === 'tldr' ? 'Card TL;DR' : 'Discussion summary'} system instruction
-              </label>
-              {prefs.systemPrompts[k] && (
-                <button
-                  type="button"
-                  onClick={() => prefs.set({ systemPrompts: { ...prefs.systemPrompts, [k]: '' } })}
-                  className="text-xs text-accent hover:underline"
-                >
-                  Reset to default
-                </button>
-              )}
+        {PROMPT_KINDS.map((k) => (
+          <div key={k} className="space-y-2 rounded-lg border border-border bg-surface-2 p-3">
+            <div>
+              <div className="text-sm font-semibold">{PROMPT_META[k].label}</div>
+              <p className="text-xs text-muted">{PROMPT_META[k].description}</p>
             </div>
-            <textarea
-              id={`sys-${k}`}
-              rows={3}
-              value={prefs.systemPrompts[k]}
-              placeholder={DEFAULT_SYSTEM[k]}
-              onChange={(e) => prefs.set({ systemPrompts: { ...prefs.systemPrompts, [k]: e.target.value } })}
-              className="w-full resize-y rounded-lg border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-accent"
-            />
+            <div className="space-y-1">
+              <div className="flex items-center justify-between">
+                <label htmlFor={`sys-${k}`} className="text-xs font-medium text-muted">System instruction</label>
+                {prefs.prompts[k].system && (
+                  <button
+                    type="button"
+                    onClick={() => prefs.set({ prompts: { ...prefs.prompts, [k]: { ...prefs.prompts[k], system: '' } } })}
+                    className="text-xs text-accent hover:underline"
+                  >
+                    Reset
+                  </button>
+                )}
+              </div>
+              <textarea
+                id={`sys-${k}`}
+                rows={2}
+                value={prefs.prompts[k].system}
+                placeholder={DEFAULT_PROMPTS[k].system}
+                onChange={(e) => prefs.set({ prompts: { ...prefs.prompts, [k]: { ...prefs.prompts[k], system: e.target.value } } })}
+                className="w-full resize-y rounded-lg border border-edge bg-surface px-3 py-2 text-xs outline-none focus:border-accent"
+              />
+            </div>
+            <div className="space-y-1">
+              <div className="flex items-center justify-between">
+                <label htmlFor={`usr-${k}`} className="text-xs font-medium text-muted">User-message template</label>
+                {prefs.prompts[k].user && (
+                  <button
+                    type="button"
+                    onClick={() => prefs.set({ prompts: { ...prefs.prompts, [k]: { ...prefs.prompts[k], user: '' } } })}
+                    className="text-xs text-accent hover:underline"
+                  >
+                    Reset
+                  </button>
+                )}
+              </div>
+              <textarea
+                id={`usr-${k}`}
+                rows={5}
+                value={prefs.prompts[k].user}
+                placeholder={DEFAULT_PROMPTS[k].user}
+                onChange={(e) => prefs.set({ prompts: { ...prefs.prompts, [k]: { ...prefs.prompts[k], user: e.target.value } } })}
+                className="w-full resize-y rounded-lg border border-edge bg-surface px-3 py-2 font-mono text-[11px] leading-relaxed outline-none focus:border-accent"
+              />
+              <p className="text-[11px] text-muted">
+                Placeholders:{' '}
+                {PROMPT_META[k].placeholders.map((p) => (
+                  <code key={p} className="mr-1 rounded bg-surface px-1 py-0.5">{p}</code>
+                ))}
+              </p>
+            </div>
           </div>
         ))}
       </Section>
       </div>
 
       <Section
+        id="models"
         title="Cached models & storage"
         description="Downloaded model weights are cached in your browser so they don't re-download. They're large — remove any you don't need to free space."
       >
         <CachedModels />
       </Section>
 
-      <Section title="Filters">
+      <Section id="filters" title="Filters">
         <Slider
           label={`Minimum points: ${prefs.minPoints}`}
           value={prefs.minPoints}
           min={0}
           max={200}
           step={5}
+          decimals={0}
           onChange={(v) => prefs.set({ minPoints: v })}
         />
         <TagEditor
@@ -544,7 +626,7 @@ export default function Settings() {
         />
       </Section>
 
-      <Section title="Data" description="Everything is stored locally in your browser (IndexedDB + localStorage). Delete by type below, or clear it all.">
+      <Section id="data" title="Data" description="Everything is stored locally in your browser (IndexedDB + localStorage). Delete by type below, or clear it all.">
         <button
           type="button"
           onClick={() => setShowSignals(true)}
@@ -554,13 +636,30 @@ export default function Settings() {
         </button>
         {showSignals && <SignalsDialog onClose={() => setShowSignals(false)} />}
 
+        {/* The count DRILLS IN, matching its sibling 43px above ("N interaction signals recorded —
+            view"). It used to be dead text whose only neighbour was a destructive bulk action, while
+            the per-item viewer lived 475px further down — so the obvious thing to click on noticing
+            "12 hidden stories" was "Unhide all", which discards every not-interested downvote at
+            once and retrains the ranker on stories the reader still doesn't want. Same data, same
+            page, two opposite affordances. Bulk stays as the escape hatch, demoted. */}
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-sm text-muted">{hiddenCount} hidden {hiddenCount === 1 ? 'story' : 'stories'}</span>
+          {hiddenCount > 0 ? (
+            <button
+              type="button"
+              onClick={() => setShowHidden(true)}
+              className="inline-flex items-center gap-1 text-sm text-accent hover:underline"
+            >
+              {hiddenCount} hidden {hiddenCount === 1 ? 'story' : 'stories'} — view
+            </button>
+          ) : (
+            <span className="text-sm text-muted">No hidden stories</span>
+          )}
+          {showHidden && <HiddenDialog onClose={() => setShowHidden(false)} />}
           {hiddenCount > 0 && (
             <button
               type="button"
               onClick={() => void unhideAll()}
-              className="rounded-lg border border-border px-3 py-1.5 text-sm hover:bg-surface-2"
+              className="rounded-lg border border-edge px-3 py-1.5 text-sm text-muted hover:bg-surface-2 hover:text-fg"
             >
               Unhide all
             </button>
@@ -575,20 +674,91 @@ export default function Settings() {
             onClick={() => {
               if (confirm('Reset all settings (weights, filters, models, follows) to defaults?')) prefs.reset();
             }}
-            className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm hover:bg-surface-2"
+            className="inline-flex items-center gap-2 rounded-lg border border-edge px-3 py-2 text-sm hover:bg-surface-2"
           >
             <RotateCcw className="size-4" /> Reset all settings
           </button>
           <button
             type="button"
             onClick={doClear}
-            className="inline-flex items-center gap-2 rounded-lg border border-red-500/40 px-3 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-red-500/10"
+            className="inline-flex items-center gap-2 rounded-lg border border-edge px-3 py-2 text-sm text-red-700 dark:text-red-300 hover:bg-red-500/10"
           >
             <Trash2 className="size-4" /> Clear all local data
           </button>
         </div>
       </Section>
+        </div>
+      </div>
     </main>
+  );
+}
+
+const SETTINGS_SECTIONS: { id: string; label: string }[] = [
+  { id: 'account', label: 'Account' },
+  { id: 'appearance', label: 'Appearance & feed' },
+  { id: 'ranking', label: 'Ranking weights' },
+  { id: 'reranker', label: 'Learned reranker' },
+  { id: 'embeddings', label: 'Embeddings' },
+  { id: 'article-text', label: 'Article text' },
+  { id: 'privacy', label: 'Privacy' },
+  { id: 'ai-summaries', label: 'AI summaries' },
+  { id: 'ai-prompts', label: 'AI prompts' },
+  { id: 'models', label: 'Cached models' },
+  { id: 'filters', label: 'Filters' },
+  { id: 'data', label: 'Data' },
+];
+
+// Table of contents for the Settings page: a sticky rail (lg+) / horizontally-scrollable
+// bar (mobile) that jumps to each section and highlights the one currently in view.
+function SettingsToc() {
+  const [active, setActive] = useState(SETTINGS_SECTIONS[0].id);
+  useEffect(() => {
+    const obs = new IntersectionObserver(
+      (entries) => {
+        const vis = entries
+          .filter((e) => e.isIntersecting)
+          .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+        if (vis[0]) setActive(vis[0].target.id);
+      },
+      // Trigger when a section's top is in the upper third of the viewport.
+      { rootMargin: '-72px 0px -66% 0px' }
+    );
+    for (const s of SETTINGS_SECTIONS) {
+      const el = document.getElementById(s.id);
+      if (el) obs.observe(el);
+    }
+    return () => obs.disconnect();
+  }, []);
+  const go = (id: string) => {
+    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    setActive(id);
+  };
+  return (
+    <nav
+      aria-label="Settings sections"
+      className="mb-4 lg:sticky lg:top-[4.5rem] lg:mb-0 lg:self-start"
+    >
+      <p className="mb-2 hidden text-xs font-semibold uppercase tracking-wide text-subtle lg:block">On this page</p>
+      <ul className="-mx-1 flex flex-wrap gap-1 px-1 pb-1 lg:mx-0 lg:flex-col lg:flex-nowrap lg:px-0 lg:pb-0">
+        {SETTINGS_SECTIONS.map((s) => (
+          <li key={s.id} className="shrink-0 lg:shrink">
+            <button
+              type="button"
+              onClick={() => go(s.id)}
+              aria-current={active === s.id ? 'true' : undefined}
+              className={cn(
+                'w-full whitespace-nowrap rounded-lg px-2.5 py-1.5 text-left text-sm transition-colors',
+                active === s.id
+                  ? 'bg-accent/15 font-semibold text-fg'
+                  : 'text-muted hover:bg-surface-2 hover:text-fg'
+              )}
+            >
+              {s.label}
+            </button>
+          </li>
+        ))}
+      </ul>
+    </nav>
   );
 }
 
@@ -601,9 +771,19 @@ function ModelStatusLine({
   message: string;
   progress: number;
 }) {
-  if (status === 'idle') return <span className="text-xs text-subtle">Not loaded</span>;
+  // data-model-status is a stable hook for the WebGPU harnesses. They previously polled this with
+  // getByText(/loading|ready|error|.../) scoped to the surrounding section, which also matches
+  // ordinary prose — the privacy disclosure's "downloading AI model weights" contains "loading",
+  // so whenever the reader-proxy toggle was on the harness read that paragraph as the model status
+  // and waited out its full 10-minute deadline. Target the element, not the words.
+  if (status === 'idle')
+    return (
+      <span data-model-status="idle" className="text-xs text-subtle">
+        Not loaded
+      </span>
+    );
   return (
-    <span className="text-xs text-muted">
+    <span data-model-status={status} className="text-xs text-muted">
       {status === 'loading' ? `${Math.round(progress * 100)}% · ${message}` : `${status}${message ? ` · ${message}` : ''}`}
     </span>
   );

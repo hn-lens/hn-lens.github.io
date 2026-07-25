@@ -1,12 +1,19 @@
+import { fetchWithTimeout } from './http';
 import type { AlgoliaItem, AlgoliaSearchResult } from '../../types';
 
 const BASE = 'https://hn.algolia.com/api/v1';
 
 /** Full nested comment tree for a story in a single request. */
 export async function fetchItemTree(id: number): Promise<AlgoliaItem | null> {
-  const res = await fetch(`${BASE}/items/${id}`);
-  if (!res.ok) return null;
-  return (await res.json()) as AlgoliaItem;
+  // A hung/failed tree fetch returns null (callers tolerate a missing tree) so it can't
+  // stall a background retrain's term-profile enrichment or a discussion open indefinitely.
+  try {
+    const res = await fetchWithTimeout(`${BASE}/items/${id}`);
+    if (!res.ok) return null;
+    return (await res.json()) as AlgoliaItem;
+  } catch {
+    return null;
+  }
 }
 
 export interface SearchParams {
@@ -28,10 +35,10 @@ export async function search(params: SearchParams): Promise<AlgoliaSearchResult>
   qs.set('page', String(params.page ?? 0));
   qs.set('hitsPerPage', String(params.hitsPerPage ?? 30));
 
-  const res = await fetch(`${BASE}/${endpoint}?${qs.toString()}`);
-  // Throw on a real error so the search UI can show an error/Retry state instead of an
-  // empty "No results" — a swallowed error erases the difference between "nothing found"
-  // and "search is broken" (the same fix `fetchList` got for feeds).
+  const res = await fetchWithTimeout(`${BASE}/${endpoint}?${qs.toString()}`);
+  // Throw on a real error (or a timeout abort) so the search UI can show an error/Retry
+  // state instead of an empty "No results" — a swallowed error erases the difference between
+  // "nothing found" and "search is broken" (the same fix `fetchList` got for feeds).
   if (!res.ok) throw new Error(`Search failed: ${res.status}`);
   return (await res.json()) as AlgoliaSearchResult;
 }

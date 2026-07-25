@@ -63,7 +63,7 @@ export default function Home() {
                 type="button"
                 onClick={() => setMobileTune((v) => !v)}
                 aria-expanded={mobileTune}
-                className="flex w-full items-center gap-2 rounded-xl border border-border bg-surface px-3 py-2 text-sm font-semibold"
+                className="flex w-full items-center gap-2 rounded-xl border border-edge bg-surface px-3 py-2 text-sm font-semibold"
               >
                 <SlidersHorizontal className="size-4 text-accent" /> Tune ranking
                 {mobileTune ? (
@@ -81,11 +81,7 @@ export default function Home() {
           )}
 
           <div className="mt-4">
-            {q ? (
-              <SearchResults query={q} />
-            ) : (
-              <Feed kind={feed} showRank={feed === 'foryou'} />
-            )}
+            {q ? <SearchResults query={q} /> : <Feed kind={feed} showRank={feed === 'foryou'} />}
           </div>
         </div>
         <Sidebar feed={feed} searching={!!q} />

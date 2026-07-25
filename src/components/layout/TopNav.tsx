@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { Bookmark, ExternalLink, Moon, Search, Settings, Sun } from 'lucide-react';
+import { ArrowUp, Bookmark, ExternalLink, Moon, Search, Settings, Sun } from 'lucide-react';
 import { useTheme } from '../../hooks/useTheme';
 import { usePrefs } from '../../lib/prefs';
 import { LAYOUTS, THEMES } from '../../lib/themes';
 import { IconButton } from '../ui/primitives';
+import { scrollToTop, useScrolledPast } from '../../hooks/useScrollTop';
 
 export default function TopNav() {
   const { isDark, toggle } = useTheme();
@@ -17,6 +18,11 @@ export default function TopNav() {
   const [params] = useSearchParams();
   const urlQ = params.get('q') ?? '';
   const [q, setQ] = useState(urlQ);
+  // Phones get "back to top" HERE rather than as a floating FAB: this header is sticky, so the
+  // control is always reachable and never sits in the tap layer over content (a bottom-anchored
+  // FAB stole taps from comment authors / collapse chevrons / left-aligned layout controls — see
+  // ScrollTop.tsx). Desktop keeps the FAB, which sits harmlessly in the empty side gutter.
+  const scrolled = useScrolledPast(800);
 
   // Keep the box in sync with the URL (deep links, clearing, back/forward).
   useEffect(() => {
@@ -47,7 +53,7 @@ export default function TopNav() {
             placeholder="Search Hacker News…"
             aria-label="Search Hacker News"
             type="search"
-            className="w-full rounded-lg border border-border bg-surface py-1.5 pl-8 pr-3 text-sm outline-none placeholder:text-subtle focus:border-accent focus:ring-1 focus:ring-ring"
+            className="w-full rounded-lg border border-edge bg-surface py-1.5 pl-8 pr-3 text-sm outline-none placeholder:text-subtle focus:border-accent focus:ring-1 focus:ring-ring"
           />
         </form>
 
@@ -57,7 +63,7 @@ export default function TopNav() {
             aria-label="Theme design"
             title="Switch theme design"
             onChange={(e) => setThemeName(e.target.value)}
-            className="hidden max-w-[9rem] rounded-lg border border-border bg-surface px-2 py-1.5 text-xs text-muted outline-none hover:text-fg focus:border-accent md:block"
+            className="hidden max-w-[9rem] truncate rounded-lg border border-edge bg-surface py-1.5 pl-2 pr-6 text-xs text-muted outline-none hover:text-fg focus:border-accent md:block"
           >
             {THEMES.map((t) => (
               <option key={t.id} value={t.id}>
@@ -70,7 +76,7 @@ export default function TopNav() {
             aria-label="Layout"
             title="Switch layout (structure)"
             onChange={(e) => setLayout(e.target.value)}
-            className="hidden max-w-[8rem] rounded-lg border border-border bg-surface px-2 py-1.5 text-xs text-muted outline-none hover:text-fg focus:border-accent lg:block"
+            className="hidden max-w-[8rem] truncate rounded-lg border border-edge bg-surface py-1.5 pl-2 pr-6 text-xs text-muted outline-none hover:text-fg focus:border-accent lg:block"
           >
             {LAYOUTS.map((l) => (
               <option key={l.id} value={l.id}>
@@ -78,6 +84,13 @@ export default function TopNav() {
               </option>
             ))}
           </select>
+          {scrolled && (
+            <span className="lg:hidden">
+              <IconButton label="Scroll to top" onClick={scrollToTop}>
+                <ArrowUp className="size-[18px]" />
+              </IconButton>
+            </span>
+          )}
           <IconButton label="Saved items" onClick={() => navigate('/saved')}>
             <Bookmark className="size-[18px]" />
           </IconButton>

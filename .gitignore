@@ -25,10 +25,18 @@ dist-ssr
 # Generated proof/report artifacts (regenerate with `npm run test:personalization`)
 scripts/.artifacts
 
-# Editor directories and files
+# Internal competitive-analysis / roadmap notes — leak-free but not for the public repo
+/docs/competitive-analysis.md
+
+# Editor / agent tool directories and files
 .vscode/*
 !.vscode/extensions.json
 .idea
+# Ignore local agent state under .opencode/, but DO ship the project's own hnlens-* skills
+# (referenced by AGENTS.md, and leak-free like AGENTS.md + review/). `.opencode/*` (not
+# `.opencode/`) is required so the skills/ subdir can be re-included.
+.opencode/*
+!.opencode/skills/
 .DS_Store
 *.suo
 *.ntvs*

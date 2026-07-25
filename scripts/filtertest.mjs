@@ -12,10 +12,11 @@ const now = Math.floor(Date.now() / 1000);
 // below-min-points item, and another normal item.
 const TOP = [401, 402, 403, 404, 405];
 const story = (id, title, url, score) => ({ id, type: 'story', by: `u${id}`, title, url, score, descendants: 5, time: now - 3600 });
-// Jobs feed: HN job posts carry NO score → min-points must not filter them out,
-// but a muted domain still must.
+// Jobs feed: real HN job posts carry a CONSTANT score of 1 (not upvotes) → min-points
+// must NOT filter them out (a threshold >=2 would otherwise empty the whole Jobs feed),
+// but a muted domain still must. (Fixture uses the realistic score:1, not a score-less job.)
 const JOBS = [501, 502];
-const job = (id, title, url) => ({ id, type: 'job', by: null, title, url, time: now - 3600 });
+const job = (id, title, url) => ({ id, type: 'job', by: null, title, url, score: 1, time: now - 3600 });
 
 const byId = new Map();
 byId.set(401, story(401, 'Rust internals deep dive', 'https://ex401.com/a', 120)); // shown
@@ -23,7 +24,7 @@ byId.set(402, story(402, 'A post from a muted site', 'https://muted.com/a', 120)
 byId.set(403, story(403, 'Crypto surges to new highs', 'https://ex403.com/a', 120)); // muted keyword
 byId.set(404, story(404, 'Barely upvoted note', 'https://ex404.com/a', 10)); // below minPoints (50)
 byId.set(405, story(405, 'Another solid article', 'https://ex405.com/a', 220)); // shown
-byId.set(501, job(501, 'Backend engineer at Foo', 'https://ex501.com/j')); // scoreless job → shown
+byId.set(501, job(501, 'Backend engineer at Foo', 'https://ex501.com/j')); // job (score:1) exempt from min-points → shown
 byId.set(502, job(502, 'Recruiter post at muted site', 'https://muted.com/j')); // muted domain → hidden
 
 const hit601 = { objectID: '601', title: 'Rust internals, the search result', url: 'https://ex601.com/s', author: 'a1', points: 90, num_comments: 3, created_at_i: now - 3600 };
@@ -102,10 +103,10 @@ check('Top: MUTED DOMAIN story hidden (402)', !(await shows('muted site')), 'mut
 check('Top: MUTED KEYWORD story hidden (403)', !(await shows('Crypto surges')), "keyword 'crypto' filtered");
 check('Top: BELOW-MIN-POINTS story hidden (404)', !(await shows('Barely upvoted')), 'score 10 < 50');
 
-// ---- Jobs feed (score-less) ----
+// ---- Jobs feed (real jobs carry score:1 → exempt from min-points) ----
 await openTab('Jobs');
 await page.waitForTimeout(300);
-check('Jobs: score-less job NOT filtered by min-points (501)', await shows('Backend engineer at Foo'), 'jobs have no score');
+check('Jobs: job (score:1) NOT filtered by min-points 50 (501)', await shows('Backend engineer at Foo'), 'jobs are exempt from min-points');
 check('Jobs: muted-domain job still hidden (502)', !(await shows('Recruiter post at muted site')), 'mute applies to jobs too');
 
 // ---- Search ----
@@ -125,7 +126,7 @@ check('Search: BELOW-MIN-POINTS hit hidden (604)', !(await shows('Low points sea
 // hidden set). Contrast the feed path, which filters hidden.
 check('Search: PRE-HIDDEN story stays hidden in search (605)', !(await shows('A pre-hidden search hit')), 'hidden is global');
 const card601 = page.locator('article', { hasText: 'the search result' });
-await card601.getByRole('button', { name: 'Hide', exact: true }).click();
+await card601.getByRole('button', { name: 'Not interested', exact: true }).click();
 await page.waitForTimeout(500);
 check('Search: hiding a card in search removes it LIVE (601)', !(await shows('the search result')), 'live hidden filter re-renders search');
 

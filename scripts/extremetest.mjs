@@ -61,7 +61,11 @@ await page.route(/hn\.algolia\.com\/api\/v1\/items\/(\d+)/, (r) => {
   r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id, created_at_i: now - 3600, author: `u${id}`, title: (mk(id) || {}).title || '', url: (mk(id) || {}).url || '', points: 5, story_id: id, parent_id: null, type: 'story', children: deepThread(id, 60) }) });
 });
 await page.route(/hn\.algolia\.com\/api\/v1\/search/, (r) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ nbHits: 0, hits: [] }) }));
-await page.route(/google\.com\/s2\/favicons/, (r) => r.fulfill({ status: 200, body: '' }));
+// Match BOTH favicon forms. This mocked only the s2 alias, so when the app started calling the
+// faviconV2 endpoint directly (s2 merely redirected there, and 404'd just the same) real 404s
+// began reaching the console and failed the run — a harness pinned to one spelling of a
+// third-party URL, not an app defect. favicontest already matches both for the same reason.
+await page.route(/google\.com\/s2\/favicons|gstatic\.com\/faviconV2/, (r) => r.fulfill({ status: 200, body: '' }));
 
 await page.goto(BASE, { waitUntil: 'domcontentloaded' });
 await page.waitForFunction(() => window.__hnlens && window.__hnlens.prefs, null, { timeout: 20000 });

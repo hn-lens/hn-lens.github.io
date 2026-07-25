@@ -174,9 +174,10 @@ const fyOff = idsFrom(await titles(page));
 check('hideReadInFeed OFF: read stories remain in For You (11 & 17 shown)', fyOff.includes(11) && fyOff.includes(17), JSON.stringify(fyOff));
 
 // ============================================================================
-// F2 — a read+HIDDEN story is excluded from BOTH read surfaces (the Read tab AND
-// the sidebar "Recently read"), so the two surfaces AGREE. Bug: the sidebar showed
-// a hidden story that the Read tab dropped (recentRead never consulted db.hidden).
+// F2 — the Read tab is a HISTORY: a story you genuinely READ and LATER marked "Not
+// interested" (hidden) is KEPT on BOTH read surfaces (the downvote shapes future ranking,
+// it doesn't erase the record that you read it). The two surfaces still AGREE — both keep
+// it. (Global mutes/min-points still exclude — see F2b.)
 // ============================================================================
 await page.evaluate(async () => {
   const [{ db }, interactions] = await Promise.all([window.__hnlens.db(), window.__hnlens.interactions()]);
@@ -198,16 +199,16 @@ await page.getByRole('button', { name: 'Read', exact: true }).click();
 await page.waitForFunction(() => document.querySelector('article') || /No reading history|Nothing to show/i.test(document.body.innerText), null, { timeout: 15000 });
 await page.waitForTimeout(400);
 const f2ReadIds = idsFrom(await titles(page));
-check('F2: Read tab EXCLUDES a read+hidden story (11)', !f2ReadIds.includes(11), JSON.stringify(f2ReadIds));
-check('F2: Read tab still shows the read, non-hidden story (12)', f2ReadIds.includes(12), JSON.stringify(f2ReadIds));
+check('F2: Read tab KEEPS a read story even after it is marked Not interested (11)', f2ReadIds.includes(11), JSON.stringify(f2ReadIds));
+check('F2: Read tab shows the other read story (12)', f2ReadIds.includes(12), JSON.stringify(f2ReadIds));
 await page.waitForFunction(
   () => (document.querySelector('.app-sidebar')?.innerText ?? '').includes('Story 12'),
   null,
   { timeout: 15000 }
 );
 const f2Sidebar = await page.evaluate(() => document.querySelector('.app-sidebar')?.innerText ?? '');
-check('F2: sidebar "Recently read" EXCLUDES the read+hidden story (11) — agrees with Read tab', !/Story 11\b/.test(f2Sidebar), '');
-check('F2: sidebar "Recently read" shows the read, non-hidden story (12)', /Story 12\b/.test(f2Sidebar), '');
+check('F2: sidebar "Recently read" KEEPS the read+hidden story (11) — agrees with Read tab', /Story 11\b/.test(f2Sidebar), '');
+check('F2: sidebar "Recently read" shows the other read story (12)', /Story 12\b/.test(f2Sidebar), '');
 
 // ============================================================================
 // F2b — the two read surfaces must also AGREE under a global MUTE / min-points filter,
@@ -398,6 +399,75 @@ const orderF1 = await page.evaluate(async () => {
 check('read-order uses genuine READ time (good dwells) — [205,204,203]', orderF1.before.join() === '205,204,203', JSON.stringify(orderF1.before));
 check('a bounced re-visit does NOT reorder a read story to the top (stays [205,204,203])', orderF1.after.join() === '205,204,203', JSON.stringify(orderF1.after));
 check('the bounced-revisited story stays READ (monotonic)', orderF1.after.includes(203), JSON.stringify(orderF1.after));
+
+// ---- [G] the Read tab must update LIVE, and must AGREE with the sidebar on the same screen ----
+// Regression for: `itemsQ`'s cache key was `['items', kind, sliceCount]` — the COUNT, never the ids.
+// `main.tsx` invalidates ['readIds'] so the id list updated, but whenever the ids changed CONTENT
+// without changing the sliced length, React Query served the stale cached array. So an in-session
+// re-read reordered nothing, and (with >=25 items of history) a brand-new read was MISSING entirely
+// while the sidebar's "Recently read" beside it listed it correctly. `refetchOnWindowFocus` is off,
+// so there was no in-place recovery. The prior version of this test only asserted across a RELOAD,
+// which is exactly why it never saw the surface the user actually looks at.
+await page.evaluate(async () => {
+  const [{ db }, interactions] = await Promise.all([window.__hnlens.db(), window.__hnlens.interactions()]);
+  await interactions.clearAllData();
+  window.__hnlens.prefs.getState().set({ defaultFeed: 'read', hideReadInFeed: false, minPoints: 0, showTopComments: false });
+  const t = Date.now();
+  // 30 genuine reads → history is longer than the 25-item first slice.
+  const evs = [];
+  for (let k = 0; k < 30; k++) {
+    const id = 1200 + k;
+    await db.items.put({ id, item: { id, type: 'story', by: `a${id}`, title: `Story ${id}`, url: `https://d${id}.com/x`, score: 30, descendants: 2, time: Math.floor(t / 1000) - 3600 }, cachedAt: t });
+    evs.push({ type: 'open_link', itemId: id, domain: `d${id}.com`, author: `a${id}`, ts: t - 500000 + k * 1000 });
+    evs.push({ type: 'dwell', itemId: id, domain: `d${id}.com`, author: `a${id}`, value: 70000, ts: t - 499000 + k * 1000 });
+  }
+  await db.events.bulkAdd(evs);
+  location.hash = '#/?feed=read';
+});
+await page.reload({ waitUntil: 'domcontentloaded' });
+await page.waitForSelector('article', { timeout: 15000 });
+// Now read a BRAND-NEW story in-session (no reload afterwards).
+await page.evaluate(async () => {
+  const [{ db }, interactions] = await Promise.all([window.__hnlens.db(), window.__hnlens.interactions()]);
+  const t = Date.now();
+  const id = 1299;
+  await db.items.put({ id, item: { id, type: 'story', by: 'anew', title: `Story ${id}`, url: 'https://dnew.com/x', score: 40, descendants: 3, time: Math.floor(t / 1000) - 600 }, cachedAt: t });
+  interactions.track({ type: 'open_link', itemId: id, domain: 'dnew.com', author: 'anew', ts: t - 20000 });
+  interactions.track({ type: 'dwell', itemId: id, domain: 'dnew.com', author: 'anew', value: 70000, ts: t - 10000 });
+});
+await page.waitForTimeout(1200);
+const liveTitles = await titles(page);
+const liveIds = liveTitles.map((x) => Number(x.replace('Story ', '')));
+const fnIds = await page.evaluate(async () => (await window.__hnlens.interactions()).getReadItemIds());
+check('an in-session read appears in the Read tab WITHOUT a reload', liveIds.includes(1299), `first5=${JSON.stringify(liveIds.slice(0, 5))}`);
+check('the Read tab agrees with getReadItemIds (newest-read first)', liveIds[0] === fnIds[0], `dom=${liveIds[0]} fn=${fnIds[0]}`);
+const sidebarHas = await page.evaluate(() => /Story 1299/.test(document.querySelector('.app-sidebar')?.innerText ?? ''));
+check('the Read tab does not contradict the sidebar beside it', !sidebarHas || liveIds.includes(1299), `sidebarHas=${sidebarHas}`);
+
+// ---- [H] read history must survive a LARGE event log (no second, tighter window) ----
+// Regression for: `getReadItemIds` read only the newest 5000 events while every sibling derivation
+// read the whole log. Impressions dominate the log (every card scrolled past fires one), so a normal
+// reader passes 5000 in days and everything older silently vanished — the Read tab and the sidebar
+// both went empty and the UI claimed no reading history at all. The log is already capped by
+// pruneCaches; a second window here only re-creates derivation drift.
+const bigLog = await page.evaluate(async () => {
+  const [{ db }, interactions] = await Promise.all([window.__hnlens.db(), window.__hnlens.interactions()]);
+  await interactions.clearAllData();
+  const t = Date.now();
+  // One genuine read, far in the past…
+  const OLD = 77001;
+  await db.events.bulkAdd([
+    { type: 'open_link', itemId: OLD, domain: 'old.com', author: 'olduser', ts: t - 9_000_000 },
+    { type: 'dwell', itemId: OLD, domain: 'old.com', author: 'olduser', value: 70000, ts: t - 8_999_000 },
+  ]);
+  // …then 6000 NEWER impressions, pushing that read outside any 5000-event window.
+  const filler = [];
+  for (let k = 0; k < 6000; k++) filler.push({ type: 'impression', itemId: 78000 + k, domain: 'f.com', ts: t - 100000 + k });
+  await db.events.bulkAdd(filler);
+  const ids = await interactions.getReadItemIds();
+  return { total: await db.events.count(), stillRead: ids.includes(OLD) };
+});
+check('a genuine read survives a >5000-event log (no second window)', bigLog.stillRead === true, `events=${bigLog.total} stillRead=${bigLog.stillRead}`);
 
 await b.close();
 console.log(`\n${fails.length === 0 ? 'RESULT: READ TAB + For-You read-hide (snapshot) PASS \u2713' : `RESULT: ${fails.length} FAILED`}`);
