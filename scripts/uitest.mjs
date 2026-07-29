@@ -102,7 +102,7 @@ await step('open comments (full page) + sort + back to feed', async () => {
   await page.waitForTimeout(1500);
   await snap('discussion');
   // sort by most replies (present only when the discussion has comments)
-  const mr = page.getByRole('button', { name: 'Most replies', exact: true });
+  const mr = page.getByRole('button', { name: 'Replies', exact: true });
   if (await mr.count()) await mr.first().click();
   await page.waitForTimeout(400);
   await page.getByRole('button', { name: /Back to feed/i }).click();
@@ -195,9 +195,11 @@ await step('read tab renders', async () => {
   await page.goto(BASE, { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('article', { timeout: 40000 });
   await page.getByRole('button', { name: 'Read', exact: true }).click();
-  // shows the read-history feed or a graceful empty state — either is fine, no crash
+  // Shows the read-history feed or a graceful empty state — either is fine, no crash. Keyed on the
+  // `data-empty-state` hook rather than on prose: the tab has four valid empty states and matching
+  // their wording made this fail whenever the tour reached one the list did not name.
   await page.waitForFunction(
-    () => document.querySelector('article') || /Nothing to show/i.test(document.body.innerText),
+    () => document.querySelector('article') || document.querySelector('[data-empty-state]'),
     null,
     { timeout: 15000 }
   );

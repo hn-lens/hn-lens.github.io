@@ -124,7 +124,7 @@ export function Slider({
         value={value}
         aria-label={label}
         onChange={(e) => onChange(Number(e.target.value))}
-        className="w-full accent-[var(--accent)]"
+        className="range-themed w-full accent-[var(--accent)]"
       />
       {hint && <p className="mt-0.5 text-xs text-subtle">{hint}</p>}
     </label>

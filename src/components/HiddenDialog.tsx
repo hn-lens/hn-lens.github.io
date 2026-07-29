@@ -14,7 +14,8 @@ import { useModalBehavior } from '../hooks/useModalBehavior';
 
 export default function HiddenDialog({ onClose }: { onClose: () => void }) {
   const dialogRef = useRef<HTMLDivElement>(null);
-  useModalBehavior(dialogRef);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  useModalBehavior(dialogRef, true, scrollRef);
   const rows = useLiveQuery(
     async () => {
       const hidden = await db.hidden.orderBy('ts').reverse().toArray();
@@ -47,7 +48,7 @@ export default function HiddenDialog({ onClose }: { onClose: () => void }) {
             <X className="size-4" />
           </button>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto p-3">
+        <div ref={scrollRef} tabIndex={-1} className="min-h-0 flex-1 overflow-y-auto p-3">
           {rows.length === 0 ? (
             <p className="text-sm text-muted">No hidden stories. Marking a story “Not interested” lists it here so you can undo it.</p>
           ) : (

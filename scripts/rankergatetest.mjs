@@ -38,12 +38,17 @@ const res = await page.evaluate(() => {
   const exLow = strat.explainItem(item, ctx, mk(min - 1));
   const exHigh = strat.explainItem(item, ctx, mk(min + 8));
   const exFewPos = strat.explainItem(item, ctx, mk(min + 8, minPos - 1)); // enough samples, too few positives
+  // A model with plenty of samples/positives but numerically-dead weights (|w| ~ 3e-6) produces a
+  // near-identical probability for every story and cannot move a single card — it must be reported
+  // as degenerate, NOT "trained · personalizing". `x !== 0` was too literal.
+  const mkTiny = (n, pos) => ({ w: new Array(DIM).fill(3.4e-6), b: 0.3, n, pos, updatedAt: 0 });
+  const exTiny = strat.explainItem(item, ctx, mkTiny(min + 8, minPos + 5));
   const sNone = strat.scoreItem(item, ctx, undefined).score;
   const sLow = strat.scoreItem(item, ctx, mk(min - 1)).score;
   const sHigh = strat.scoreItem(item, ctx, mk(min + 8)).score;
   return {
     min, minPos, lowUsed: exLow.learned.used, lowEx: exLow.learned.examples, highUsed: exHigh.learned.used,
-    fewPosUsed: exFewPos.learned.used, sNone, sLow, sHigh,
+    fewPosUsed: exFewPos.learned.used, tinyUsed: exTiny.learned.used, tinyGate: exTiny.learned.gate, sNone, sLow, sHigh,
     dim: H.features().FEATURE_DIM,
     modelLabels: exHigh.learned.terms.map((t) => t.label),
   };
@@ -57,6 +62,26 @@ check('learned model IS applied at/above the gate', res.highUsed === true, `n=${
 // preference signal — so it must ALSO have enough positives before it's applied.
 check('a sensible minimum-positives gate exists (>= 2)', res.minPos >= 2, `MIN_TRAIN_POSITIVES=${res.minPos}`);
 check('learned model NOT applied with enough samples but too few positives', res.fewPosUsed === false, `pos=${res.minPos - 1}`);
+check('a numerically-dead model (all |w| ~ 3e-6) is NOT reported as trained', res.tinyUsed === false, `used=${res.tinyUsed}`);
+check('...and its gate is reported as degenerate', res.tinyGate === 'degenerate', `gate=${res.tinyGate}`);
+
+// The "Why #N?" odds comparison must not present two IDENTICAL clamped percentages as a "gap": for a
+// selective reader both this-story and typical-story odds clamp to 5% while the model still rates the
+// story higher/lower (a non-zero Learned bar). It must report the collapse + the direction instead.
+const odds = await page.evaluate(() => {
+  const s = window.__hnlens.strategies();
+  return {
+    selective: s.oddsComparison(0.04, 0.02), // both clamp to 5%, model rates THIS higher
+    avid: s.oddsComparison(0.98, 0.96), // both clamp to 95%, model rates THIS higher
+    clear: s.oddsComparison(0.5, 0.2), // a real, visible gap
+    neutral: s.oddsComparison(0.03, 0.03), // truly typical
+  };
+});
+check('odds: a selective reader\u2019s equal-clamped odds are flagged collapsed + directional',
+  odds.selective.collapsed === true && odds.selective.pctThis === 5 && odds.selective.direction === 'higher', JSON.stringify(odds.selective));
+check('odds: an avid reader\u2019s equal-clamped odds collapse at the top too', odds.avid.collapsed === true && odds.avid.pctThis === 95, JSON.stringify(odds.avid));
+check('odds: a real gap is NOT flagged collapsed', odds.clear.collapsed === false, JSON.stringify(odds.clear));
+check('odds: a truly-typical story reads "same" (no phantom direction)', odds.neutral.collapsed === true && odds.neutral.direction === 'same', JSON.stringify(odds.neutral));
 // Tolerance, not exact equality: below the gate the learned term is OFF, so the ONLY
 // difference between these two scoreItem calls is `recency`, which reads wall-clock now —
 // under load the two calls land a few ms apart and drift ~1e-8. 1e-6 is ~5 orders of
@@ -257,6 +282,73 @@ check('rankerGate names the failing clause (not just true/false)',
   gates.none === 'no-model' && gates.few === 'too-few-samples' && gates.fewPos === 'too-few-positives' &&
     gates.degen === 'degenerate' && gates.ok === 'trained',
   JSON.stringify(gates));
+
+// ---- the learned term's AUTHORITY must not depend on how separable the history happened to be ----
+// Dividing the model's log-odds margin by a CONSTANT made the learned term's dynamic range vary 145x
+// between readers: on a realistic noisy history it spanned 0.011 against popularity's 0.49 — 2.2% of
+// the smallest competing signal, and unreachable even at the slider maximum — while separable data
+// turned the same code into an on/off switch. The pool's own dispersion now sets the scale, so the
+// slider means one thing for every reader; and because that would equally amplify a model that has
+// learned nothing, the floor slides with the fit's held-out AUC.
+const scaling = await page.evaluate(() => {
+  const strat = window.__hnlens.strategies();
+  const sig = (p, c, k) => strat.learnedSignal(p, c, k);
+  const spread = (k) => Math.abs(sig(0.62, 0.5, k) - sig(0.38, 0.5, k));
+  return {
+    monotoneTight: sig(0.7, 0.5, 0.2) > sig(0.6, 0.5, 0.2) && sig(0.6, 0.5, 0.2) > sig(0.4, 0.5, 0.2),
+    monotoneWide: sig(0.7, 0.5, 6) > sig(0.6, 0.5, 6) && sig(0.6, 0.5, 6) > sig(0.4, 0.5, 6),
+    centred: Math.abs(sig(0.5, 0.5, 1)) < 1e-9,
+    tightSpread: spread(0.2),
+    wideSpread: spread(6),
+    bounded: Math.abs(sig(0.999999, 0.5, 0.05)) <= 1,
+    degenerateScaleSafe: Number.isFinite(sig(0.6, 0.5, 0)),
+  };
+});
+check('learned signal stays strictly monotone at a tight scale', scaling.monotoneTight);
+check('learned signal stays strictly monotone at a wide scale', scaling.monotoneWide);
+check('a story at the pool centre still reads as exactly neutral', scaling.centred);
+check('a tighter scale gives the learned term MORE reach',
+  scaling.tightSpread > scaling.wideSpread,
+  `tight=${scaling.tightSpread.toFixed(3)} vs wide=${scaling.wideSpread.toFixed(3)}`);
+check('the learned pull stays bounded to -1..1', scaling.bounded);
+check('a degenerate (zero) scale cannot produce a non-finite pull', scaling.degenerateScaleSafe);
+
+// The floor deciding how much authority a fit earns tracks its held-out AUC, so a model at chance
+// stays quiet while one that discriminates can actually move the order.
+const authority = await page.evaluate(() => {
+  const log = window.__hnlens.logistic();
+  const pos = Array.from({ length: 30 }, (_, i) => [1, 0, 0, 0, 0, 0, 0.9 + (i % 3) * 0.02, 0, 0, 0]);
+  const neg = Array.from({ length: 30 }, (_, i) => [0, 0, 0, 0, 0, 0, 0.1 + (i % 3) * 0.02, 0, 0, 0]);
+  const good = log.trainRanker(pos, neg);
+  // Identical distributions: nothing to learn, so held-out AUC must sit at chance.
+  const flat = Array.from({ length: 30 }, (_, i) => [0.5, 0, 0, 0, 0, 0, 0.5 + (i % 2) * 0.01, 0, 0, 0]);
+  const noise = log.trainRanker(flat, flat.slice());
+  return { good: good.auc, noise: noise.auc };
+});
+check('a separable history records a held-out AUC well above chance', (authority.good ?? 0) > 0.7, String(authority.good));
+
+// AMPLITUDE, not just the divisor. Flooring the divisor bounds only a model whose predictions
+// barely vary; an OVERFIT fit has huge dispersion, never reaches the floor, and took full authority
+// on histories with nothing to learn — measured across 20 seeded no-signal histories at a learned
+// spread of 1.29 against popularity's 0.35-0.49, moving cards up to 39 places of 60. Skill now
+// multiplies the pull, so both ends are bounded by one number.
+const amp = await page.evaluate(() => {
+  const strat = window.__hnlens.strategies();
+  const full = strat.learnedSignal(0.8, 0.5, 0.5, 1);
+  const quiet = strat.learnedSignal(0.8, 0.5, 0.5, 0.2);
+  return {
+    scalesDown: Math.abs(quiet) < Math.abs(full),
+    proportional: Math.abs(Math.abs(quiet) / Math.abs(full) - 0.2) < 1e-9,
+    stillMonotone: strat.learnedSignal(0.7, 0.5, 0.5, 0.2) > strat.learnedSignal(0.6, 0.5, 0.5, 0.2),
+    stillCentred: Math.abs(strat.learnedSignal(0.5, 0.5, 0.5, 0.2)) < 1e-9,
+  };
+});
+check('a low-skill model is quieter than a high-skill one at the same dispersion', amp.scalesDown);
+check('amplitude scales the pull exactly, not approximately', amp.proportional);
+check('a quietened model still ranks monotonically (it is bounded, not disabled)', amp.stillMonotone);
+check('a quietened model still reads neutral at the pool centre', amp.stillCentred);
+check('an unlearnable history records an AUC at chance (no false authority)',
+  Math.abs((authority.noise ?? 0.5) - 0.5) < 0.1, String(authority.noise));
 
 await b.close();
 console.log(`\n${fails.length === 0 ? 'RESULT: RANKER GATE PASS \u2713' : `RESULT: ${fails.length} FAILED`}`);

@@ -31,17 +31,29 @@ the current feature list) — baking those in is what made earlier prompts leak 
 Each round, the primary constructs the actual dispatch prompt for each lens as:
 
 ```
-<base/_common.md>  +  <base/{lens}.md>  +  CURRENT STATE appendix
+review/SPEC.md  +  <base/_common.md>  +  <base/{lens}.md>  +  CURRENT STATE appendix
 ```
+
+`review/SPEC.md` (added c3r24) is the AUTHORITY on intended behaviour and is durable — it changes
+when the product changes, not every round. It exists because lenses previously had no tie-breaker:
+when a comment claimed "X cannot happen" and X demonstrably happened, a lens had to GUESS whether the
+code or the comment was wrong, and guessing "code" produces a false HIGH. One did, on ranking
+normalisation that was working exactly as designed. Every finding now carries a classification —
+CODE-WRONG / COMMENT-WRONG / SPEC-GAP / SPEC-WRONG — so the primary is never left guessing which side
+to change.
+
+Keep the spec and the appendix DISTINCT: the spec is durable intent, the appendix is this round's
+volatile facts. Anything that belongs in both belongs in the spec.
 
 The **CURRENT STATE appendix** is rebuilt every round from the live repo and injects only the
 volatile facts:
 
 1. **Running app URL** (the `vite preview`, rebuilt from HEAD before the round) and the **repo path**.
 2. **`window.__hnlens` surface** actually exposed this round (grep `src/main.tsx`).
-3. **Feature set**: a short summary distilled from `AGENTS.md` ("Product decisions & lessons
-   learned") + `git log` since the previous round — so each lens knows every new/changed feature.
-   For the **bug lens**, this is the neutral expected-behavior spec (no suspected bugs).
+3. **What CHANGED since the previous round** — a diff, not a re-statement of the product. Durable
+   behaviour belongs in `SPEC.md`; the appendix says what moved (`git log` + the fix batch), so each
+   lens knows where the fresh risk is. If you find yourself restating intended behaviour here, put it
+   in the spec instead — that is the file with authority.
 4. **Existing automated guards** relevant to the lens (e.g. `scripts/themecontrasttest.mjs` for
    design) so it spends effort on gaps, not re-running the guard.
 5. **Round-specific inputs**: e.g. a real cloud API key for the AI lens's output-quality grading;
@@ -1615,3 +1627,1340 @@ attribution is now prevented, untrusted text is delimited and defanged, a thin t
 output renders as plain text (no script, no data access), the feature is opt-in behind a large
 deliberate download, and every summary carries a visible caveat plus a SECURITY.md section stating
 exactly this. Recorded as an accepted residual risk rather than quietly downgraded.
+
+---
+
+## c3r17 — round 17 (certification attempt; NOT clean)
+
+Seven lenses against a build from HEAD: **1 BLOCKER, 8 HIGH, ~19 MEDIUM**. The headline is not the
+count but its composition — **five of the nine blocker/high findings were created or left half-done
+by round 16's own fixes.** Three consecutive rounds have now each been made un-clean primarily by the
+previous round's remediation, and that rate is not improving. It is the single most important signal
+this loop has produced: at this maturity the dominant defect source is no longer the original code,
+it is the repair.
+
+### Self-inflicted by c3r16's fixes
+
+- **[HIGH AI] The attribution sanitiser corrupted the text of essentially every summary.** c3r16 added
+  `sanitizeAttributions` to stop the model putting invented opinions in named users' mouths. It
+  matched *any* word appearing before a reporting verb — including the very noun the prompt asks the
+  model to use — so real summaries came out reading "A A commenter…". Measured at **10 of 12 real
+  summaries corrupted, with zero true positives**: the guard did no good and constant harm. Fixed by
+  requiring handle shape, excluding common sentence subjects, and widening it to the output shapes it
+  had missed. *A deterministic post-processor over model prose must be evaluated on real generations
+  for false positives before it ships — correctness on the attack case says nothing about the 99% of
+  ordinary output it also rewrites.*
+- **[HIGH AI] The same hardening landed on one of three generation paths.** The thread summary got the
+  fence, the sanitiser and the truncation refusal; "Ask this discussion" and the persona summary got
+  none of them. Fixed by routing all three through the same handling. *An enumerate-the-siblings step
+  is in the fix discipline precisely for this, and it was skipped.*
+- **[HIGH bug] A background auto-retrain re-sorted For You under the reader ~15 s after they read
+  anything** — story 309 jumping position 10 → 1 with no user action. c3r15 introduced the session
+  order pin and c3r16 keyed it on a ranking-intent fingerprint; a retrain landing was still counted as
+  a deliberate ranking change, which is the exact scenario `useFeed.ts` names in its own comment as
+  the thing being prevented. Fixed by excluding the retrain from the intent fingerprint. *The code
+  documented the invariant and still violated it; a comment is not a test.*
+- **[BLOCKER OSS] Two shipped files named entries of the deliberately-private scrub list.** The whole
+  design is that the list identifies the employer, so it lives only in gitignored notes — and then the
+  round-15 changelog and the guard's own comments spelled out pruned entries while explaining why
+  pruning was needed. Fixed by describing the pruning without naming what was pruned. *Writing up a
+  privacy mechanism is itself a surface that mechanism has to cover.*
+- **[HIGH OSS] The leak guard was fail-open.** c3r16 rewrote it to grade committed history, which was
+  a real improvement, but `gitOut` collapsed success, "no match" and hard error into one empty string.
+  Since `git grep` exits 1 for no-match and ≥2 for a malformed pattern, **an invalid pattern silently
+  disabled all history checking and still printed a green line** — the same shape of silent-pass
+  failure the rewrite existed to remove.
+
+### Other findings fixed
+
+- **[HIGH usability] On a phone the `compact` layout killed all four per-card actions.** Save, Not
+  interested, Personalize and "Why #N?" were dead: a hover overlay revealed them, and sticky hover on
+  touch moved them between `touchstart` and `click`. Scoped the overlay to `@media (hover: hover)`.
+- **[HIGH usability] In `compact`, the TL;DR button really called the model and then rendered
+  nothing** — the full cost, none of the answer. Now shows the summary where it is requested.
+- **[HIGH design] Placeholder text was Tailwind's default `currentColor @ 50%`: sub-AA in 55 of 62
+  design×mode cells, worst 2.39:1** — and Settings renders the default AI prompts *exclusively* as
+  placeholder, so the least legible text in the app was the text a user most needs to read before
+  editing it. Now uses the AA-normalised token.
+- **[HIGH perf] Every comment-sort switch re-ran DOMPurify over every rendered comment** — 0.3 s
+  desktop, 1.2–1.5 s on a mid-range phone, for an interaction that changes no comment text. Fixed by
+  caching sanitisation. *The first attempt measured zero improvement: `stripHtml` called DOMPurify
+  directly and bypassed the new cache. Count the primitive — a cache existing does not mean it is on
+  the path.*
+
+### The remediation claim was itself wrong
+
+After the round-17 fix commit this log was going to record "all BLOCKERs and HIGHs closed". That was
+false: **OSS H1 was only half-fixed** — the scrub-list naming (B1) was addressed, the fail-open guard
+was not. It was found by re-reading the finding while preparing round 18, not by any check, which is
+the same class of error as the c3r16 "staged but never committed" correction. The guard has since
+been rewritten to close all five of its sub-gaps, each proven against the previous version in an
+isolated throwaway repo (old: `clean`, exit 0 — new: loud failure) with a passing control:
+
+- fails loudly on any git error, and validates the pattern compiles in **both** engines up front (the
+  working-tree half is a JS `RegExp`, the history half is POSIX ERE — a pattern can be valid in one
+  and rejected by the other);
+- grades **all** history rather than only unpushed commits, since a leak becomes permanent the moment
+  it is pushed and already-public commits were the one case excluded;
+- grades every commit's **author/committer identity**, and the identity is now pinned repo-locally
+  rather than inherited from a managed workstation's global config;
+- drops its own self-exemption, because an exempt file is an unexamined path;
+- states in the success line exactly what was examined, so "clean" can never read as broader than the
+  check performed.
+
+`--require-notes` is now actually wired: the gate passes it outside CI, so a renamed or lost notes
+file fails the build instead of printing a warning nobody reads. The notes' prose-only scan targets
+were moved into the fenced block, since the guard reads the fence and nothing else — anything
+prescribed only in prose is by construction never enforced.
+
+*Governing invariant, now stated in the script: it must never print "clean" about something it did
+not examine — a missing pattern list, a git error and an out-of-range commit must each be visibly
+distinct from a pass.*
+
+---
+
+## c3r18 — round 18 (certification attempt; NOT clean)
+
+Seven lenses against a build from HEAD: **1 BLOCKER, 8 HIGH, ~30 MEDIUM/LOW**. The verifier pass
+found something no individual lens could: **five separate instances of a comment asserting behaviour
+the code does not implement.** That class has now produced seven instances across rounds and is the
+most productive defect type this loop has, because a comment is what a reviewer reads *instead of*
+checking. `review/base/_common.md` now makes auditing claims-in-code an explicit target for every
+lens.
+
+### Self-inflicted, again — and one of them by the round-17 guard itself
+
+- **[HIGH OSS] The leak guard was blind to 6 of 7 realistic renderings of its most person-identifying
+  pattern.** Round 17 wrapped the whole 26-way alternation in one `\b(…)\b`. A leading `\b` requires
+  a word character BEFORE the match, so the one alternative starting with `@` could only ever fire
+  when glued to a name — backticked (this repo's own doc style), bulleted, parenthesised, after a
+  space, at line start and inside JSON all sailed through. The positive control written for it
+  tested the single rendering that worked. Fixed with per-alternative boundaries, ONE constructed
+  pattern driving both engines (they had silently diverged: JS had boundaries, `git grep` did not),
+  and a **startup self-test that synthesises a sample for every entry and fails loudly if any entry
+  cannot fire in either engine**. Also narrowed the digest exemption from whole-LINE to the digest
+  RUN (a lockfile line carries a hash AND a resolved URL) and started grading untracked files.
+- **[HIGH AI + HIGH bug, found independently by two lenses] `askThread()` had ZERO callers.** The
+  wrapper carrying the attribution hardening — whose own comment reads "when one output path is
+  hardened, every sibling that reaches the same model with the same data has to be as well" — was
+  never called, because the Ask UI used the raw `generate()` primitive. On the same thread the
+  summary rewrote a fabricated `"<handle> says…"` while Ask published it verbatim. The thin-input
+  refusal and the sanitiser were likewise missing from the persona summary, which invented a
+  two-paragraph cybersecurity biography for a REAL, named account whose entire activity was the word
+  "same" — and cached it.
+- **[MEDIUM AI + MEDIUM bug] The round-17 attribution sanitiser scored precision 0.00 AND recall
+  0.00** on 28 real on-device summaries: it mangled prose on `but`, `also`, `and`, `had`, `its`,
+  `treat`, `already` (twice manufacturing a second speaker), destroyed 3 of 3 topic-labelled bullets,
+  and caught neither genuine fabrication — because 64% of the model's real ascriptions are
+  capitalised and the rule explicitly skipped those.
+
+The fix for the last two is structural rather than another patch. Output hygiene was applied BY
+CONVENTION at each call site, which is why a new surface arrived unprotected three rounds running.
+There is now a **`scripts/aiguardtest.mjs`** with two halves: a STRUCTURAL check that fails the build
+if any file under `src/components` or `src/routes` reaches past the hardened wrappers to `generate`,
+and a BEHAVIOURAL check that each path actually refuses thin input and rewrites false attribution.
+Verified 9 of 13 failing before the fix and all passing after — and note the split earned its keep
+immediately: `askThread`'s *behaviour* passed pre-fix (the wrapper was correct), so only the
+structural half could see that the UI bypassed it.
+
+The sanitiser was rewritten to anchor on POSITION (an attribution slot: start of text, bullet or
+sentence) rather than on a vocabulary deny-list, which can never be complete. Its corpus is the
+lens's own measured output — 7 prose false positives and 2 missed fabrications before, 0 and 0 after
+— and it carries a **documented, tested known-miss**: a capitalised purely-alphabetic fabrication
+("Kalsu says X") is indistinguishable from a topic heading ("Performance claims X"), so it is
+deliberately left alone rather than corrupting real summaries.
+
+### Other findings fixed
+
+- **[HIGH perf] `SANITIZE_CACHE_MAX = 4000` sat inside the range of real threads.** Rendering is a
+  cyclic scan, LRU's worst case, so the hit rate does not degrade — it collapses: 4,000 distinct
+  bodies gave 100% at 0.6ms, 4,100 gave **0% at 1,042ms**. On a real 4,383-comment thread that was
+  12.8s to open on a throttled phone, three to four times worse than the uncached code the cache
+  replaced. Raised to 20,000, an order of magnitude above the largest thread HN has had.
+- **[HIGH perf] `ThreadGist` re-derived its whole digest in the render body**, so toggling its own
+  disclosure — which changes no data — cost 4,382 full HTML parses on a large thread. Memoised.
+- **[HIGH UI/UX] "Tap ⋯ again to close" muted an author.** The clamp comment promised to flip the
+  menu above its trigger; the code only nudged, sliding the menu OVER the ⋯ button. An item sat under
+  the tap point in 22 of 55 cells, and 4 of 5 touch cells actually mutated mutes/follows. The flip is
+  now implemented, and the fallback nudge is bounded so it can never rise past the trigger.
+- **[MEDIUM UI/UX] `mobiletest` seeded Large text with `set({textSize})`**, which never writes
+  `data-textsize` — so both checks named "at 320px + Large text" ran at the default size and could
+  not fail. Now uses `setTextSize()` AND asserts the precondition, because a guard that silently
+  tests the wrong state is worse than no guard. (Line ~225 of the same file already did it right.)
+
+---
+
+## c3r18b — the reported defect, and the detector that should have caught it
+
+A developer reported: *"I read an item, came back, it was gone from For You, and I clicked what I
+thought was that item — it was a different story that had moved into that position."*
+
+Per the rule, this was NOT fixed directly. The question is which detector was blind.
+
+**The class:** the list a reader returns to must be the list they left — same membership, same order,
+same scroll offset — and any change must be visible and reversible. Position is an implicit contract
+the reader acts on. The mis-click is the failure; the disappearance was only its cause.
+
+**Why the lens missed it.** The usability brief tested *stability while sitting still* and graded it
+clean, truthfully: nothing moved under a motionless reader. What no lens ever did was the composite a
+real reader performs — **aim at an item, leave, come back, act, and check the click landed on the
+thing you aimed at.** Worse, the brief's own bar licensed the failure: it said only an explicit act
+"(Refresh, switching tab, changing a ranking or filter control, **reloading**)" may reorder or remove
+items, so reload-triggered removal was permitted by definition and never questioned.
+
+**The brief now carries an aim-and-act protocol** scored by IDENTITY across every excursion type,
+with the rule that a permitted change still fails if it is silent, and that a disappearance must
+answer three questions: did anything tell me, can I tell where it went, can I get it back.
+
+**The detector was proven before anything was fixed.** A fresh read-only lens, told only to execute
+its brief, independently reproduced the reported defect — **35 of 45 cells missed (78%)** — and found
+a mechanism nobody had identified: past the three-minute list TTL, HN's own churn re-sorts the plain
+feeds, so 10 of 25 cards moved on live Top with nothing added or removed.
+
+### Root causes (four, compounding)
+
+1. `main.tsx` set `scrollRestoration='manual'` while the app-side restore it cited had been deleted —
+   the two files justified each other in a circle.
+2. `FeedTabs` centred the active tab with `scrollIntoView({block:'nearest'})`; several screens down
+   the tab strip is off-screen, so "centre this horizontally" scrolled the PAGE to the top.
+3. The pinned order was module-scope (lost on reload) and For-You-only, so reloads re-ranked and the
+   plain feeds had no stabilisation at all.
+4. Read stories were swept on every page LOAD, so the story just read vanished and everything below
+   it moved up a card.
+
+### Fixes
+
+Scroll is restored by **ANCHOR** — which card was at the top and by how much — not by pixel offset.
+Offsets failed four times before, always the same way: the recorder kept sampling while the list
+unmounted and the document collapsed, so a real 1245 became 37. An anchor cannot fail that way,
+because a collapsing list has no cards to sample. Three guards keep it honest: no sample without
+cards, none while the document is shrinking, and a debounce so a navigation-induced jump to the top
+is cancelled by the effect being torn down first. A settling loop holds the anchor while late content
+changes the height above it.
+
+The pinned order is persisted and applies to **every** browsing feed; Refresh clears it and shows
+HN's true current order. Read stories are swept **only** by an explicit Refresh, which reports how
+many it took and offers Undo.
+
+Measured on the lens's own matrix: **0/9 → 9/9** on For You desktop, and 9/9 on For You phone, Top
+desktop and Top phone; Top past the TTL went from 10 cards moved to 0.
+
+### Three self-inflicted regressions, all caught by the gate
+
+Worth recording, because the loop's whole thesis is that repairs cause defects: adding a comment
+block deleted an early return and **emptied the Read tab**; `readtest` still encoded the old
+contract; and `clearReadSweep()` was documented as "used when reading history is deleted" and wired
+to nothing — an eighth instance of the claim class, written the same day the class was named.
+
+### Still open
+
+The seeded-profile reload cell: the target is now PRESENT (it was gone) but still shifts one position
+when two candidates genuinely leave the pool.
+
+---
+
+## c3r18c/d — two more developer reports, both routed through the detectors first
+
+Two defects were reported directly while round 18's fixes were landing. Neither was fixed on sight;
+both went through the rule — name the class, find the blind detector, upgrade it, PROVE it on the
+pre-fix build, then fix. Both detectors rediscovered their defect unaided, and one of them found
+something nobody had asked about.
+
+### c3r18c — "scroll to the top, refresh, and the page moves down"
+
+**The class:** a continuity mechanism must be an IDENTITY at its boundary conditions. Restoring
+"where I was" has to be a no-op when the reader was already at the natural default.
+
+**Why the lens was blind, and it was my own fault:** the aim-and-act protocol added hours earlier
+says to pick a target *"several screens down"*. By construction it never exercises scrollY 0. The
+brief now sweeps position as a matrix — very top / one screen / several screens / very bottom — and
+states the strict rule at the top: **if there was nothing to restore, restoring must do nothing.**
+It also names the tell-tale shape, a consistent downward jump of roughly the height of the chrome
+above the list, which is a restore computing from the wrong origin.
+
+**Proof before fix:** the upgraded lens reported `TOP_RETURN deltaPx:157, hit 0/3` against
+`firstAbsTop:157` — the exact signature — while every other position measured `deltaPx:0`.
+
+**Root cause:** at the top the anchor is `{first card, dy 0}`, and restoring it scrolls the first
+CARD to the viewport top, which is 157px below the top of the PAGE.
+
+Fixing it took four attempts and is worth recording, because three of them were wrong in
+instructive ways. Clearing the anchor at the top helped but was RACY (1 run in 4 kept a stale
+anchor, because clearing depends on a scroll EVENT and arriving at the top does not reliably fire
+one). Refusing to restore a top anchor made the restore idempotent but did not help when the anchor
+was stale rather than top. Adding a `pagehide` sample fixed it — and adding a sample in the React
+CLEANUP alongside it broke tab-switch and discussion restore **5 runs out of 5**, because cleanup
+runs while the list is unmounting and the document is collapsing. That is the identical failure that
+defeated the four historical attempts at scroll restoration, reintroduced within a day of writing
+the comment warning about it. `pagehide` is safe; cleanup is not. Seven consecutive green runs
+followed.
+
+### c3r18d — "the toolbar wraps onto two rows and looks terrible"
+
+**The class:** a control row that wraps while leaving a line mostly empty is a layout defect **even
+though nothing overflows**. Every overflow guard here measures `scrollWidth - clientWidth`, which is
+**0** in this case, so the entire existing suite was structurally blind to it.
+
+The brief now measures row SHAPE: bucket a row's children by vertical centre to count real rows,
+then flag TWO distinct failures that look identical but need opposite fixes — **(a)** it wrapped
+although the content would fit (a greedy `flex-1` spacer, or a cluster that can only move as a
+block), and **(b)** it wrapped at an ordinary desktop width because the row is simply over-stuffed
+and something has to get shorter. Reporting only one of the two misdiagnoses the other.
+
+**Proof before fix:** 12 of 13 swept widths flagged, `2 rows, 54% / 45%`, page overflow 0 at every
+one. The fixture had to be made *harder* first: headless has no WebGPU, so without a seeded prior
+visit and a cloud key the toolbar renders two controls lighter than a real reader's and the failing
+band disappears entirely.
+
+Fixed by slimming the row — "Most replies" → "Replies", the decorative word "comments" dropped below
+`xl`, tool labels icon-only below `lg` — giving one row from 600px up. `wrapqualitytest` now holds
+it. Making the labels conditional immediately produced an a11y regression (icon-only buttons with no
+accessible name), caught by the gate and fixed with explicit `aria-label`s.
+
+### The duplicate-name pattern
+
+Collapsing four blocks into one row created **three** pairs of controls sharing an accessible name
+in a single sitting: toolbar *Summary* vs panel *Summarize*, toolbar *Ask* vs submit *Ask*, and the
+hide toast's *Undo* vs the placeholder's *Undo*. Each surfaced as a strict-mode failure in a harness
+rather than as a design review finding. Renamed to Summary/Summarize, Ask/Send and Undo/Restore —
+noun for the thing, verb for the act.
+
+---
+
+## c3r19 — round 19 (certification attempt; NOT clean)
+
+Seven read-only lenses, run against the post-c3r18d tree. **The bug lens found 2 HIGH, 3 MEDIUM,
+3 LOW and an 8-item claim-audit cluster; the AI lens found 5 HIGH.** Not a clean round, so this is a
+change round and cannot certify itself — c3r20 follows.
+
+### What each lens found, and what was done
+
+**OSS release (H1, H2, 4 MEDIUM).** Nine untracked files — including `src/lib/session.ts`,
+`src/lib/readSweep.ts` and `src/components/ui/Logo.tsx` — were already imported by tracked code, so
+the next commit would have broken the public build. Staged. `logo_design.md`, a spent
+"Target Audience: Coding Agent" brief, was removed rather than published (same category as
+`public/mocks/`). `scripts/gen-assets.mjs` still drew the RETIRED mark, so re-running it would have
+silently reverted the brand: it now renders from `public/icon.svg`, the single drawing. Rename
+finished in `CONTRIBUTING.md` + `.github/`; `LEAKCHECK_OPTIONAL=1` documented for public clones.
+
+**leakcheck grew three holes of its own, all closed and all proven.** `git ls-files` QUOTES
+non-ASCII paths, so those files threw on read and were skipped *silently while still being counted
+in the "clean" total* — a file could be published unread by the guard that cleared it. Now `-z`, and
+an unreadable listed path is a hard failure. Committed BINARIES matching the pattern were dropped
+entirely by the tree scan. Fixing that immediately produced a FALSE POSITIVE on a regenerated PNG
+(four bytes of pixel data spelling a pattern), so binaries are now scanned `strings`-style, with the
+resulting recall gap stated in the source rather than glossed. Proven by an 8-check unit proof plus
+an end-to-end proof that plants a leak under a quoted filename and confirms the real script fails.
+
+**Performance (2 HIGH, 2 MEDIUM).** The in-thread search index was built on EVERY discussion open —
+a DOMPurify sanitize plus a DOM walk per comment — so readers who never search paid for all of it,
+ahead of the comments they were waiting for. Now built on first search: **1601 → 401 parses** on
+open. New `searchindextest` (9 checks; 3 fail pre-fix). For the sanitize LRU cliff, every eviction
+policy was *simulated* rather than argued: LRU, FIFO and drop-oldest-half all collapse to **0%** hit
+rate on a cyclic scan, and only refusing to insert degrades gracefully. LRU was kept deliberately,
+the comment's false "order of magnitude to spare" (it was 4.4x) replaced with the measured boundary
+— ~18 largest threads OPENED, but only 4 SEARCHED — and that residual pinned by an assertion so it
+cannot drift unnoticed. `db.seen`, the one uncapped table and one that is read into a Map on the
+feed's critical path, is now capped.
+
+**Usability (HIGH-3 + MEDIUMs).** Clicking the site name on a card re-sorted 14 of 25 visible cards
+and carried the reader **2,026px** from what they were reading, announced only as "Following X".
+Root cause: a card-level TEACH was treated as a request for a new ranking. The precedent was already
+in the file — a background retrain is deliberately excluded from `rankIntent` for exactly this
+reason — so follow/mute joined it. The first attempt re-armed the anchor restore and made it WORSE
+(it replays a possibly-stale anchor, teleporting the reader 1,200px); the hold now pins the reader's
+live on-screen position. Lens's own real-click probes: **Δ−2026 → Δ0, 14/25 → 0/25 moved, target
+HIT** on all three controls. The dismissal placeholder now keeps the replaced card's measured
+height, so the row no longer collapses 86–147px in 10 of 14 layouts (**0px shift in every layout**).
+The "About topics you read about" chip now carries the same guard as the soft block twelve lines
+below it, so it cannot credit a signal that contributed 0.00. The `?` help gained an "On a
+discussion page" section, because `s`/`l`/`a` are rebound there and a flat list could only be wrong.
+
+**UI/UX stress (1 HIGH, MEDIUMs).** The five-control action row measured 188px inside a 178px card
+in `grid`/`masonry` at three columns, so "Open on HN" dropped alone onto a second line at 20% fill —
+on every card, reachable purely by choosing the Emerald or Claymorphism colour scheme. Wrapping
+cannot fix a row that is too wide, so inside that breakpoint the gaps close and the targets trim to
+32px: **0 of 126 desktop cells wrap** (was 84). Keyboard focus rings were clipped to a sliver by
+three `overflow` ancestors — every feed tab, every `by <author>` link, and the discussion tools —
+and are now drawn inward inside those containers, clip-proof by construction.
+
+**Design & theme.** `Logo.tsx` claimed the mark "respects the contrast normalisation those tokens
+are guaranteed to satisfy" while its faintest tier aliased `--border`, which the codebase itself
+documents as a deliberately sub-3:1 hairline. Re-aliased to `--edge` (the >=3:1 non-text token),
+which makes the claim true rather than softening it. The tray header no longer borrows
+`.bg-surface`, whose neumorphic treatment in bento/clay painted a raised shadow inside a bordered
+panel.
+
+**AI/ML (5 HIGH).** The attribution guard enforced MEMBERSHIP ("did this person comment here") while
+its own comment promised AUTHORSHIP ("never let a summary attribute a claim to a person who did not
+make it") — and 11 of 21 named attributions in real generations (52%) were wrong in exactly the gap
+between the two. Attribution now requires EVIDENCE: the claim beside a handle must share distinctive
+words with what that handle actually wrote, or the point survives and the name is dropped. The
+`**handle**:` bullet — markdown's own way of labelling a bullet, and the shape the model actually
+emits — was not matched at all. The persona summary invented a biography for a named person on
+ADEQUATE input, so it is now checked for groundedness in that person's own activity. `looksTruncated`
+tested only the final character and passed a truncation ending `Overall, "simonw"`, which was then
+cached and re-served forever; it now asks whether a sentence was completed. Finally, the learned
+ranker was INERT in a realistic noisy history — spread 0.011 against popularity's 0.49, unreachable
+at any slider setting — because the term's authority was proportional to how separable the history
+happened to be, varying **145x** between readers. The pool's own dispersion now sets the scale, the
+floor slides with the fit's held-out AUC (recorded on the model) so a chance-level model stays quiet,
+and the explainer consumes the same transform — the reconciliation the lens predicted would break
+did break, and is fixed and guarded.
+
+**Claim audit (8 items).** All eight false statements corrected, including one (`useFeed.ts` "or a
+tab switch clears the pin") that had been reported in an EARLIER round and survived into this one.
+Three said `localStorage` where the code uses `sessionStorage` — the store whose lifetime semantics
+are the entire basis of the session model. `html.ts` claimed three sites had been factored together
+"so they cannot drift again" when only two had: `ThreadGist` kept a byte-identical private copy,
+which is now deleted in favour of the shared `commentToText`. `departedRef` was computed, stored and
+never returned, so three comments promised a notice no surface could show; it is now rendered.
+
+### New guards (all proven pre-fix-FAILS / post-fix-PASSES)
+
+`searchindextest` (9) · `gisttest` jump-behind-a-collapse-pill (5) · `feedcontinuitytest` teach-does-
+not-move-the-reader (4) + engagement-cost (2) · `discussionviewtest` tool dismissal / focus / empty
+tray (8) · `aiguardtest` authorship + persona groundedness + truncation (17) · `rankergatetest`
+scale invariants + earned authority (8). `feedstabilitytest`'s stale "a RELOAD does re-order"
+precondition — which asserted the very behaviour a previous round removed — was replaced with a
+three-state contract (in-session holds / reload holds / Refresh re-orders).
+
+**Gate: 54/54 green** (up from 53 with the new harness). Nothing committed.
+
+### Documented residuals (not regressions)
+
+Searching 5 of the largest threads in one tab still crosses the sanitize cap (asserted, so the
+boundary stays honest). Dismissing 5 stories inside one viewport fills it with placeholders until
+the next Refresh — the alternative is the yank the placeholder exists to prevent. A capitalised,
+purely-alphabetic fabricated handle remains indistinguishable from a topic heading when it is NOT on
+the allow-list. Prompt injection on the 1B on-device model remains an accepted residual.
+
+---
+
+## c3r20 — round 20 (certification attempt; NOT clean) — IN PROGRESS
+
+Seven lenses. **Not clean:** bug 1 HIGH / 6 MEDIUM / 4 LOW + 12 false claims; usability 1 HIGH /
+5 MEDIUM; UI-UX 1 HIGH / 3 MEDIUM; design 1 MEDIUM; AI 2 HIGH / 4 MEDIUM; perf 1 HIGH / 3 MEDIUM;
+OSS 1 HIGH / 6 MEDIUM. Several are SELF-INFLICTED by round 19 — recorded as such, because the
+self-inflicted rate is the number that says whether the loop is working.
+
+### Fixed so far in this round
+
+| origin | finding | fix |
+|---|---|---|
+| new-from-my-fix | **OSS H1** — the pre-push leak hook was staged mode `100644`, which git silently refuses to run, and `core.hooksPath` was unset. Its own comment called it "the last line of defence"; it was disarmed twice over. | mode `100755`, `core.hooksPath` set |
+| pre-existing | **OSS M1/M2** — leakcheck never examined the **index** (exactly what `git commit` publishes) or **path names**. A leak staged and then edited out of the working copy was invisible. | both scanned; the summary line now states them |
+| new-from-my-fix | **Bug M1** — dismissal placeholders survived Refresh forever: `startNewSession()` was the only thing that cleared them and had **zero callers**, so its "Called by an explicit Refresh" doc was false. | folded into `resetFeedPosition`; the dead function deleted |
+| new-from-my-fix | **Bug M2** — the placeholder's height lived in a ref, so a RELOAD (which continues the session) collapsed it and lost 86–103px — the exact jump it exists to prevent, on the one navigation the model calls safe. | height persisted beside the id in `sessionStorage` |
+| new-from-my-fix | **Bug M3 / AI MEDIUM** — "Why #N?" bars stopped summing to the row beside them (5/20 cards, 22/60 at max slider). The outer table pays its rounding residual to its largest row, which once the slider is raised IS the learned row, so the bars were reconciled against a figure no longer displayed. | reconcile the outer table FIRST, then target the bars at the displayed figure. **0/60 now** |
+| new-from-my-fix | **AI HIGH-1** — authority was uncorrelated with skill. Flooring the divisor bounds only a model whose predictions barely vary; an OVERFIT fit sails past it. On 20 seeded no-signal histories the learned term reached a spread of 1.29 against popularity's 0.46 and moved cards up to 39 places. | skill (AUC, averaged over 3 strided folds and **discounted by its own standard error**) now scales AMPLITUDE, bounding both ends. Measured: no-signal spread 1.29 → **0.26**, and **0/20 seeds** where learned outweighs popularity. Verified across three regimes — separable 48.8→10.5, noisy 48.3→33.1, **unlearnable correctly inert** 49.8→50.5 |
+| incomplete-sibling | **AI HIGH-2** — the attribution guard rewrote **3 of 20** realistic fabrication shapes. It only understood `<name> <verb>`, so "According to X", "Per X", "As X puts it", "X's position is", a "— X" byline, and half the reporting verbs walked through, and survivors are cached. | verbless shapes added, verb list extended, `User X` prefix handled, numbered bullets covered. **16/20 caught, 7/7 miscredits, 3/3 true attributions preserved, 6/6 prose untouched** |
+| pre-existing | **Perf HIGH** — the item pool ran at concurrency 32 on the stated reasoning that the host speaks HTTP/2. It negotiates **HTTP/1.1**, capped at 6 connections, so 26 of every 32 requests queued *while their own deadline ran*; a third aborted before dispatch and For You silently ranked 57–70 candidates instead of 90. | concurrency 6 — no throughput lost, because 6 was what ran anyway — and the false claim replaced |
+
+**Gate: 54/54 green** after each batch.
+
+### Still open in this round
+
+Bug H1 (the new `departed` notice renders ~7ms then vanishes), M4 (gist scorer), M5 (a complete
+bullet-ending summary is classed truncated and never cached), M6 (whole article pages in the
+sanitize LRU), and 12 false claims. Usability HIGH-1 (the reserved top-comment skeleton collapses
+when no preview materialises, freezing the anchor recorder's collapse guard) + 5 MEDIUM. UI/UX F1
+(the action row still orphans at 320px on the DEFAULT layout, and my own fix comment says
+"5 x 32 = 160px" while the code writes `2rem` = 36px under large text), F2–F4. Design MEDIUM
+(Settings section nav selected state never reaches 3:1). AI MEDIUMs. Perf MEDIUMs. OSS MEDIUMs
+(symlinks, brand logos, the ListenButton privacy claim contradicting three shipped files,
+SECURITY.md's "no patched version", THIRD_PARTY_NOTICES coverage).
+
+---
+
+## Process v2 — convergence mode (adopted 2026-07-26, mid-round-20)
+
+Rounds 16–20 all failed to converge. The diagnosis is not that the lenses are too strict: measured
+across round 20, **8 of the 15 findings worked through were created by round 19's own fixes** (OSS
+H1, Bug H1/M1/M2/M3/M5, AI HIGH-1, UI-UX F1's false px claim). A loop producing roughly one new
+finding per fix cannot terminate, whatever the review side does.
+
+Four mechanisms produced those regressions, each with evidence from the session:
+
+1. **Guards written AFTER the fix encode what was done, not what should be true.** `searchindextest`'s
+   "running a search builds the index" check passed while the search never ran (wrong selector, and
+   the threshold was already satisfied by the open). The bullet-truncation exemption was asserted
+   `false` in a guard while the exemption was inert.
+2. **Explanatory comments are the largest single defect source.** Nearly all 12 of round 20's false
+   claims are prose written to explain a fix.
+3. **Sibling enumeration was asserted rather than performed.** `explain` object identity was fixed
+   while `reasons` — the adjacent prop, same shape, same file — was not.
+4. **Features were added during fix rounds.** The `departed` notice was new capability introduced
+   while fixing a claim audit; it was a HIGH in the next round.
+
+### Rules now in force
+
+1. **No narrative comments in source during a fix.** Reasoning lives here. Code states only what is
+   mechanically true.
+2. **Feature freeze** until a round converges. Defect removal only.
+3. **Failing test first**, written from the lens's own words, before touching code.
+4. **Batches of ~5**, then gate, then a diff-scoped read-only pass over only those changes.
+
+Plus: **prefer deletion** over building something better, and **record every finding's origin**.
+
+### Termination (changed)
+
+"Zero findings" was unreachable by construction. A round now CONVERGES when:
+
+- zero BLOCKER/HIGH, and
+- zero self-inflicted regressions, and
+- every MEDIUM either fixed or explicitly accepted in writing with a rationale.
+
+The self-inflicted rate is the signal that says whether the process is working.
+
+### c3r20 batch 1 (first batch under Process v2)
+
+Four findings taken: delete the `departed` notice (Bug H1); remove the read-sweep seed; the
+story-card action-row wrap (UI-UX F1); the Settings section-nav selected state (Design MEDIUM).
+
+**Deletions rather than repairs, per the new rule.** The `departed` notice was a feature added
+during a fix round, was on screen for 7ms, and accumulated into a ref inside a `useMemo` (unsound —
+a memo may recompute, and each recomputation re-added the same departures). It was removed, along
+with `holdOrder`'s now-pointless `{ list, departed }` wrapper. The read-sweep SEED was likewise
+removed rather than repaired: `getReadSweep(currentlyRead)` wrote the hidden set on its first call,
+so the outcome depended on whether the Dexie read query had resolved when that call happened —
+which made the first load of a session race any early write of read history. That is what made
+`readtest` fail in the gate while passing standalone, four times. The set now starts empty; the
+accepted cost is that an established reader sees their read stories once more until they Refresh.
+
+**The diff-scoped pass earned its place immediately.** Against a batch of four, it found:
+
+- **HIGH** — the seeding still existed in a SECOND place (`useFeed.ts` `readSnapshot` queryFn), and
+  `dataUsage.ts` fires a bare `invalidateQueries()`, so deleting any unrelated data category re-ran
+  it: 3 read stories vanished with no notice and no Undo.
+- **HIGH** — the new `flex-wrap: nowrap` was layout-agnostic and broke `newspaper` (47px page
+  overflow at 320px, "Open on HN" clipped away). Two further attempts were needed because
+  `:not([data-layout='newspaper'])` matches `body`; it needs `html:not(...)`.
+- **MEDIUM ×4** — an orphaned comment for the deleted ref, `holdOrder`'s doc still promising a count,
+  the one-field wrapper, a `> *` selector hitting the Personalize wrapper span rather than the
+  button, and six places still describing the removed seeding (including `types.ts`, the pref's own
+  definition, and `AGENTS.md`).
+
+All fixed within the batch. **Under the old process every one of these would have surfaced as a
+round-21 "new-from-my-fix" finding.** Two pre-existing harness races were also fixed: the
+`hnaccounttest` import-label read (1 failure in 2 runs) and `uitest`'s Read-tab check, which
+accepted only one of the tab's three valid empty states.
+
+Gate 54/54.
+
+### c3r20 batch 2
+
+Five findings: the collapsing top-comment slot (Usability HIGH-1); the ⋯ menu stranded by a rotate
+(UI-UX F2); the `^`-anchored role-label defang (AI MEDIUM); leakcheck following symlinks (OSS LOW-1);
+and `uitest`'s Read-tab check, which matched empty-state PROSE and so failed on the one state its
+list did not name.
+
+**Usability HIGH-1** had two halves. Cards reserve ~65px for a lazily-fetched top-comment preview,
+and when the fetch settled with nothing usable the slot was REMOVED — so cards below the reader
+jumped −65px while they sat still. Worse, the anchor recorder skips sampling while the document is
+>200px below its high-water mark, and that mark never ratcheted down, so after ~3 collapses the
+recorder froze for the session: a reload landed 400px away at a 30% no-preview rate and 1,200px away
+at 60%. The slot is now held (an invisible spacer), and the watermark follows the page down.
+Measured after: document height constant, anchor offset 0, reload restores the same story at 0%,
+30% and 60%.
+
+**The ⋯ menu** was being re-clamped on resize, but after a rotate the card has usually moved to a
+different column, so there is no correct position to clamp to (measured 0% visible, 3/3, no
+self-heal). It closes instead.
+
+**The read sweep's guard was position-fragile.** `feedcontinuitytest`'s teach check picked "the
+first `.sc-meta button` on the card at (640,150)", which on a text post is the author control, not
+the domain chip — so batch 1's height changes silently moved it onto a card where the click recorded
+nothing. It now finds the chip by its Follow/Unfollow title, and compares the followed set against a
+snapshot taken before the click (the chip toggles, so "non-empty" was the wrong assertion).
+
+**The diff-scoped pass again found two HIGH in the batch**, both of them a fix that did one half:
+
+- `leakcheck`'s symlink fix covered the WORKING TREE only. `git grep` does not search mode-120000
+  blobs, so a symlink leak that was committed and then deleted from the tree still reported clean —
+  while the summary line claimed it had examined every commit. Committed symlink targets are now
+  read via `ls-tree` + `cat-file`.
+- The role-label defang replaced `^`-anchoring with an allow-list of preceding characters, which
+  missed backticks, brackets, punctuation, smart quotes and — worst — `**system:**`, the exact
+  markdown-bold impersonation shape the function's own docstring names. It now uses a negative
+  lookbehind for `\w`, which covers every shape while leaving `filesystem:` and `12:30` alone.
+
+It also found **four false comments**, three of them created by this batch adding a correct comment
+BELOW the stale one instead of replacing it — so a reader met the false claim first. That is rule 1
+being violated in the same session it was adopted; all four were deleted rather than rewritten.
+And it found that the only existing role-label assertion (`llmcachetest`) was itself `^`-anchored,
+so it passed identically before and after the fix — a guard mirroring the bug it was meant to catch.
+Both the payload and the assertion are now mid-line.
+
+Gate 54/54.
+
+---
+
+## Two developer reports, both routed through rule #8
+
+Neither was fixed directly. Each was diagnosed as a CLASS, traced to the lens that should have
+caught it, that lens's brief was upgraded, and the upgraded detector was PROVEN to rediscover the
+defect on the unfixed build before any code changed.
+
+### Report 1 — "the favicon is not very readable compared to the logo"
+
+**Class:** a brand asset validated only at the size and background it was AUTHORED at, never at its
+smallest RENDERED size on the surface it lands on. The favicon is drawn by browser chrome, outside
+the app DOM, so no lens that drives the page could ever see it — and when the icons were regenerated
+in c3r20 they were inspected at 220px.
+
+**Lens:** design & theme. Its matrix is design × light/dark × layout *of the running app*; brand
+assets were not in it at any point. Brief gained section **1c — brand assets at their rendered
+size**: rasterize each shipped asset at 16/32/180/192/512, composite over BOTH browser chromes,
+count how many elements survive, and compare against the in-app rendering of the same mark.
+
+**The detector then found the real cause, which was not the one reported.** Not size — palette.
+Four of the mark's six elements were **1.30–1.77:1** on their own tile at EVERY size, 512px
+included, and the tile was **1.02:1** against dark chrome. The proof it was not a size problem: the
+same artwork drawn from tokens in-app at 24px was more legible than the shipped favicon at 32px.
+
+**Fixed** by inverting to a light tile (`#F4F6FA`) with a darkened glyph: elements below the 3:1
+floor **4 → 0** (outer 3.72, inner 9.46, accent 4.51). Those are AUTHORED hex ratios, not painted
+pixels — c3r25 measured the outer tier at 1.32–1.80:1 once rasterised at 16–32px, because it is a
+16-unit bar in a 512 viewBox. SPEC §7 exempts logotypes, so this is recorded, not reopened. Both chromes now have a high-contrast
+element — in light chrome the glyph (7.81 / 3.72 / 3.07 against the strip), in dark chrome the tile
+(14.88). The detector also found a **duplicate source**: `favicon.svg` was a byte-identical copy of
+`icon.svg` with nothing keeping them in sync, while `gen-assets.mjs` read one and the browser
+rendered the other — so recolouring would have shipped a tab icon disagreeing with every raster.
+`favicon.svg` is deleted; `index.html` and the manifest point at `icon.svg`.
+
+### Report 2 — "read a discussion to the bottom, went back, ended at the bottom of the feed"
+
+**Class:** a skipped restore treated as "do nothing", which equals "go to the top" only when the
+page is ALREADY at the top. On an in-app return React Router keeps the window offset, so the reader
+inherits the offset of the page they left. `Feed.tsx` stated the false premise in a comment: *"if
+the remembered position was the top, restoring can only ever mean 'do nothing'."*
+
+**Lens:** usability's aim-and-act sweep — which had run this exact excursion in c3r21 and reported
+16/16 hits. It varied the feed position and the excursion TYPE, but never **how far the reader
+scrolled inside the excursion**; with a short discussion the inherited offset is ~0 and "do nothing"
+is indistinguishable from correct. Brief now requires reading at least one excursion of every type
+to its END, calls out the top-start cell as the highest-yield in the matrix, and states the general
+rule: *whenever a restore is skipped, ask what the position will be if it is skipped.*
+
+**Proven pre-fix:** the upgraded detector independently reproduced it — 0 → **4,032px** on Top,
+0 → **12,405px** on a 372-comment thread, 8/8 — and found three more in the same class, including
+the "Hacker Lens" wordmark (`<Link to="/">`, 0 hit / 8 miss) the reporter had also used.
+
+**Fixed and guarded.** The no-anchor branch now scrolls to the top; `dy` is no longer clamped to
+`>= 0` (which could not express "the card started below the viewport top" and snapped every near-top
+start to exactly 157px, the chrome height). New guard in `feedcontinuitytest`, proven pre-fix
+**y=8147 on the wrong story** / post-fix **y=0 on the right one**.
+
+**Still open:** the detector's HIGH-2 — a feed-TAB switch discards the reader's place (2,406 → 0)
+because leaving a feed clears its own anchor. Two attempted fixes were reverted: gating the clear on
+a recent user-scroll event blocked legitimate programmatic scroll-to-top, and the intermediate state
+left a y=0 anchor surviving the Refresh that is supposed to release it. The anchor now survives the
+switch (miss down from 2,402px to ~205px) but the cell is not correct. Carried forward rather than
+traded for a regression.
+
+Gate 54/54 throughout.
+
+---
+
+## c3r21 — round 21, then four developer-directed HIGH fixes (2026-07-27)
+
+Seven lenses, then four independent validators that re-read every cited `file:line` and re-ran every
+repro. **69 raw findings → 64 distinct; 0 FALSE**; 58 CONFIRMED, 6 PARTIAL. 4 HIGH / 15 MEDIUM after
+validation. Three lens HIGHs were downgraded by validation (both OSS ones, and the "Why #N?" read
+count); one lens HIGH had its **root cause misattributed** and the validator relocated it.
+
+Ranked report: `/tmp/c3r21_RANKED.md`. Lens reports `/tmp/c3r21_{usability,uiux,design,ai,bug,perf,oss}.md`.
+
+### The developer directed the resolution of all four HIGHs
+
+Not routed through rule #8, because these were **product decisions**, not defect reports — the
+developer chose what the product should guarantee. Recorded here because two of them delete
+subsystems that several rounds of findings had been accreting around.
+
+| # | Finding | Direction taken |
+|---|---|---|
+| H1 | Fabricated attributions survive the sanitiser (4–5 shapes; two lenses found partly-disjoint hole-lists) | **Stop correcting output entirely.** Guarantee the input instead; disclaim the output |
+| H2 | Thin-input gate defeated by any non-empty body | Add a real substance floor |
+| H3 | Auto-retrain freezes the tab 759ms at 1× / 3.9s at 4× | Retrain only after ≥30 new engagement events AND only while `document.hidden` |
+| H4 | Scroll restore dead on any round trip through For You | **Delete the restore.** Arriving at a feed goes to the top |
+
+### What was deleted, and why that is the fix
+
+**333 lines from `llm.ts`** — `sanitizeAttributions` and its five branches, `looksLikeHandle`,
+`looksLikeTopic`, `supports`, `claimTerms`, the four attribution regexes, `isGroundedIn`, and
+`looksTruncated`. Three rounds running, the sanitiser was found with a new hole; "did the model say
+something false" is not decidable and a regex over prose cannot make it so, and a partial sanitiser
+advertises a guarantee it cannot keep. `isGroundedIn` went with it (which closes MEDIUM ai-M1 by
+deletion rather than by wiring it to a second path). `looksTruncated` went too, at the developer's
+choice — **accepted consequence: a truncated summary is now cached and re-served until refreshed.**
+
+**~160 lines from `Feed.tsx` plus the whole anchor storage layer** — recorder, watermark, debounce,
+`pagehide` sampling, restore, settling loop, `getFeedAnchor`/`setFeedAnchor`/`clearFeedAnchor`, the
+`hn:anchor` session key, and `showingPrevious` (whose only consumer was the restore, so the H4 root
+cause disappears with it). Paging depth and pinned order are KEPT.
+
+### The replacement contract: the app vouches for the INPUT
+
+Deleting the output guarantee makes the input guarantee load-bearing, so the same change had to make
+it true. `commentsForPrompt` / `articleForPrompt` / `personaForPrompt` now decide what fits each
+budget, and every provenance figure is counted from THOSE — measured 16 available → **9 sent**. The
+refusal paths claim no sources at all, because nothing was sent. The disclaimer names attribution
+explicitly and now also appears on Ask, which renders model text but does not use `SummaryActions`.
+
+`aiguardtest` was rewritten from an output-hygiene guard into an **input**-hygiene guard.
+
+### The diff-scoped pass paid for itself again — 6 HIGH, all self-inflicted
+
+Run against only the eight changed files, before declaring the batch done:
+
+- **The 30-event retrain gate was permanently unreachable.** `.limit(MIN_NEW_EVENTS * 8)` caps ROWS,
+  not matches; most of the log is `impression`, which is not engagement, so the window filled with
+  impressions and the count never cleared the floor — and `since` is pinned to the model's own
+  training time, so the state never clears. Measured 200 engagements → counted 24 → skipped. Now
+  bounded by MATCHES via `until`. **The guard could not see it either**: its fixture seeded only
+  `open_link`. It now interleaves impressions 12:1.
+- **Provenance was fixed for comments and not for its siblings** — article (3,000 words claimed vs
+  451 sent) and persona (12 claimed vs 9 sent). Exactly the "fixed one instance of a class" failure
+  the fix discipline exists to catch.
+- **The disclaimer — the sole replacement for the deleted machinery — was unguarded and missing from
+  Ask.** Both fixed; a build-breaking assertion now covers every surface that renders model text.
+- Plus 9 false claims left by the deletions (`main.tsx` still described restoring "by ANCHOR";
+  `AGENTS.md` still documented the recorder, `startNewSession()` and "the restore must be a NO-OP";
+  `test.mjs`'s registry still cited "the sanitiser"), and a dead `reorderingUntil` ref.
+
+### Two guards were vacuous and are now real
+
+`llmcachetest`'s thin-thread fixture used an 11-character comment, which `collectComments` drops at
+its 40-character minimum — so it re-tested the empty-thread case and **a full revert would have
+passed it**. It now uses a >40-char junk comment and adds the scrap-of-self-text case. And the
+`personalization-proof` auto-train assertion encoded the OLD contract; it now proves both halves
+(does not run while visible, does run once hidden).
+
+### One self-inflicted regression, caught and fixed inside the batch
+
+Making the arrival scroll `instant` exposed a race the smooth animation had been masking: the offset
+inherited from the route just left is applied against whatever height exists at that instant —
+measured, **7149 clamped to 35 against an 835px document**, and stayed. A single `scrollTo` fired
+before it and lost. The fix re-asserts the top until the list stops growing (1500ms) or the reader
+takes over. **The invariant that fix assumes was written down and tested**: wheel → y=1500, End →
+y=2495, undisturbed → y=0, all now permanent assertions in `feedcontinuitytest`.
+
+### Folded into the briefs
+
+`_common.md` gained both accepted design decisions, so no lens re-reports them. `ai-ml.md` gained the
+full statement of what the product does and does not guarantee, and redirects the lens's effort onto
+the four input obligations — with the note that a provenance line overstating by even one comment is
+worth reporting, since it is now the only claim the product still makes about an AI summary.
+
+**Gate: 55/55 green** (54 + the new `autotraingatetest`). Not committed.
+
+---
+
+## c3r21 MEDIUM remediation (2026-07-27) — 13 fixed, 2 accepted
+
+Worked in four gated batches. Every fix has a guard; three guards were extended and three added
+(`leakcheckselftest`, `dialogreachtest`, plus new sections in `aiguardtest`, `wrapqualitytest`,
+`personalizeliveupdatetest`).
+
+### Fixed
+
+| # | Finding | Fix |
+|---|---|---|
+| M1 | Filtered first page dead-ends; qualifying stories unreachable | `Feed.tsx` auto-advances past a fully-filtered leading run and mounts the sentinel in the empty branch. Sidebar `recentRead` now draws from the full history, not a `limit*4` window, so the two read surfaces agree again. Repro: 0 → 30 cards reachable; Read tab 0 → 12 |
+| M2 | Off-topic summary accepted and cached | Closed by DELETION in the earlier H1 batch (`isGroundedIn` removed with the rest of output correction) |
+| M3 | Provenance not derived from what was sent | Closed in the H1 batch; article + persona siblings closed in the diff-scoped follow-up |
+| M4 | `getCachedItems` one IndexedDB round-trip per id | Single `bulkGet` for the uncached remainder. **414ms → 49ms** at 2500 ids. Same fix applied to the two sibling loops in `useLocalData.ts` |
+| M7 | Keyboard-help dialog unreachable by keyboard, no close control | Modal ref moved from the overlay to the scroll container + a real close button. Sibling `SignalsDialog`/`HiddenDialog` had the same defect (sticky header + separate scroll body) — fixed via a new opt-in `initialFocusRef` on `useModalBehavior`. All dialogs now KEYBOARD-SCROLLABLE |
+| M8 | Discussion toolbar wraps badly on phones | Count+Sort became one cluster (no more orphan line at 6% fill) and the action cluster is right-pinned only at `sm+` (its line now starts at the left edge, not ~60% across). 3-row case eliminated; bar height down at every default-font phone width (320: 148→137, 360/390/440: 120→106) |
+| M9 | "Restore" sends the story to the bottom | Un-hide the DB record BEFORE clearing the placeholder — the order the sibling toast-Undo path already used. Position preserved on all three paths |
+| M10 | "Why #N?" labels the interaction count as "stories you've actually read" | Gate clauses split so each number matches its label; the too-few-positives clause says what is actually short. The false phrase is gone in all 4 cells |
+| M11 | Pre-push leak hook armed by nothing | `prepare` script runs `scripts/arm-hooks.mjs`, so a fresh clone self-arms on `npm install`. No-ops outside a git worktree and never fails an install |
+| M12 | Llama 3.2 licence unattributed | `gen-notices.mjs` now reads the model catalog and emits an AI-models section carrying "Built with Llama." **A catalog model with no license entry is a hard error**, so adding a model cannot silently ship it unattributed |
+| M13 | Leak guard claims "all path names" but skips history | Added a one-command scan of every path ever added across all refs; summary states the real scope. Repro case B flipped MISS → CAUGHT with A and C still CAUGHT |
+| M14 | `figure`/`details`/`thead` families missing from block-tag lists | Added to both extractors. Fixes fused text in the reader, the model input and the ranking term profile at once |
+| M15 | Injection defang missed `model:` / `__Gist:__` | Added `model`, `tool`, `human` (the wire/transcript roles) and the `__…__` emphasis form. `ai` deliberately excluded — two characters, no provider uses it, collides with prose. Five false-positive controls asserted unchanged |
+
+### Accepted, not fixed (with rationale)
+
+- **M5 — For-You cold start (~1638ms to first card, 113 firebase requests).** Architectural: the
+  ids-only HN API forces an N+1 over the candidate pool. The verified alternative is the Algolia
+  `front_page` rewrite (1 request, 96KB, 642ms), which is a substantial change to the fetch layer and
+  would invalidate the firebase-mocking hermetic harnesses that most of the suite is built on.
+  Deferring is a deliberate trade: doing it immediately before a verification round would put the
+  suite's own foundations in the same change as the thing being verified. Already a documented
+  long-standing deferral in `AGENTS.md`; this round confirms the measurement rather than the fix.
+- **M6 — returning from a discussion to a 90-card feed blocks one task.** Measured **73–111ms at 1×
+  CPU** (473–801ms at 4×), i.e. roughly one dropped frame on real hardware, once, on return. The
+  obvious remedies conflict with a decision taken earlier this round: paging depth is deliberately
+  KEPT on return, so rendering the full depth is the intended behaviour. Virtualising the list is the
+  real fix and is out of proportion to a one-off ~100ms cost. Accepted; revisit if the depth cap or
+  the card count grows.
+
+---
+
+## c3r22 — verification round, then the three HIGHs it found (2026-07-27)
+
+All seven lenses re-run against the remediated tree. **Five of the seven initially returned nothing**
+— no report, no summary — and the batch tool still reported "7 succeeded". Only checking for the
+files caught it; they were re-run with durable output paths. Treating a runner's success code as
+evidence of work done would have shipped a 2-lens round as a full one.
+
+Reports: `~/c3r22_reports/{usability,uiux,design,bug,perf}.md`, `/tmp/c3r22_{ai,oss}.md`.
+
+### All three HIGHs were self-inflicted by the MEDIUM batch, and all three are now fixed
+
+**H1 — a fully-filtered feed rendered a blank page.** Two lenses described OPPOSITE shapes (stalls
+after one advance vs. pages the entire list), so I reproduced it myself and instrumented the
+component rather than pick one. Ground truth: `hasMore:true, isFetching:false, filteredOutAll:true,
+cards:0` — every condition for the advance was TRUE while it did nothing. The effect's deps returned
+to an identical tuple after each advance, and `visible` — the thing it changes — was not among them,
+so it fired at most once. With everything filtered, `hasMore` stays true forever, and the skeleton
+branch was gated on it, so the reader sat on skeletons that never resolved.
+
+The advance moved into `useFeed`, where `visible` lives and can be a dependency, and is **bounded**
+(`MAX_AUTO_ADVANCE = 3`). The bound is not decoration: when no story can ever pass the filter, an
+unbounded loop cannot terminate, and it was measured walking the whole list at 410 requests. Now:
+all-filtered ends on the honest empty state (64 requests, bounded); a filtered run longer than one
+page reaches the stories behind it; an unfiltered feed still stops at 25.
+
+**H2 — the two read surfaces disagreed** (tab 0 / sidebar 6). Same paging root cause; fixed by H1
+plus the earlier `recentRead` pool change. Verified: tab 12, sidebar 6, identical newest story, no
+muted domain on either.
+
+**H3 — non-feed routes inherited the feed's scroll offset.** `/settings` opened at y=3000 of a
+6276px page. The arrival scroll from the H4 work was applied to `Feed.tsx` only — the same
+fixed-one-instance-not-the-class failure the discipline exists to prevent. Now handled once at the
+router level for every route, keyed on pathname so a feed-tab switch is not treated as an arrival.
+
+### The guards were the weak link, again
+
+The bug lens found that the dead-end guard I had written **structurally could not detect the stall it
+claimed to cover**: its fixture had a filtered head of exactly 30, so one advance always sufficed. It
+now uses a head longer than one page, asserts the all-filtered case terminates on the empty state
+with no skeletons, bounds the request count, and keeps the unfiltered control.
+
+Two of my new guard fixtures were also wrong in ways that produced misleading results — the read
+harness's mock only serves ids 11–18 (so my seeded history rendered nothing and looked like an app
+bug), and `idsFrom` sorts ascending (so "newest on both surfaces" compared the oldest). Both fixed;
+neither was an app defect. A fixture that diverges from the harness it runs in invents defects as
+readily as it hides them.
+
+### Verification honesty
+
+`/item` and `/user` arrivals could not be independently reconfirmed — my mock discussion pages were
+only 800px tall, so "landed at 0" proves nothing there. `/settings` (6276px) is the decisive cell and
+the fix is route-agnostic. Stated rather than glossed.
+
+The gate then failed three times in a row with `ERR_CONNECTION_TIMED_OUT` to its own preview, on a
+DIFFERENT test each time and with **zero** assertion failures — an environment condition (7124
+established sockets, 38 SYN-SENT), not the code. Confirmed by running each victim standalone (all
+pass) and finally by a clean run.
+
+**Gate: 57/57 green.** Not committed. Four new scripts staged (`git add`) so `prepare` no longer
+references untracked files — the BLOCKER the OSS lens found.
+
+---
+
+## c3r22 follow-up — the near-zero and low-risk batches (2026-07-27)
+
+Ten of the fifteen open Tier 1–3 items, chosen by CHANGE CLASS rather than by tier. Every regression
+this session came from one class — behavioural changes with async/state/timing interaction
+(`showingPrevious`, the arrival scroll, the auto-advance effect, the `.limit()` retrain scan). None
+came from prose, copy or single-attribute CSS. That line, not severity, decided what to take.
+
+### Near-zero (text / copy / one attribute)
+
+| # | Fix |
+|---|---|
+| 4 | The `until` comment claimed it "bounds the scan by MATCHES". It does not below the floor — which is the steady state the gate exists to detect. Says so now |
+| 5 | **"interactions" → "examples"**, and its two siblings. My own M10 fix had adopted a word a comment 60 lines above explicitly forbids: most training rows are passive impressions, so naming deliberate actions overstates the data. Fixed a false label by introducing a rejected one |
+| 1 | Notices prose no longer claims everything listed is redistributed — it now states the list is the dependency CLOSURE and names `sharp` as an example that never reaches the bundle, which is what `SECURITY.md` already said. Two shipped documents no longer contradict each other |
+| 2 | "Built with Llama." added to the README |
+| 15 | `/user/:id` not-found gained the `[overflow-wrap:anywhere]` its success-branch sibling already had |
+| 12 | Follow chips gained `border-edge`. A 10%-alpha tint is 1.09–1.30:1 against the surface in 58 of 62 cells — clickable, not perceivable AS a control |
+| 11 | "Why #N?" no longer names comment terms as a source when they are off |
+
+### Llama attribution — narrowed after developer pushback
+
+I had put it in the README and was heading for a Settings banner. The developer challenged that: does
+it not only apply when Llama is actually loaded and generating? Correct, and the licence text agrees —
+§1.b.i accepts **any one** of "website, user interface, blogpost, about page, **or product
+documentation**". A global banner is not required, and most of the app has nothing to do with Llama.
+
+Now conditional, next to the output it describes, via one predicate (`usesLlama`) that tests provider
+AND model id. Both directions are defects: absent over Llama output under-attributes, and PRESENT
+over a cloud provider's output is a FALSE attribution, which is worse. `LLM_MODELS` is a list built
+to grow, so "on-device implies Llama" would rot silently. Guarded in `aiguardtest`.
+
+### Low risk, each with the failing test written first
+
+| # | Fix |
+|---|---|
+| 3 | A retrain that FAILS now consumes the rate limit. `lastTrainAt` advanced only after a successful `trainFromHistory()`, so a throwing retrain left the limiter untouched and the next tab-hide re-ran the whole scan. Writing the test also exposed a second defect: `retrainWarranted()` sat OUTSIDE the try, so a storage error escaped as an unhandled rejection (every caller uses `void runAutoTrain()`). Both fixed |
+| 7 | A refusal no longer claims a backend. The thin-input path returns before any provider call but inherited the populated `sources`, so a refusal read "sent to Google Gemini" — measured 0 provider calls alongside that string |
+| 6 | The two sidebar counters reconcile in visible copy. One climbs with every impression while the other sits still; the explanation existed only in a source comment |
+
+### Two guards that would have passed while broken
+
+**The retrain test's first form was inert.** It stubbed `train.trainFromHistory` on the module
+namespace; `autotrain` imports it as a direct ESM binding, so the stub was never called (`calls: 0`)
+and the run still reported "trained". Rewritten to induce a REAL failure by closing Dexie.
+
+**The tint-only contrast detector reported 0 failures with the defect reintroduced — twice.** First
+because the earlier passes leave the page on a discussion route, so it graded a sidebar that was not
+rendered; a precondition asserting the chips are on screen now prevents that. Then because Tailwind v4
+emits `oklab(… / 0.1)` for alpha-modified colours, which the rgb()/color(srgb) parser returned null
+for — and a null fill was read as "no tint" and skipped. Colours are now resolved through a canvas,
+which normalises any CSS form. Only after both fixes did it reproduce the design lens's independent
+number exactly: **58 of 62 cells**. It fails pre-fix and passes post-fix; before that it was decoration.
+
+That detector closes the structural gap behind #12: every earlier contrast check verified the `--edge`
+TOKEN clears 3:1, never that a control USES it.
+
+### Deliberately NOT taken
+
+Four items whose change class is the one that has bitten me: fencing the story title (changes every
+prompt and invalidates all caches), `articleLooksRelevant` across 4 more consumers (alters ranking and
+embedding inputs), provenance from the rendered request (the prompt pipeline, where two sibling misses
+already shipped), and the toolbar's second line at ≤414px (a `<select>` attempt made bar height worse,
+159→233 at lg 320, and was reverted).
+
+**Gate: 57/57 green.** Not committed.
+
+---
+
+## c3r23 follow-up — reverted the one verified HIGH (2026-07-27)
+
+Round c3r23 reported 3 HIGH. Verified each before acting; only ONE survived.
+
+| Reported | Verified |
+|---|---|
+| Ordered lists render with no numbers | **CONFIRMED HIGH — self-inflicted.** Reverted |
+| Sentinel bypasses MAX_AUTO_ADVANCE (501 requests) | **MEDIUM, not HIGH.** Headline used `minPoints=1e6`; the slider maxes at 200. Measured: 1e6 → 104 (the cap works), 200 → 429, 120 → 94, 8/9 domains muted → 104, unfiltered → 94. Real, but a narrow band, self-terminating, bounded by list length. NOT fixed this pass |
+| "Why #N?" figures never reconcile | **NOT REPRODUCED.** With a trained model (n=25, pos=9, gate "trained") the panel showed "0 of 12 examples" and a 0.00 learned bar — not the reported ~95%/+0.67. Either a different defect or an artifact of training directly without invalidating `['ranker']`. Eliminated one theory: `explainFor` reads a REF, so its empty dep array is not a stale closure. NOT fixed |
+
+### The fix: revert, not CSS
+
+`1. x` → `<ol><li>x</li></ol>` is the obviously-right change and was worse. `.hn-html` inherits the
+Tailwind preflight reset `ol,ul,menu{list-style:none}`, so markers never paint — measured
+`list-style-type: none`, `padding-left: 0px`, and the reader saw `"first pointsecond point"` where
+before they saw `"1. first point2. second point"`. **The change deleted information.**
+
+Restoring markers in CSS was rejected: `.hn-html` also renders every HN COMMENT body
+(`Comment.tsx`, `CommentsView.tsx`, `User.tsx`), so it would change comment rendering app-wide —
+far beyond the regression. Reverted instead, with the reasoning recorded at the site so the same
+"obvious" change is not made again.
+
+### The guard was the actual defect
+
+`aiguardtest` asserted `/<ol>.*<li>first<\/li>/` — the markup was correct and the numbers were
+invisible. It now renders into the real `.hn-html` container and asserts the RENDERED text contains
+"1. first point", plus that any `<ol>` used actually paints markers. Both assertions fail against the
+reverted-to-broken version (measured `seen` without ordinals, `marker: "none"`).
+
+This is the third vacuous guard this session, and the rule it produces is narrow enough to be
+followed: **if a fix changes rendered output, the guard asserts the rendered result — computed style
+or displayed text — never the markup or data that produces it.**
+
+Note the origin: B5 was rated **LOW** in the carried-forward bucket. Fixing a LOW created a HIGH.
+
+**Gate: 57/57 green.** Not committed.
+
+---
+
+## c3r24 — the round that changed the review system (2026-07-27)
+
+Seven lenses. Verdict **1 HIGH, 9 MEDIUM, 18 LOW** — and on verification the HIGH did not survive.
+That makes c3r24 the first round in this sequence with **no self-inflicted HIGH**, which is the
+convergence signal Process v2 defined. It is also the round that exposed a structural flaw in the
+review system itself, so the system changed rather than the app.
+
+### The false HIGH, and why it was structural
+
+A lens proved that `learnedScale` — the pool-derived divisor on the learned term — changes final
+item order. Two comments in `strategies.ts` asserted the opposite ("cannot reorder anything").
+The lens rated the BEHAVIOUR a HIGH.
+
+Verification: the behaviour is correct and intentional. `scale` divides the learned term only, so
+compressing it relative to the unscaled popularity/recency/discussion terms is exactly how a taste
+score is made worth a consistent amount across pools. The **comment** was wrong, not the code —
+a LOW misfiled as a HIGH.
+
+The lens was not careless. It had no authority to adjudicate against. Given a comment saying
+"X cannot happen" and a demonstration that X happens, a lens must guess which is wrong, and
+guessing "the code is wrong" is the expensive guess: it buys a fix cycle, and fixes are where this
+codebase's defects now come from.
+
+**A false comment does not merely fail to help. It manufactures findings.**
+
+### What changed in the review system
+
+1. **`review/SPEC.md` — new, and the authority.** Written from product intent, not derived from the
+   code. Carries intended behaviour, accepted design decisions with rationale, accepted performance
+   costs, and an explicit §10 "deliberately unspecified" list. §2.2 states that pool-relative
+   ranking normalisation is intended, which is precisely the adjudication that was missing.
+2. **`base/_common.md` — authority order + mandatory classification.** The old "two accepted design
+   decisions" section is replaced by "THE SPEC IS THE AUTHORITY": SPEC > running app/`src` >
+   everything else. Comments, `AGENTS.md`, tests and prior reports are demoted to **assertions under
+   test** — none of them establishes intent. Every finding must now be tagged exactly one of
+   **CODE-WRONG / COMMENT-WRONG / SPEC-GAP / SPEC-WRONG**, name the spec section it was adjudicated
+   against (or "spec silent"), and a lens that cannot adjudicate must say so rather than pick a
+   severity. Severity discipline added: rate the worst case reachable through the real UI.
+3. **Deliverable format** carries the classification in each finding and in the verdict line.
+4. **The CURRENT STATE appendix is now a diff**, not a restatement of behaviour — the spec holds the
+   behaviour, so the appendix only says what changed since the last round.
+
+### The fix that was itself the defect
+
+The two false comments were corrected in place. That correction quoted the false claim and refuted
+it beside itself — leaving a reader to parse the wrong thing and its retraction, in order, to reach
+the truth. It also added six lines of narrative to the file, which is the category `AGENTS.md`
+convergence rule #1 names as the largest defect source. Fixing a false comment by writing more
+comment is not a fix.
+
+Developer direction: **delete them** — "you cannot guarantee 100% accurate comments, can you?"
+
+**122 lines of narrative comment removed from `strategies.ts` (602 → 480).** 113 comment lines
+remain (23% of the file) in 4 blocks longer than four lines, the largest 23 lines. What survives is
+intended to be mechanically true and short: the `(pull / z)` proportional attribution, the
+requirement that the bars consume `ctx.learnedScale` rather than a literal, and the ordering
+constraint that the outer score table reconciles before the model bars. Rationale now lives in
+`SPEC.md §2.2`; the measurements are below.
+
+**The purge was file-scoped, and that was a mistake.** It never grepped for the claim SHAPE across
+`src/`, so `features.ts:25` kept "scales the term without ever reordering it" — verbatim the class
+deleted next door. The AI and bug lenses both found it in c3r25 and both demonstrated the rank flip
+rather than arguing it. This is fix-discipline rule (ii) — enumerate the siblings and fix them in
+the SAME change, stating what you grepped — skipped, and it cost a round.
+
+Three of the deleted blocks contained claims of the same unprovable class as the one that caused
+this round's false HIGH — "re-centering is RANKING-NEUTRAL", "order-preserving WITHIN a pass",
+"cannot reorder anything". Two of the three had already been patched with an amend-and-correct.
+The class is the point: a comment asserting a global invariant about a numeric pipeline cannot be
+kept true by review, so it should not be written.
+
+**The rule: prefer deleting a comment to maintaining it. State only what is mechanically true, and
+put rationale in the spec, where it is adjudicated.**
+
+### Measurements relocated from the deleted comments
+
+Preserved here because they are evidence for `SPEC.md §2.2`, not because the code needs them:
+
+- Dividing the learned term by a constant made its dynamic range vary **145x** between histories.
+  On a realistic noisy history (AUC 0.603) the pull spanned 0.011 against popularity's 0.49 — 2.2%
+  of the smallest competing signal, moving the reader's taste group 1.7 places of 60. Unreachable
+  through the UI: at the slider maximum it still spanned only 0.034 against 0.49.
+- Unbounded authority produced the mirror failure. Across 20 seeded **no-signal** histories the
+  learned term's spread was a median **1.29** against popularity's 0.35–0.49, moving cards up to
+  **39 places of 60**. Held-out AUC on those same signal-free histories ranged **0.365–0.64**, which
+  overlaps a genuinely weak but real model — so no threshold separates them, which is the argument
+  for discounting AUC by its own standard error rather than cutting at a value.
+- With the amplitude bounded, the learned spread on those histories holds at **~0.28** against
+  popularity's ~0.46.
+- Centring on the training base rate rather than the pool median printed a negative bar on **0 of
+  20** unfamiliar candidates positive; a story the model knew nothing about read −0.675 of a nominal
+  −1 while the tooltip promised "a typical story reads ~0".
+- Bars rounded independently of the outer table disagreed with the displayed score on **5 of 20**
+  cards; rows rounded independently of their total disagreed on **~28%**.
+
+### Carried forward, not fixed
+
+Unchanged by this round and still open: the infinite-scroll observer materialising most of the id
+list at `minPoints=200` (429 requests — accepted in `SPEC.md §9`); story TITLE defanged but not
+fenced; `articleLooksRelevant` applied in 1 of 5 consumers; provenance read from field-prep helpers
+rather than the rendered request; the toolbar's second line at ≤414px; `.hn-html` not styling
+bullets/headings/links in AI output (three lenses converged on this one); and the "Why #N?" panel
+reconciliation MEDIUMs.
+
+**Gate: 57/57 green** (comment-only removal; no behaviour change). Not committed.
+
+---
+
+## c3r25 comment/doc remediation (2026-07-28)
+
+Scope: the developer asked for the COMMENT and DOC findings only — gather every one the seven
+c3r25 lenses reported, verify each independently, fix the verified ones. 21 candidates gathered
+across all seven reports; **19 verified, 2 refuted.**
+
+### Two reported findings did NOT survive verification
+
+| Reported | Verdict |
+|---|---|
+| **OSS M2** — committing the index as-is ships a 404 favicon, because `index.html` and `site.webmanifest` still reference the staged-for-deletion `public/favicon.svg` | **REFUTED on its key detail.** Neither file references `favicon.svg`. Both reference `./icon.svg` (staged as ADDED, present) plus PNGs that all exist. No 404. What survives is only "the index is behind the worktree" |
+| **Bug L8, second half** — `initialFocusRef` "has no caller — every call site passes at most two arguments" | **FALSE.** `HiddenDialog.tsx:18` and `SignalsDialog.tsx:44` both pass three. The true residue is narrower: the two `SummaryActions` dialogs have the sticky-header shape the parameter exists for and don't pass it |
+
+Bug L8's *first* half (Escape) verified and was fixed. This is the second round running where a
+lens's headline was right and a supporting detail was wrong — validate before acting, every time.
+
+### The guard, written first
+
+`scripts/claimcheck.mjs` (new, wired into the **static** tier). A comment is an unverified
+assertion, and one false comment in the ranking code has now cost two rounds: c3r24 rated intended
+behaviour a HIGH because a comment said it was impossible, and c3r25 found the same claim alive in a
+sibling file the c3r24 purge never grepped. The guard makes that class mechanically checkable:
+
+1. **Forbidden claim shapes** — the "cannot / never / without ever reorder", "ranking-neutral",
+   "order-preserving" family, which `SPEC.md §2.2` names as a defect by name.
+2. **Numeric claims** — a number stated in prose that must equal a number in code (design count,
+   amplitude floor), read from the source of truth at run time.
+
+Both readers **throw** rather than skip if they cannot resolve their value, because a guard that
+green-lights on an unevaluatable input is worse than no guard — the `themecontrasttest` NaN lesson.
+
+Run against the pre-fix tree it failed with **5** findings: the 3 the lenses reported, plus
+`strategies.ts:188` which no lens flagged, plus one false positive of its own (a `5 more designs`
+section divider) that was fixed by anchoring the pattern before any source change.
+
+The copy fixes got their own rendered-text assertions in `personalizeliveupdatetest` and
+`weighthintstest` — **5 assertions, all proven failing pre-fix** against the real DOM.
+
+### Fixed — source comments
+
+| Site | Was | Now |
+|---|---|---|
+| `features.ts:25` | "scales the term without ever reordering it" | deleted — measured false, SPEC §2.2 |
+| `features.ts:18` | `learnedCenter` called "DISPLAYED" | it centres the SCORE (`scoreItem` reads it) |
+| `features.ts:29` | amplitude "0.15 at chance" | 0.2, matching `strategies.ts` |
+| `strategies.ts:188` | "can never reorder against the model's own opinion" | deleted |
+| `strategies.ts:9-11` | JSDoc duplicated verbatim from `:36-38`, above a type it does not describe | deleted |
+| `content.ts:105` | profile-building "must not do live network I/O" | article terms are cache-only; COMMENT terms fetch up to 20 trees |
+| `logistic.ts:177` | Platt gives "*calibrated* probabilities … meaningful" | fitted IN-SAMPLE; treat as a monotone rescaling, not a probability |
+| `prefs.ts:104` | "one of the 20" designs | count dropped — 31, and now guarded |
+| `Comment.tsx:41` | "Opens in a new tab", "Hacker News profile" | same-tab in-app `/user/:id` |
+| `useModalBehavior.ts:19` | "Escape … they already own it" | `Onboarding` binds none; "Skip" dismisses it |
+| `User.tsx:33` | "same gate the summary controls use elsewhere" | names the `showAiSummaries` difference and why |
+| `topComment.ts:94` | failure and genuine-empty are "distinguishable" | they are not — `getItems` also drops dead/deleted |
+| `index.css:1182` | washes "never touch text contrast" | they can — `list`/`compact` cards are transparent, and those are `geist`/`cyber` defaults |
+| `index.css:1372` | claims it fixed a 6px sliver | rule was a proven no-op (`.sc-meta` is already `display:none`); **rule and claim both deleted** |
+| `Logo.tsx:10`, `icon.svg:2` | tier contrast asserted as a property of the mark | the guarantee is on the TOKEN; thin tiers rasterise lower below ~32px |
+
+### Fixed — docs and config
+
+- **`ci.yml:11`** claimed CI runs the internal-reference check. It is a no-op on a runner (the
+  pattern list is untracked, so it reports NOT RUN and exits 0). Reworded to say so, with an
+  explicit "do not fix this by publishing the list".
+- **`review/base/design-theme.md:108`** told a lens to grade `public/favicon.svg`, deleted this
+  round → `public/icon.svg`.
+- **`SPEC.md §8`** said "in full" and omitted two calls `SECURITY.md` discloses (model-weight
+  download; read-aloud via a possibly-network system voice). Both added, and `SECURITY.md` is now
+  named as the authoritative enumeration so the spec cannot silently drift ahead of what ships.
+- **`SPEC.md §2.4`** gained the retraining contract, which was a genuine SPEC-GAP: retraining is a
+  background task that runs only while the tab is hidden, "Retrain now" is the immediate path, and
+  copy describing it must be true for a reader who never backgrounds the tab.
+- **The leak guard's deny-list.** Three lists existed — the enforced fence (26 entries), a prose
+  list in `DEV_LOCAL.md`, and a third hand-typed `git grep` in the pre-push section. Eight patterns
+  were documented but never enforced, including the internal tool name that this repo has already
+  been scrubbed of once. All eight folded into the fence (now **34**, `leakcheck` clean, so nothing
+  is leaking today); the duplicate list and the hand-typed grep replaced by pointers to the fence and
+  to `leakcheck.mjs`.
+
+### Fixed — UI copy
+
+Four strings promised the reranker "trains itself as you read" and one added "there's no manual
+step", denying the only control that always works. Per the newly-written SPEC §2.4 the behaviour is
+intended, so the copy is what was wrong: `Sidebar.tsx` ×2, `RankExplainDialog.tsx`,
+`WeightSliders.tsx` → "retrains in the background" + "Retrain now" in Settings.
+`Settings.tsx:227` pointed at a "For You sidebar" that does not exist at 390px or in `zen` → "the
+Tune ranking panel on For You", which is rendered in every layout.
+
+One assertion was **too broad and caught a true sentence**: the Why dialog also says "Position is
+not re-sorted as you read", which is correct per SPEC §2.3. Narrowed to `trains?…as you read` and
+re-verified against the old string, the new string and the true one before accepting.
+
+### Deliberately NOT taken
+
+Code-classified findings, out of the scope the developer set: the five bug MEDIUMs, `timeAgo`'s
+five-day-early year, `htmlToText` anchor fusion, `AskThread`'s `llmProvider !== 'local'` test, the
+dead `learnedById` plumbing, `Saved.tsx`'s `reasons={[]}`, the two `SummaryActions` dialogs that
+don't pass `initialFocusRef`, and the `.sc-sub` element that actually shows through the compact
+overlay (only its false comment was removed). `themecontrasttest`'s ring detector and alpha-dropping
+`parseColor` are guard bugs, not comments, and remain open.
+
+**Gate: 58/58 green** (57 + `claimcheck`). Not committed.
+
+---
+
+## c3r27 — the low-risk comment/doc/copy batch, and its own regressions (2026-07-28)
+
+The developer scoped a batch to only those findings whose fix carries little regression risk:
+text edits (comments, docstrings, docs, copy) plus three className/CSS changes that copy an existing
+shipped twin. 21 candidates gathered from c3r26; **19 verified, 2 refuted** (OSS-M2's 404-favicon
+claim — nothing references the deleted file; Bug-L8's "initialFocusRef has no caller" — two callers
+pass it). One more was **discarded on validation**: `Settings.tsx:70` "interactions" is actually
+correct (the gate counts all samples), so changing it would reduce accuracy.
+
+### Fixed (all guarded, guards written first and proven to fail pre-fix)
+
+- **Copy (SPEC §2.4):** removed the "trains itself as you browse/read" / "trains itself
+  automatically" claims from every reranker surface (`Settings.tsx`, `RankExplainDialog` both the
+  too-few-positives and OFF branches, `Sidebar`, `WeightSliders`) → "retrains in the background" +
+  names "Retrain now". Guarded across Settings + all three Why-dialog branches + sidebar in
+  `personalizeliveupdatetest` (3 new assertions, all failed pre-fix).
+- **Two contrast twins:** HN-account follow chips gained `border border-edge` (guarded in
+  `hnaccounttest`); the collapsed reply-pill repliers preview now inherits the pill colour instead of
+  `text-muted` (guarded in `commenttest`). The design lens verified both complete across all 62
+  design×mode cells.
+- **Pluralisation:** "Read 1 comment" on the story card AND "1 comment" in the discussion header,
+  guarded by a new `pluraltest.mjs` (both surfaces).
+- **~12 source comments corrected/deleted** (`useFeed`, `content`, `logistic` AUC k-fold, `features`
+  deleted-symbol, `interactions` save-reversible docstring, `index.css` logo + compact, etc.).
+- **Docs/config:** `SPEC.md` §8/§2.4/§9, `ci.yml` gate description, the `THIRD_PARTY_NOTICES.md`
+  generator preamble (regenerated, `--check` green), `package-lock.json` name field (name only —
+  `resolved` URLs untouched), and the untracked notes prose.
+
+### The regression report the developer asked for
+
+The c3r27 review round found this batch introduced **1 HIGH + 1 genuinely-new false comment + 4
+incomplete-sibling misses**, and — importantly — **zero behavioural regressions** (all seven lenses
+confirmed behaviour intact; the two contrast twins verified complete; the copy verified correct and
+consistent; ranker efficacy held). The self-inflicted defects, all now cleaned in the same turn:
+
+1. **HIGH — `scripts/pluraltest.mjs` left untracked** while tracked `test.mjs` referenced it (public
+   CI would go red). The IDENTICAL class as c3r26's untracked `claimcheck.mjs`. **Made the same
+   mistake one round later.** Fixed: `git add`.
+2. **A NEW false comment — `db.ts:94`.** The batch to remove false comments *added* one: a
+   parenthetical claiming `hidden` is "not on this hot path", which is false (`useHiddenIds` →
+   `db.hidden.toArray()` feeds the `cards` memo). Caught by 3 lenses. Deleted.
+3. **Incomplete sibling sweeps** of this turn's own fixes: `autotrain.ts:60` still said "for seconds"
+   (twin of the `:2` fix); `interactions.ts:312` `STRONG_ENGAGEMENT` comment still implied save is
+   unconditional (twin of the `:331` docstring fix); `CommentsView.tsx:514` header still said "1
+   comments" (cross-surface twin of the StoryCard pluralisation). All fixed; the plural guard was
+   extended to the header and proven to fail pre-fix.
+
+Accepted, not changed: `Settings.tsx:241` toggle label "(auto-trains)" — accurate (it does auto-train
+in the background), so kept; the changelog's "on ANY surface" was the overstatement, corrected here.
+
+**The through-line across c3r25→c3r27: the review side is sound; the fix side keeps shipping
+incomplete sibling sweeps and the occasional new false comment.** Three rounds running, the
+self-inflicted rate is dominated by "fixed one site, missed its twin." The mitigation that finally
+bit this round: a metric-driven guard family (`claimcheck`, the extended contrast/copy/plural guards)
+that catches the CLASS rather than the instance.
+
+**Gate:** the main batch passed 59/59 green (run v20). After the regression-cleanup edits
+(comment-only + the CommentsView header pluralisation + the extended plural guard), the static tier
+passes green on every run and all changed + previously-flaked tests pass individually against the
+stable preview, but a clean single full-gate run could not be captured this session: the gate's
+ephemeral preview (port 4182) — and eventually the manual 4173 preview — repeatedly hit
+`ERR_CONNECTION_TIMED_OUT` with ZERO assertion failures, the documented environmental socket-pressure
+flake (3 more times this session, each at a different, unrelated test). Not committed.
+
+---
+
+## c3r28-fix batch + c3r29 (verify-all, fix-validated, re-review)
+
+**c3r28 produced 2 MEDIUM + 15 LOW** (an earlier hand tally said 13 LOW; the accurate sum across the
+seven lens reports is 15). Every finding was validated against source; the genuine, fixable ones were
+fixed with fail-first regression guards for the behavioural ones, and the rest were accepted in
+writing with a rationale.
+
+**Fixed (10):**
+- **ai-1 + ai-3** — `AskThread.tsx` gates the "Built with Llama" attribution AND the "AI-generated"
+  caveat on `sent.sent`; `SummaryActions.tsx` gates its caveat on `ranModel` (matching the
+  attribution). Guard: `refusalattrtest` extended to the Ask path + the caveat (proven to fail 3 pre-fix).
+- **usability-1** — `query.ts` `networkMode:'always'`, so an offline query errors into the outage
+  state instead of pausing into "User not found"/"No results". Guard: new `offlinetest` (drives the
+  real app offline via `context.setOffline`; proven to fail 2 pre-fix, and a clean fail→pass shown by
+  temporarily reverting the fix).
+- **usability-2** — `User.tsx` success view gained the discussion page's "Back to feed" affordance.
+- **usability-3** — the Compact-layout "Top comments" toggle is now `disabled` (was live-but-inert).
+- **usability-4** — the "Why #N?" `(weight×value)` formula shows `contribution/weight` as the value
+  (reconcileTo2dp had nudged the largest term's contribution). *[c3r29 found this is only a partial
+  fix — see below.]*
+- **ai-2** — the "moves the rank" copy is gated on `learnedMovesRank` (reconciled learned contribution
+  ≥0.005); says "barely shifts its position" when the Learned weight is 0 or the pull rounds to zero.
+- **design-1** — rank bars use `var(--bar-pos)`/`var(--bar-neg)` (a `color-mix(..., var(--fg))` in
+  `index.css`) instead of hardcoded `#3fb950`/`#f85149`; c3r29's design lens measured both ≥4.33:1 vs
+  every dialog surface across all 62 design×mode combos.
+- **bug-1** — `App.tsx` comment corrected (a feed-tab switch scrolls to top; Feed.tsx owns it).
+- **perf-2** — `topComment.ts:90` concurrency comment corrected to `2 cards × getItems-bound(3) = 6`.
+
+**Accepted in writing (7):** design-2 + design-3 (decorative, SPEC §7); uiux-1 (unreachable — author
+names are HN-API-sourced ≤15 chars, not unbounded input); usability-5 (the tall placeholder is the
+SPEC-mandated no-yank slot, content already centered); perf-1 (article.ts is imported by StoryCard +
+main.tsx too, so the lens's single-file dynamic-import is ineffective; full fix disproportionate for
+26 KB); oss-1 + oss-2 (maintainer posture; oss-2 unfixable without rewriting protected `main`).
+
+**Also this batch:** `mobiletest`'s rank-bar selector was decoupled from the (now-removed) hardcoded
+colours — it selects the bars by their structural classes, assertion unchanged. **Gate: a clean full
+standard run passed 64/0/0** (no 4182 flake this session).
+
+**c3r29 (independent re-review, 7 read-only lenses) — 0 BLOCKER, 0 HIGH, 2 MEDIUM, 7 LOW** (down from
+2M/15L; DESIGN and PERFORMANCE lenses both returned CLEAN, and all 10 fixes verified correct). The
+round did NOT converge: **2 findings are self-inflicted by the c3r28-fix batch.**
+- **MEDIUM (self-inflicted, incomplete sibling of ai-1/ai-3):** `AskThread.tsx` still shows the
+  caveat/provenance/Llama over a generation ERROR (cloud 429/bad-key/5xx), because `sent.sent` means
+  "a send was attempted / not a refusal", NOT "a model produced text" — it's true for a non-thin
+  thread even when the call throws. `ThreadSummary` is safe (sets `sources=null` on error). Fix: also
+  gate on "not errored".
+- **MEDIUM (pre-existing, surfaced by the offline focus):** offline, the FIRST visit to a `React.lazy`
+  route (discussion/Settings/Saved/profile) fails its JS-chunk import → `ErrorBoundary` shows raw
+  "Failed to fetch dynamically imported module", never resets on navigation, and "Reload" is dead
+  offline. `networkMode:'always'` fixed the DATA layer, not the CHUNK layer.
+- **LOW (self-inflicted, from usability-4):** the "Why #N?" `(weight×value)` still reads 0.01 off the
+  shown contribution when weight>1 and `contribution/weight` rounds up (e.g. 2.2×"1.00" beside
+  "+2.19"), and the new comment claims exactness. The bars still sum to the score exactly. (Prefer
+  deleting the redundant per-row formula.)
+- **Other LOW (pre-existing/accepted):** offline search "0 results" header above the "Couldn't load
+  results" error (SearchResults renders the count header unconditionally); a partial-cache offline
+  feed reads as empty not outage; a sidebar reranker copy-consistency nit; a 320px Large-text Sort
+  wrap (accepted defensive); oss-1 + oss-2 (accepted posture).
+
+Design lens recommendation (not a finding): add `bar-pos`/`bar-neg` vs `surface` at ≥3:1 to
+`themecontrasttest` so the new graphic-fill tokens can't regress silently. Nothing committed.
+
+## Session-model (design #4) clarification + perf/tab-switch, and c3r31 (2026-07-29)
+
+Developer-driven work this round: three requests + a developer-reported defect, then an independent
+3-lens re-review of the changed surfaces.
+
+**What changed in the app.**
+- **Design #4 read-sweep triggers, made explicit.** The reader reported that stories "disappeared to
+  Read on clicking the home icon". Investigated on the live app + a scripted probe: the home icon and
+  ALL in-app navigation (tab switch, discussion open/close) do NOT sweep — only a fresh document load
+  (reload / new tab) and the Refresh button do, and there is no load-time flash (the `isLoading` gate
+  holds). Could not reproduce an in-app-nav sweep; the developer's likely trigger was a reload (which
+  they confirmed SHOULD sweep) or a prior-session read surfacing when For-You first mounts. Locked the
+  behaviour in with a new guard **`sessionsweeptest.mjs`** (in-session read stays visible across
+  icon/tab/discussion; a reload sweeps) and made the trigger matrix explicit in `session.ts`, SPEC §4,
+  and the AGENTS.md bullet.
+- **Progressive For-You render (B1).** The candidate pool is materialised in waves — candidate ids →
+  a fast first batch (~24, which paints) → the full ~90 pool. First content paints before the full
+  pool (verified via CDP timing). Net first-paint win; the full-pool fetch cost is unchanged.
+- **Tab-switch (B2).** `itemsQ.placeholderData` now keeps the previous data only within the SAME feed,
+  so switching tabs shows the new tab's skeleton/own cache, never the previous tab's cards.
+- **Refresh scope (forceRef).** `useFeed` is not remounted on a tab switch, so the Refresh
+  force-network flag could bleed into a tab switched-to mid-refresh. Cleared synchronously on any kind
+  change, so Refresh only ever force-fetches its own tab.
+- **feedstabilitytest reload assertion.** It asserted the old design-#3 contract ("a reload changes
+  nothing"). Instrumented dumps proved a reload keeps the pin/order and only re-applies the sweep, so
+  it now asserts NO RE-SORT (relative order of surviving cards preserved) — still fails on a genuine
+  re-sort, but allows the design-#4 membership change.
+- **Performance lens rewritten.** It had been rubber-stamping (an escape hatch — "a clean result is
+  valid" — plus no budgets, no controlled throttle, no perceptual pass). Now it mandates a filled
+  budget table on fixed CDP throttle profiles, a perceptual/transition pass (catches the wrong-tab
+  flash class), and cold-start waterfall attribution; "it's architectural" no longer substitutes for a
+  measured number.
+
+**c3r31 (independent re-review of the changed surfaces — bug/correctness, performance, usability;
+the other four lenses cover surfaces untouched this round). 0 BLOCKER, 0 HIGH, 0 CODE-WRONG.**
+- **Fixed — stale read-sweep comment CLASS (LOW, COMMENT-WRONG, self-inflicted by design #4).** Several
+  comments still said the sweep "changes ONLY on Refresh / reloading never alters it." Fixed the whole
+  class in one change: `useFeed.ts` (×3 sweep + ×1 teaching), `readSweep.ts` `getReadSweep` doc,
+  `Settings.tsx` copy, `AGENTS.md` (×2). The verifier caught siblings the bug lens missed (the Settings
+  copy + the AGENTS.md bullet).
+- **Fixed — stale teaching comment (LOW).** `Feed.tsx:54` + `useFeed.ts:385` said follow/mute is
+  reachable from "the domain chip in the meta line"; `StoryCard.tsx:543` is a display-only `<span>` —
+  teaching is only in the ⋯ menu. Corrected both. (Noted, NOT fixed: the `Feed.tsx` `livePos` comment's
+  deeper premise — that a card teach re-orders the feed — is stale since follow/mute are absent from
+  `rankIntent`; left for a dedicated review rather than a blind edit.)
+- **Accepted (MEDIUM, perf, in writing — SPEC §9).** A concurrent switch to an UNVISITED tab during the
+  cold-start pool fill can take ~2–6 s on a throttled profile (the background pool fetch uses the
+  origin's connections). A facet of the accepted For-You N+1; the mitigation (lower the background
+  pool's concurrency) slows the common case, so deferred. First paint is unaffected.
+- **Deferred (usability LOWs, feature-freeze).** Refresh lacks a forewarning/scope hint; the read-sweep
+  note is low-salience; no in-context link to the permanent "Hide read stories" toggle. All are UI
+  additions; deferred to avoid new capability mid-convergence. DQ: scroll-to-top on return is the
+  heaviest repeated friction but is SPEC §4-intended.
+
+Gate: standard tier green (65/65) before the comment batch and re-run green after. Nothing committed.

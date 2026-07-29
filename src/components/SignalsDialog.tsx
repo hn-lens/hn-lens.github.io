@@ -21,10 +21,6 @@ const TYPE_LABEL: Record<InteractionType, string> = {
   unsave: 'Removed from saved',
   hide: 'Not interested',
   unhide: 'Undid “not interested”',
-  follow_domain: 'Followed site',
-  unfollow_domain: 'Unfollowed site',
-  follow_user: 'Followed user',
-  unfollow_user: 'Unfollowed user',
   upvote_out: 'Opened on HN',
   summarize: 'Summarized',
   dwell: 'Read time',
@@ -44,7 +40,8 @@ import { useModalBehavior } from '../hooks/useModalBehavior';
 
 export default function SignalsDialog({ onClose }: { onClose: () => void }) {
   const dialogRef = useRef<HTMLDivElement>(null);
-  useModalBehavior(dialogRef);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  useModalBehavior(dialogRef, true, scrollRef);
   const [events, setEvents] = useState<InteractionEvent[] | null>(null);
   const [counts, setCounts] = useState<Array<[string, number]>>([]);
   const [total, setTotal] = useState(0);
@@ -81,7 +78,7 @@ export default function SignalsDialog({ onClose }: { onClose: () => void }) {
           <div className="min-w-0">
             <h2 className="text-sm font-semibold">Signals recorded locally</h2>
             <p className="mt-0.5 text-xs text-subtle">
-              Everything HN Lens has learned from your activity — stored only in this browser. Delete these (by
+              Everything Hacker Lens has learned from your activity — stored only in this browser. Delete these (by
               type, or all) in{' '}
               <Link to="/settings?section=data" onClick={onClose} className="text-accent hover:underline">
                 Settings → Data
@@ -104,7 +101,7 @@ export default function SignalsDialog({ onClose }: { onClose: () => void }) {
           </div>
         )}
 
-        <div className="overflow-y-auto p-2">
+        <div ref={scrollRef} tabIndex={-1} className="overflow-y-auto p-2">
           {events === null && <p className="p-3 text-sm text-muted">Loading…</p>}
           {events !== null && events.length === 0 && <p className="p-3 text-sm text-muted">No signals recorded yet.</p>}
           {events?.map((e, i) => (

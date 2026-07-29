@@ -34,7 +34,15 @@ await page.route(/hacker-news\.firebaseio\.com/, (r) => {
   const j = (x) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(x) });
   if (/topstories|beststories|newstories/.test(u)) return j(POOL);
   const m = u.match(/item\/(\d+)/);
-  if (m) return j(byId.get(Number(m[1])) ?? null);
+  if (m) {
+    const id = Number(m[1]);
+    if (byId.has(id)) return j(byId.get(id));
+    // F2c needs a history longer than one page with a MUTED leading run, so ids >= 200 exist and
+    // those >= 212 carry the muted domain. The item's URL is what the domain filter reads, so the
+    // mute has to live here and not merely in the seeded event.
+    if (id >= 200) return j({ ...item(id), url: `https://${id >= 212 ? 'annoying.com' : `keep${id}.com`}/x` });
+    return j(null);
+  }
   return j(null);
 });
 await page.route(/hn\.algolia\.com|google\.com\/s2/, (r) => r.fulfill({ status: 200, body: '{}' }));
@@ -92,24 +100,27 @@ check('Read tab lists the read stories (11,12,14)', readIds.join() === '11,12,14
 check('Read tab excludes the bounced story (13)', !readIds.includes(13), '');
 check('Read tab is NOT just the For-You pool', !readIds.includes(15) && !readIds.includes(16), JSON.stringify(readIds));
 
-// ---- For You HIDES already-read stories (load-time snapshot), but NOT in-session ----
-// After a refresh, stories read BEFORE this load (11,12,14) drop out of For You (they
-// live in the Read tab). Non-read pool items (13 bounced, 15 saved, 16 summarized,
-// 17/18 imported) are NOT read, so they stay. Then we prove in-session STABILITY:
-// reading an item mid-session does NOT yank it out; only the next refresh drops it.
+// ---- Design #4: a FRESH LOAD / RELOAD sweeps already-read stories out of For You ----
+//
+// A fresh arrival should show fresh stories, so the reload above already hid the read ones. This is
+// safe where the earlier per-load snapshot was not (see lib/readSweep.ts): it is computed AFTER the
+// read-history query resolves and For You waits for it (no flash / no shift under a cursor), it is
+// ANNOUNCED and reversible ("N already-read hidden · Undo"), it lands at the TOP of a re-rendered
+// feed (no mid-scroll yank), and it KEEPS the pinned order + paging depth. An in-session read is NOT
+// swept until the NEXT load (tested below).
 await page.getByRole('button', { name: 'For You' }).first().click();
 await page.waitForSelector('article', { timeout: 15000 });
 await page.waitForTimeout(700);
 const fyIds = idsFrom(await titles(page));
-console.log('[read] For You shows:', JSON.stringify(fyIds));
-check('For You HIDES already-read stories after refresh (11,12,14 gone)', ![11, 12, 14].some((id) => fyIds.includes(id)), JSON.stringify(fyIds));
+console.log('[read] For You after reload shows:', JSON.stringify(fyIds));
+check('a fresh load/reload HIDES already-read stories (11,12,14 gone)', ![11, 12, 14].some((id) => fyIds.includes(id)), JSON.stringify(fyIds));
 check('For You still shows NON-read pool items (13,15,16,17,18)', [13, 15, 16, 17, 18].every((id) => fyIds.includes(id)), JSON.stringify(fyIds));
-check('read stories are NOT duplicated across For You + Read tab', ![11, 12, 14].some((id) => fyIds.includes(id)) && readIds.join() === '11,12,14', JSON.stringify({ fyIds, readIds }));
-// For You must SAY how many already-read stories it's holding back (transparency —
-// stories shouldn't appear to silently vanish). 11,12,14 are read + in the pool.
-const fyText = await page.evaluate(() => document.querySelector('.app-content')?.innerText ?? document.body.innerText);
-const readHidNote = fyText.match(/(\d+)\s+already-read/i);
-check('For You notes how many already-read stories are hidden', !!readHidNote && Number(readHidNote[1]) === 3, readHidNote?.[0] ?? 'no note');
+check('the Read tab still lists exactly what was read', readIds.join() === '11,12,14', JSON.stringify({ readIds }));
+// The removal must be ANNOUNCED — a silent one is the whole defect — and reversible.
+const loadText = await page.evaluate(() => document.querySelector('.app-content')?.innerText ?? document.body.innerText);
+const readHidNote = loadText.match(/(\d+)\s+already-read/i);
+check('the load sweep announces how many already-read are hidden (3)', !!readHidNote && Number(readHidNote[1]) === 3, readHidNote?.[0] ?? 'no note');
+check('the load sweep offers an Undo', (await page.getByRole('button', { name: 'Undo' }).count()) > 0, '');
 
 // ---- Sidebar "Recently read" panel shows ONLY read stories (not summarized/saved/bounced) ----
 // This is the surface that shipped the bug: it used engagement, not the read definition.
@@ -146,14 +157,33 @@ const afterEngage = idsFrom(await titles(page));
 console.log(`[read] read story ${target} in-session; For You now:`, JSON.stringify(afterEngage));
 check('reading a card in-session does NOT make it vanish', afterEngage.includes(target), `story ${target}`);
 
-// ---- but AFTER a refresh, the now-read story drops out of For You (snapshot recomputed) ----
+// ---- an explicit Refresh sweeps the in-session read, announced ("Hid 1") + reversible ----
+// The load sweep already hid 11,12,14, so a Refresh now NEWLY hides only the just-read 17.
+await page.getByRole('button', { name: 'Refresh' }).first().click();
+await page.waitForTimeout(2000);
+const sweptIds = idsFrom(await titles(page));
+check('Refresh sweeps the in-session-read story out (17 gone)', !sweptIds.includes(target), JSON.stringify(sweptIds));
+const sweptText = await page.evaluate(() => document.querySelector('.app-content')?.innerText ?? document.body.innerText);
+const sweptNote = sweptText.match(/Hid\s+(\d+)\s+stor/i);
+check('Refresh announces how many it NEWLY hid (1)', !!sweptNote && Number(sweptNote[1]) === 1, sweptNote?.[0] ?? 'no note');
+const undo = page.getByRole('button', { name: 'Undo' }).first();
+check('the Refresh sweep offers an Undo', (await undo.count()) > 0, '');
+if (await undo.count()) {
+  await undo.click();
+  await page.waitForTimeout(1200);
+  const undone = idsFrom(await titles(page));
+  check('Undo puts the just-swept story back (17)', undone.includes(target), JSON.stringify(undone));
+}
+
+// ---- a RELOAD after an in-session read ALSO sweeps it (design #4: a fresh load hides read) ----
 await page.reload({ waitUntil: 'domcontentloaded' });
+await page.waitForFunction(() => window.__hnlens, null, { timeout: 20000 });
 await page.getByRole('button', { name: 'For You' }).first().click().catch(() => {});
 await page.waitForSelector('article', { timeout: 15000 });
 await page.waitForTimeout(700);
 const afterReload = idsFrom(await titles(page));
-console.log('[read] For You after reading + full reload:', JSON.stringify(afterReload));
-check('after refresh, the now-read story drops out of For You (17 gone)', !afterReload.includes(target), `story ${target}`);
+console.log('[read] For You after reading 17 + reload:', JSON.stringify(afterReload));
+check('a reload after reading sweeps the now-read story (17 gone)', !afterReload.includes(target), `story ${target}`);
 
 // ---- the story we just read IS now in the Read tab (read state still tracked) ----
 await page.getByRole('button', { name: 'Read', exact: true }).click();
@@ -247,6 +277,61 @@ await page.waitForFunction(
 const f2bSidebar = await page.evaluate(() => document.querySelector('.app-sidebar')?.innerText ?? '');
 check('F2b: sidebar "Recently read" EXCLUDES the muted-domain read (11) — agrees with Read tab', !/Story 11\b/.test(f2bSidebar), '');
 check('F2b: sidebar "Recently read" shows the non-muted read (12)', /Story 12\b/.test(f2bSidebar), '');
+
+// ============================================================================
+// F2c — a LONG muted leading run. The natural sequence "read a site a lot, then get sick of it
+// and mute it" puts many filtered reads at the head of the history. Both read surfaces page from
+// the SAME history but by DIFFERENT rules (the tab slices ids into pages before filtering; the
+// sidebar walks the list until it has `limit` showable items), so a head longer than one page made
+// them disagree outright — the tab showed nothing while the sidebar happily listed older reads.
+// ============================================================================
+await page.evaluate(async () => {
+  const [{ db }, interactions] = await Promise.all([window.__hnlens.db(), window.__hnlens.interactions()]);
+  await interactions.clearAllData();
+  window.__hnlens.prefs.getState().set({
+    useLearnedRanker: false, embeddingsEnabled: false, defaultFeed: 'top',
+    minPoints: 0, hideReadInFeed: false, mutedDomains: ['annoying.com'],
+  });
+  const ms = Date.now();
+  const rows = [];
+  // 40 genuine reads, oldest first; the 28 most RECENT are on the muted domain.
+  for (let i = 0; i < 40; i++) {
+    const id = 200 + i;
+    const domain = i >= 12 ? 'annoying.com' : `keep${i}.com`;
+    rows.push({ type: 'open_link', itemId: id, domain, ts: ms - (40 - i) * 1000 });
+    rows.push({ type: 'dwell', itemId: id, domain, value: 12000, ts: ms - (40 - i) * 1000 + 100 });
+  }
+  await db.events.bulkAdd(rows);
+  location.hash = '#/';
+});
+await page.reload({ waitUntil: 'domcontentloaded' });
+await page.waitForFunction(() => window.__hnlens, null, { timeout: 20000 });
+await page.getByRole('button', { name: 'Read', exact: true }).click();
+await page.waitForFunction(
+  () => document.querySelector('article') || /No reading history|Nothing to show|filters are hiding/i.test(document.body.innerText),
+  null,
+  { timeout: 20000 }
+);
+await page.waitForTimeout(1200);
+const f2cTab = idsFrom(await titles(page));
+const f2cSidebar = await page.evaluate(() => document.querySelector('.app-sidebar')?.innerText ?? '');
+const sidebarIds = [...f2cSidebar.matchAll(/Story (\d+)/g)].map((m) => Number(m[1]));
+check('F2c: the Read tab pages PAST a muted run longer than one page', f2cTab.length > 0, `tab=${JSON.stringify(f2cTab.slice(0, 5))}`);
+check('F2c: no muted story reaches the Read tab', f2cTab.every((id) => id < 212), JSON.stringify(f2cTab));
+check('F2c: the sidebar is not empty while the tab has stories (surfaces AGREE)', sidebarIds.length > 0, `sidebar=${JSON.stringify(sidebarIds.slice(0, 5))}`);
+// `idsFrom` sorts ASCENDING, so the newest read is the max — not element 0. The sidebar renders
+// newest-first, so its first entry must be that same story.
+const f2cNewest = Math.max(...f2cTab);
+check(
+  'F2c: the newest story on both surfaces is the SAME one',
+  sidebarIds.length > 0 && f2cTab.length > 0 && sidebarIds[0] === f2cNewest,
+  `tab newest=${f2cNewest} sidebar[0]=${sidebarIds[0]}`
+);
+check(
+  'F2c: every story the sidebar lists is also on the Read tab',
+  sidebarIds.every((id) => f2cTab.includes(id)),
+  `sidebar=${JSON.stringify(sidebarIds)} tab=${JSON.stringify(f2cTab)}`
+);
 
 // ============================================================================
 // F3 — the read-hide snapshot is a true LOAD-TIME snapshot (primed once at startup

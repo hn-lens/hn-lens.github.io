@@ -12,7 +12,7 @@ assignees: ''
 
 ## Proposed solution
 
-<!-- What you'd like to see. Keep in mind HN Lens is a static, in-browser app with no
+<!-- What you'd like to see. Keep in mind Hacker Lens is a static, in-browser app with no
      backend — everything runs client-side. -->
 
 ## Alternatives considered

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowUpRight, MessageSquare, Sparkles, User as UserIcon } from 'lucide-react';
+import { ArrowLeft, ArrowUpRight, MessageSquare, Sparkles, User as UserIcon } from 'lucide-react';
 import { useUser } from '../hooks/useItem';
 import { useSavedIds, useSeenMap } from '../hooks/useLocalData';
 import { getItems } from '../lib/hn/client';
@@ -21,17 +21,25 @@ import type { ChatMessage } from '../lib/models/llm';
 // user's recent STORY submissions AND COMMENTS (a Stories/Comments toggle). When AI is set
 // up, an on-demand "About this user" persona summary describes what they post/comment about,
 // built only from that recent activity. Author names across the app link here; this page
-// links back OUT to the HN profile ("on HN") for actions HN Lens can't do (CORS blocks
+// links back OUT to the HN profile ("on HN") for actions Hacker Lens can't do (CORS blocks
 // write/vote), keeping the deep-link-to-HN escape hatch.
 export default function User() {
   const { id } = useParams();
+  const navigate = useNavigate();
+  const location = useLocation();
+  // Same in-app Back semantics as the discussion page: step back to the exact feed/scroll you came
+  // from when there is an in-app entry, else go to the feed (a shared /user link lands with key
+  // 'default').
+  const cameFromInApp = location.key !== 'default';
+  const goBack = () => (cameFromInApp ? navigate(-1) : navigate('/'));
   const userQ = useUser(id);
   const user = userQ.data;
   const saved = useSavedIds();
   const seen = useSeenMap();
 
-  // AI availability: a cloud key (no WebGPU needed) OR the on-device model enabled with a
-  // usable WebGPU adapter — same gate the summary controls use elsewhere.
+  // AI availability: a cloud key (no WebGPU needed) OR the on-device model enabled with a usable
+  // WebGPU adapter. The discussion surfaces apply `showAiSummaries` on top of this; that pref is
+  // scoped to comments, so it is deliberately not applied here.
   const llmEnabled = usePrefs((s) => s.llmEnabled);
   const llmModel = usePrefs((s) => s.llmModel);
   const llmProvider = usePrefs((s) => s.llmProvider);
@@ -105,11 +113,31 @@ export default function User() {
         <div className="flex items-center gap-2 p-6 text-sm text-muted">
           <Spinner /> Loading profile…
         </div>
+      ) : userQ.isError ? (
+        // An OUTAGE is not a missing user — say so, and offer Retry, rather than claiming the person
+        // does not exist (the feed and search error states do the same).
+        <div className="rounded-xl border border-border bg-surface p-10 text-center">
+          <UserIcon className="mx-auto size-8 text-subtle" />
+          <p className="mt-3 text-sm text-muted">Couldn&apos;t load this profile.</p>
+          <p className="mt-0.5 text-xs text-subtle">Hacker News may be unreachable right now.</p>
+          <button
+            type="button"
+            onClick={() => void userQ.refetch()}
+            className="mt-4 inline-block rounded-lg border border-edge px-3 py-1.5 text-sm hover:bg-surface-2"
+          >
+            Retry
+          </button>
+        </div>
       ) : !user ? (
         <div className="rounded-xl border border-border bg-surface p-10 text-center">
           <UserIcon className="mx-auto size-8 text-subtle" />
           <p className="mt-3 text-sm text-muted">User not found.</p>
-          <p className="mt-0.5 text-xs text-subtle">There&apos;s no Hacker News user &ldquo;{id}&rdquo;.</p>
+          {/* The route param is unbounded user input. The success branch's <h1> is already guarded
+              the same way; this branch was missed, so a long junk id pushed the whole page sideways
+              (+32px at 320px with Large text). */}
+          <p className="mt-0.5 text-xs text-subtle [overflow-wrap:anywhere]">
+            There&apos;s no Hacker News user &ldquo;{id}&rdquo;.
+          </p>
           <Link
             to="/"
             className="mt-4 inline-block rounded-lg border border-edge px-3 py-1.5 text-sm hover:bg-surface-2"
@@ -119,6 +147,13 @@ export default function User() {
         </div>
       ) : (
         <>
+          <button
+            type="button"
+            onClick={goBack}
+            className="mb-3 inline-flex items-center gap-1 text-sm text-muted hover:text-fg"
+          >
+            <ArrowLeft className="size-4" /> Back to feed
+          </button>
           <div className="mb-4 rounded-xl border border-border bg-surface p-4">
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
               <h1 className="flex min-w-0 items-center gap-2 text-lg font-semibold">

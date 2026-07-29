@@ -113,7 +113,7 @@ const themeCard = (r) => `
 
 const html = `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>HN Lens — designs &amp; layouts</title>
+<title>Hacker Lens — designs &amp; layouts</title>
 <style>
   :root { color-scheme: light dark; }
   body { margin: 0; font: 15px/1.5 -apple-system, system-ui, sans-serif; background: #12141a; color: #e6e8ee; }
@@ -132,7 +132,7 @@ const html = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   img { width: 100%; height: auto; display: block; border: 1px solid #2a2e38; border-radius: 10px; }
   @media (max-width: 820px) { .pair { grid-template-columns: 1fr; } }
 </style></head><body>
-<header><h1>HN Lens — designs &amp; layouts</h1>
+<header><h1>Hacker Lens — designs &amp; layouts</h1>
 <p>TWO independent axes you can mix: <b>${layoutShots.length} layouts</b> (structure) × <b>${shots.length} designs</b> (palette + type), each with light &amp; dark. Switch from the top-nav dropdowns or Settings → Appearance.</p></header>
 <nav>
   <a href="#layouts">Layouts</a>${layoutShots.map((r) => `<a href="#layout-${r.id}">${r.id}</a>`).join('')}

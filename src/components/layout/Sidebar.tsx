@@ -105,10 +105,10 @@ export default function Sidebar({ feed, searching }: { feed: FeedKind; searching
                 {rankerState === 'trained'
                   ? `Learned reranker on — tuned to ${trainedN} examples from your activity.`
                   : rankerState === 'too-few-samples'
-                    ? `Learning your taste — ${trainedN}/${MIN_TRAIN_SAMPLES} examples from your activity until the reranker switches on. It trains itself as you read.`
+                    ? `Learning your taste — ${trainedN}/${MIN_TRAIN_SAMPLES} examples from your activity until the reranker switches on. It retrains in the background while this tab is inactive, or use “Retrain now” in Settings. (Examples are built when it retrains, so this lags the raw signal count below.)`
                     : rankerState === 'degenerate'
                       ? `Learning your taste — your activity so far doesn't separate the stories you engage with from the ones you skip, so the reranker has nothing to learn from yet. Reading a wider mix will give it something to work with.`
-                      : `Learning your taste — read a few stories (not just scroll past them) so the reranker has enough signal to switch on. It trains itself as you read.`}
+                      : `Learning your taste — read a few stories (not just scroll past them) so the reranker has enough signal to switch on. It retrains in the background while this tab is inactive, or use “Retrain now” in Settings.`}
               </p>
             )}
             <Link
@@ -215,9 +215,13 @@ export default function Sidebar({ feed, searching }: { feed: FeedKind; searching
                     type="button"
                     onClick={() => toggleFollowDomain(d)}
                     title={`Unfollow ${d}`}
-                    className="group inline-flex items-center gap-1 rounded-full bg-accent/10 px-2 py-0.5 text-xs text-fg hover:bg-accent/20"
+                    // `border-edge`, not bare `bg-accent/10`: a 10%-alpha tint is 1.09-1.30:1 against
+                    // the sidebar surface in 58 of 62 design x mode cells, so the chip was clickable
+                    // but not perceivable AS a control (WCAG 1.4.11 wants >=3:1). `--edge` is the
+                    // token that is contrast-normalised for exactly this.
+                    className="group inline-flex min-w-0 max-w-full items-center gap-1 rounded-full border border-edge bg-accent/10 px-2 py-0.5 text-xs text-fg [overflow-wrap:anywhere] hover:bg-accent/20"
                   >
-                    {d} <X className="size-3 opacity-50 group-hover:opacity-100" />
+                    <span className="min-w-0 truncate">{d}</span> <X className="size-3 shrink-0 opacity-50 group-hover:opacity-100" />
                   </button>
                 ))}
               </div>
@@ -232,9 +236,9 @@ export default function Sidebar({ feed, searching }: { feed: FeedKind; searching
                       type="button"
                       onClick={() => toggleFollowUser(u)}
                       title={`Unfollow ${u}`}
-                      className="group inline-flex items-center gap-1 rounded-full bg-accent/10 px-2 py-0.5 text-xs text-fg hover:bg-accent/20"
+                      className="group inline-flex min-w-0 max-w-full items-center gap-1 rounded-full border border-edge bg-accent/10 px-2 py-0.5 text-xs text-fg [overflow-wrap:anywhere] hover:bg-accent/20"
                     >
-                      @{u} <X className="size-3 opacity-50 group-hover:opacity-100" />
+                      <span className="min-w-0 truncate">@{u}</span> <X className="size-3 shrink-0 opacity-50 group-hover:opacity-100" />
                     </button>
                   ))}
                 </div>
@@ -243,7 +247,15 @@ export default function Sidebar({ feed, searching }: { feed: FeedKind; searching
           </section>
         )}
 
-        <button type="button" onClick={() => setShowSignals(true)} className="px-1 text-left text-xs text-subtle hover:text-accent hover:underline">
+        {/* This number climbs with every impression while the reranker's example count sits still,
+            which reads as one of them being broken. They measure different things; say so where both
+            are visible, not only in a source comment. */}
+        <button
+          type="button"
+          onClick={() => setShowSignals(true)}
+          title="Everything recorded locally: impressions, clicks, saves, hides. The reranker trains on a subset of these, and only when it retrains — which is why the two counts differ."
+          className="px-1 text-left text-xs text-subtle hover:text-accent hover:underline"
+        >
           {signalCount.toLocaleString()} signals recorded locally
         </button>
         {showSignals && <SignalsDialog onClose={() => setShowSignals(false)} />}

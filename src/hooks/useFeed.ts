@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getFeedIds, getForYouCandidateIds, getItems } from '../lib/hn/client';
 import { computeAffinities, getReadItemIds } from '../lib/interactions';
 import type { Affinities } from '../lib/interactions';
@@ -10,23 +10,94 @@ import { rankerTrained } from '../lib/ranking/strategies';
 import { loadModel } from '../lib/ranking/logistic';
 import { buildContentProfile, computeContentSignals } from '../lib/ranking/content';
 import { prefetchArticles } from '../lib/hn/article';
-import { clearPinnedOrder, getFeedDepth, getPinnedOrder, resetFeedPosition, setFeedDepth, setPinnedOrder } from '../lib/feedSession';
+import { clearPinnedOrder, getFeedDepth, getPinnedOrder, hiddenStubsSnapshot, subscribeHiddenStubs, resetFeedPosition, setFeedDepth, setPinnedOrder } from '../lib/feedSession';
+import { applyReadSweep, peekReadSweep, undoReadSweep } from '../lib/readSweep';
 import { usePrefs } from '../lib/prefs';
 import { useHiddenIds } from './useLocalData';
 import type { FeedKind, HnItem } from '../types';
 
 const PAGE = 25;
+// How many extra pages the feed may materialise on its own to get past a fully-filtered leading run.
+// 3 pages (~75 further stories) clears any realistic filtered head; past that the filters really are
+// hiding everything and the reader should be told so rather than watching skeletons.
+const MAX_AUTO_ADVANCE = 3;
 const EMPTY_AFF: Affinities = { domains: {}, authors: {}, domainCounts: {}, authorCounts: {}, perItem: {} };
+
+/**
+ * Hold a list in the order the reader last saw it.
+ *
+ * Survivors keep their relative order and genuine newcomers are appended rather than interleaved,
+ * so nothing already on screen moves. Anything that has left the source is dropped.
+ *
+ * Shared by the personalized and the plain feeds deliberately. The plain feeds were left unpinned
+ * on the theory that Top should simply be "HN's order" — but the list TTL is three minutes, so a
+ * reader who spent that long in a discussion came back to a re-sorted page: measured on live Top,
+ * 10 of 25 cards changed position with nothing added or removed, the aimed-at story slid two rows,
+ * and the click opened something else. Refresh still clears the pin and shows the true current
+ * order, which is where "give me HN's order" belongs.
+ */
+function holdOrder<T>(
+  kind: FeedKind,
+  intent: string,
+  fresh: T[],
+  idOf: (x: T) => number
+): T[] {
+  // NOTHING TO PIN YET. On the first render of every load `fresh` is empty (the pool/items query
+  // has not resolved), and writing that empty list DESTROYED the persisted pin before rebuilding it
+  // from a newly-computed ranking. Measured: `{foryou:0},{foryou:0},{foryou:40},{foryou:40}` on
+  // every reload, after which 25 of 25 cards had moved and 5 had dropped out of view — the exact
+  // mis-click this pin exists to prevent, reintroduced by the pin's own bookkeeping.
+  if (fresh.length === 0) return fresh;
+  const pinned = getPinnedOrder(kind, intent);
+  if (!pinned || pinned.length === 0) {
+    setPinnedOrder(kind, intent, fresh.map(idOf));
+    return fresh;
+  }
+  const byId = new Map(fresh.map((x) => [idOf(x), x] as const));
+  const held = pinned.map((id) => byId.get(id)).filter((x): x is T => x !== undefined);
+  const heldIds = new Set(held.map(idOf));
+  const list = [...held, ...fresh.filter((x) => !heldIds.has(idOf(x)))];
+  setPinnedOrder(kind, intent, list.map(idOf));
+  return list;
+}
 
 export interface FeedCard {
   item: HnItem;
   reasons: string[];
   rank?: number; // 1-based position in the For You ranking
-  explain?: RankExplanation; // traceable "why ranked here" (For You only)
+  /**
+   * Whether this card HAS a traceable "why ranked here" (For You only). The explanation itself is
+   * fetched on demand through the hook's stable `explainFor(id)`, never handed down as an object:
+   * a fresh object per card per ranking recompute is what defeated `memo(StoryCard)` for the whole
+   * list on every save/hide/read.
+   */
+  explainable?: boolean;
+  /** Hidden during THIS session: render a placeholder so the list does not shift under the reader. */
+  hiddenStub?: boolean;
 }
 
 /** Stable empty-reasons array — see the note at its use site. */
 const NO_REASONS: string[] = [];
+
+/**
+ * Hand back the PREVIOUS array whenever the new one has the same contents.
+ *
+ * `computeForYou` builds a fresh `reasons` array for every candidate on every re-rank, so a card
+ * whose reasons were identical still received a new prop identity and re-rendered — the same defect
+ * as the per-card explanation OBJECT, in the prop right next to it. Ranking recomputes on every
+ * save, hide and read (they invalidate ['affinities'] and ['content']), so on the personalized feed
+ * that was the whole list, every time: measured ~200ms of blocked frames at 90 cards against 0ms
+ * for the same action on Top, whose cards share one constant empty array.
+ *
+ * Identity is the only thing being preserved here; the contents are compared, so a reason that
+ * genuinely changes still propagates.
+ */
+function stableReasons(cache: Map<number, string[]>, id: number, next: string[]): string[] {
+  const prev = cache.get(id);
+  if (prev && prev.length === next.length && prev.every((v, i) => v === next[i])) return prev;
+  cache.set(id, next);
+  return next;
+}
 
 export function useFeed(kind: FeedKind) {
   const prefs = usePrefs();
@@ -35,7 +106,10 @@ export function useFeed(kind: FeedKind) {
   // is unmounted whenever the reader opens a discussion, so component-local state silently threw
   // away every page they had loaded on the way back.
   const [visible, setVisible] = useState(() => getFeedDepth(kind, PAGE));
-
+  const qc = useQueryClient();
+  // How many stories the LAST explicit Refresh swept out of view, so the feed can say so and offer
+  // an Undo. Null means "nothing to report" — a silent removal is the defect being fixed.
+  const [justSwept, setJustSwept] = useState<number | null>(null);
   useEffect(() => {
     setVisible(getFeedDepth(kind, PAGE));
   }, [kind]);
@@ -53,6 +127,19 @@ export function useFeed(kind: FeedKind) {
   // within the ~3-min list / 15-min item cache window.
   const forceRef = useRef(false);
 
+  // A Refresh's force-network flag belongs ONLY to the tab that pressed Refresh. This hook is NOT
+  // remounted on a tab switch (Home renders one <Feed> whose `kind` prop changes), so `forceRef`
+  // would otherwise survive into the next feed: switch tabs while a Refresh is still in flight and
+  // the tab you land on inherits force=true, bypassing its cache and re-fetching it from the
+  // network — a Refresh silently refreshing another tab. Clear it synchronously on any kind change,
+  // before this render wires up the new tab's queries. (A Refresh does not change `kind`, so it is
+  // unaffected.)
+  const kindRef = useRef(kind);
+  if (kindRef.current !== kind) {
+    kindRef.current = kind;
+    forceRef.current = false;
+  }
+
   // ----- Original HN feeds (top/new/best/ask/show/job) -----
   const idsQ = useQuery({
     queryKey: ['ids', kind],
@@ -69,12 +156,10 @@ export function useFeed(kind: FeedKind) {
     queryFn: () => getReadItemIds(500),
     staleTime: 10000,
   });
-  // For You hides already-read stories via a LOAD-TIME SNAPSHOT (see readSnapshotQ
-  // below), gated on `hideReadInFeed` (default on). The snapshot is captured once per
-  // page load and fixed for the session, so a story read MID-SESSION is never yanked
-  // out from under you (the old "live hide" problem); a browser refresh recomputes it,
-  // so newly-read stories drop out then. This is the deliberate resolution of the
-  // earlier auto-hide dead-end: keep the feed stable in-session, de-dupe on refresh.
+  // For You hides already-read stories using the read SWEEP (lib/readSweep), gated on
+  // `hideReadInFeed` (default on). The set is recomputed on every fresh document load (reload /
+  // new tab, seeded in main.tsx) and by Refresh — NEVER on in-app navigation — and is fixed for
+  // the life of a page load, so a story read this session is not yanked. See SPEC.md section 4.
 
   // Memoized so it's referentially stable (only changes when the query data changes),
   // which lets the cards memo depend on it without re-running every render.
@@ -97,42 +182,61 @@ export function useFeed(kind: FeedKind) {
   const itemsQ = useQuery({
     queryKey: ['items', kind, slicedIds],
     enabled: !isForYou && sliceCount > 0,
-    queryFn: () => getItems(slicedIds, 10, forceRef.current ? 0 : undefined),
-    placeholderData: keepPreviousData, // keep showing current items while more load
+    // 6, matching the browser's per-origin HTTP/1.1 cap — see the note on the For-You pool below.
+    queryFn: () => getItems(slicedIds, 6, forceRef.current ? 0 : undefined),
+    // Keep the previous items ONLY within the SAME feed (load-more / refetch), so paging stays smooth.
+    // Across a TAB SWITCH (kind changes) return undefined instead: showing the OTHER tab's cards for
+    // ~1s until the new feed loads is worse than a brief skeleton — you clicked "Best" and were still
+    // looking at "Top". A revisited tab still shows instantly from its own cache; only a first,
+    // uncached visit shows a skeleton, and it is the NEW tab's skeleton, never the wrong tab's list.
+    placeholderData: (prev, prevQuery) => (prevQuery?.queryKey?.[1] === kind ? prev : undefined),
   });
 
   // ----- For You (re-ranked) -----
-  const poolQ = useQuery({
-    queryKey: ['pool', 'foryou'],
+  // Candidate IDS first (cheap: a few list fetches, merged). 90 (was 150) keeps ample headroom for
+  // the diversity caps (domain 3 / author 2) + Load-more while cutting the cold-start item fetches.
+  const candIdsQ = useQuery({
+    queryKey: ['pool-ids', 'foryou'],
     enabled: isForYou,
-    queryFn: async () =>
-      // Candidate pool: 90 (was 150) — the For-You cold start materializes each candidate
-      // via a firebase N+1 (ids-only API), so the pool size dominates time-to-first-card on
-      // the default landing feed. 90 keeps ample headroom for the diversity caps (domain 3 /
-      // author 2) + Load-more while cutting ~40% of the cold-start item fetches.
-      // Concurrency 32, not 12. These are ~1KB JSON reads against a CDN-backed endpoint, so the
-      // pool spends nearly all its time waiting on round trips rather than on bandwidth or CPU; at
-      // 12 the 90 candidates serialise into 8 waves and cost about a second of time-to-first-card
-      // on a mobile-latency link. Browsers cap same-host HTTP/1.1 connections at 6 and multiplex
-      // freely over HTTP/2, so the ceiling here is the protocol's, not ours — a higher number simply
-      // stops us adding a queue on top of it. Every fetch is individually deadline-bounded, so a
-      // wider pool cannot turn one slow response into a longer stall.
-      getItems(await getForYouCandidateIds(90, forceRef.current ? 0 : undefined), 32, forceRef.current ? 0 : undefined),
+    queryFn: () => getForYouCandidateIds(90, forceRef.current ? 0 : undefined),
     staleTime: 120000,
   });
-  const pool = useMemo(() => poolQ.data ?? [], [poolQ.data]);
+  const candIds = useMemo(() => candIdsQ.data ?? [], [candIdsQ.data]);
 
-  // LOAD-TIME SNAPSHOT of already-read ids for hiding read stories from For You.
-  // The snapshot is PRIMED ONCE at app startup in main.tsx (prefetchQuery), so it
-  // reflects what was read at page load — NOT lazily when For You first mounts or the
-  // pref flips. This query just READS that primed cache (staleTime/gcTime Infinity ⇒
-  // never refetched/evicted), so it's identical regardless of the landing feed, and a
-  // story read mid-session is not in it (no yank). The queryFn is a fallback for the
-  // rare case the query mounts before the startup prefetch resolves (still ~load time).
-  // Applied only when hideReadInFeed is on (see the cards memo).
+  // PROGRESSIVE materialization. Each candidate is fetched via a firebase N+1 (ids-only API), so
+  // materializing the WHOLE pool before painting cost 6s (unthrottled) to 15s (Fast 4G) to first
+  // card. Instead: a fast FIRST batch paints in ~1-2s, and the rest fills in for ranking depth +
+  // Load-more. The first batch's items are cached, so `poolQ` only NETWORK-fetches the remainder.
+  // The pinned order keeps the first paint stable when the fuller pool lands (no reorder under the
+  // reader). Concurrency 6 = the browser's per-origin HTTP/1.1 cap (a higher number just stacks a
+  // queue in front of each request's already-ticking deadline; at 32, a third of the pool used to
+  // abort unsent and For You silently ranked ~60 candidates instead of 90).
+  const FIRST_BATCH = 24;
+  const poolFirstQ = useQuery({
+    queryKey: ['pool', 'foryou', 'first', candIds.slice(0, FIRST_BATCH)],
+    enabled: isForYou && candIds.length > 0,
+    queryFn: () => getItems(candIds.slice(0, FIRST_BATCH), 6, forceRef.current ? 0 : undefined),
+    staleTime: 120000,
+  });
+  const poolQ = useQuery({
+    queryKey: ['pool', 'foryou', 'all', candIds],
+    // Start the full pool only AFTER the first batch has landed. If both ran at once they would
+    // compete for the origin's 6 connections and the first batch would NOT paint any sooner (that was
+    // measured: 14.5s to first card). Deferring the rest gives the first 24 the connections
+    // exclusively (~1-2s to first card); the first batch is then cached, so this only fetches the rest.
+    enabled: isForYou && candIds.length > 0 && !!poolFirstQ.data,
+    queryFn: () => getItems(candIds, 6, forceRef.current ? 0 : undefined),
+    staleTime: 120000,
+  });
+  // Rank + paint the full pool once it lands; until then, the fast first batch.
+  const pool = useMemo(() => poolQ.data ?? poolFirstQ.data ?? [], [poolQ.data, poolFirstQ.data]);
+
+  // The read SWEEP: ids hidden from For You. Seeded once per document load (reload / new tab) in
+  // main.tsx, updated by Refresh, and read here; the queryFn is the same pure read, so a cache
+  // invalidation cannot change the set. Applied only when hideReadInFeed is on (see the cards memo).
   const readSnapshotQ = useQuery({
     queryKey: ['readSnapshot'],
-    queryFn: () => getReadItemIds(1000),
+    queryFn: () => peekReadSweep(),
     staleTime: Infinity,
     gcTime: Infinity,
   });
@@ -189,6 +293,12 @@ export function useFeed(kind: FeedKind) {
   });
 
   // The exact context used to rank — reused by the per-item explanation so the
+  // Subscribed, not derived from `hidden`: the stub set lives in sessionStorage, and Refresh clears
+  // it WITHOUT touching db.hidden, so a memo keyed on the Dexie query rendered a cleared stub until
+  // some unrelated dismissal recomputed it and the row vanished mid-list.
+  const stubIds = useSyncExternalStore(subscribeHiddenStubs, hiddenStubsSnapshot, hiddenStubsSnapshot);
+  const stubs = useMemo(() => new Set(stubIds), [stubIds]);
+
   // trace always matches the real score.
   const ctx = useMemo(
     () =>
@@ -260,60 +370,65 @@ export function useFeed(kind: FeedKind) {
   //
   // So: freshly-computed ranking is kept for its SCORES, but items already on screen keep the
   // position they were given. Genuinely new items (a Load-more page, a refreshed pool) are appended
-  // in their ranked order, and an explicit Refresh or a tab switch clears the pin — the order is
-  // stable within a session and recomputed at a boundary the reader caused.
+  // in their ranked order, and an explicit Refresh clears the pin — the order is stable within a
+  // session and recomputed at the boundary the reader caused. NOT a tab switch: switching Top -> New
+  // -> Top leaves Top's pin intact, which is the intended behaviour (only Refresh re-sorts). An
+  // earlier version of this sentence also listed a tab switch, was reported as false, and survived
+  // into another round — so it is spelled out here rather than left to be re-derived.
   // What the reader has DELIBERATELY set about the ordering. Anything in here changing means they
   // asked for a different ranking, so the pin is dropped and the feed re-sorts immediately; nothing
   // else does. Without this the pin also swallowed the "Tune ranking" sliders and the filters —
   // moving a slider changed the score and moved zero cards, while two strings in the UI promised the
   // feed "re-ranks live". A stability mechanism must not silence the controls whose entire job is to
   // restructure the thing being stabilised.
+  //
+  // FOLLOW/MUTE ARE DELIBERATELY ABSENT, for the same reason the retrained model is (see below).
+  // They are reachable from a story card's ⋯ menu (Follow/Mute), where the reader is mid-article,
+  // not asking for a new list. Treating a teach as a re-rank request would re-order the visible
+  // cards under the reader and let the browser's compensating scroll carry them away from what they
+  // were reading, announced only as "Following <domain>". A teach is not a re-sort request: the
+  // preference is recorded immediately and shapes the ranking, it just lands at the next boundary
+  // the reader causes.
+  //
+  // This costs nothing in responsiveness where it matters, because MEMBERSHIP is filtered
+  // separately and still applies at once: a muted domain's stories leave the list immediately via
+  // `isFiltered`, they simply do not drag every other card around with them.
   const rankIntent = useMemo(
     () =>
       JSON.stringify([
         prefs.weights,
         prefs.minPoints,
-        prefs.mutedDomains,
-        prefs.mutedUsers,
         prefs.keywordsMute,
         prefs.keywordsBoost,
-        prefs.followedDomains,
-        prefs.followedUsers,
         prefs.useLearnedRanker,
         // NOT the model's updatedAt. Including it made a BACKGROUND retrain count as a deliberate
         // change of intent, so the feed re-sorted itself ~15s after the reader engaged with
         // anything — with no user action at all, which is precisely the defect the pin exists to
         // prevent, and it shipped disabled-by-its-own-fix. The retrained model still takes effect;
-        // it just does so at the next boundary the reader causes (refresh, tab switch, reload),
-        // exactly like every other input here.
+        // it just does so at the next Refresh, which is what clears the pin (a tab switch keeps the
+        // pin, and a reload continues the session), exactly like every other input here.
       ]),
-    [
-      prefs.weights,
-      prefs.minPoints,
-      prefs.mutedDomains,
-      prefs.mutedUsers,
-      prefs.keywordsMute,
-      prefs.keywordsBoost,
-      prefs.followedDomains,
-      prefs.followedUsers,
-      prefs.useLearnedRanker,
-    ]
+    [prefs.weights, prefs.minPoints, prefs.keywordsMute, prefs.keywordsBoost, prefs.useLearnedRanker]
   );
 
   const ranked = useMemo(() => {
+    // The pin applies to EVERY browsing feed, not just the personalized one.
+    //
+    // It used to be For-You-only, on the reasoning that Top is "HN's order" and should just show
+    // it. But HN's order genuinely churns, and the list TTL is three minutes — so a reader who
+    // spent that long in a discussion came back to a silently re-sorted page. Measured on live Top:
+    // 10 of 25 cards changed position with nothing added or removed, the aimed-at story slid from
+    // 11 to 13, and the click landed on an unrelated article. Nothing on screen said anything had
+    // moved.
+    //
+    // Pinning does not make Top stale: the intent fingerprint still re-ranks on any deliberate
+    // change, new arrivals are appended rather than dropped, and Refresh clears the pin and shows
+    // the true current order. What it removes is the feed re-sorting itself while nobody asked.
+    // Ranking itself is a For-You concept — the plain feeds arrive already ordered by HN and are
+    // pinned in the `cards` memo instead. Without this guard they also wrote a pin under their own
+    // key derived from an empty ranking, which emptied the Read tab.
     if (!isForYou) return rankedFresh;
-    const pinned = getPinnedOrder(kind, rankIntent);
-    if (!pinned || pinned.length === 0) {
-      setPinnedOrder(kind, rankIntent, rankedFresh.map((r) => r.item.id));
-      return rankedFresh;
-    }
-    const byId = new Map(rankedFresh.map((r) => [r.item.id, r]));
-    const held = pinned.map((id) => byId.get(id)).filter((r): r is (typeof rankedFresh)[number] => !!r);
-    const heldIds = new Set(held.map((r) => r.item.id));
-    const added = rankedFresh.filter((r) => !heldIds.has(r.item.id));
-    const next = [...held, ...added];
-    setPinnedOrder(kind, rankIntent, next.map((r) => r.item.id));
-    return next;
+    return holdOrder(kind, rankIntent, rankedFresh, (r) => r.item.id);
   }, [isForYou, rankedFresh, kind, rankIntent]);
 
   // Speculatively fetch article bodies for the top-ranked candidates the user hasn't
@@ -335,33 +450,53 @@ export function useFeed(kind: FeedKind) {
   // already reuses a module-level NO_REASONS constant for exactly this reason. Same defect class,
   // different prop.
   //
-  // Key this on the inputs the explanation actually depends on (`ranked` is itself memoized on
-  // pool/rankCtx/activeModel) and NOT on the visibility inputs, so hidden/visible/readSnapshot
-  // changes hand back the identical objects and untouched cards can bail out of re-rendering.
-  const explains = useMemo(() => {
-    if (!isForYou) return null;
-    const m = new Map<number, RankExplanation>();
-    for (const r of ranked) m.set(r.item.id, explainItem(r.item, rankCtx, activeModel));
-    return m;
-  }, [isForYou, ranked, rankCtx, activeModel]);
+  // Narrowing the memo key was not enough, because the inputs it is keyed on are exactly what an
+  // engagement changes: saving, hiding or reading invalidates ['affinities'] and ['content'], which
+  // moves ctx -> rankCtx -> ranked, which rebuilt every explanation object, which handed every card
+  // a new prop identity anyway. Measured on a throttled phone, one Save cost 60ms blocked at 25
+  // cards, 111ms at 50 and 197ms at 90 — linear at ~2.2ms/card, so it is the list re-render and not
+  // the ranking maths (computeForYou 4.3ms, explainItem x90 3.6ms). The same action on Top with 75
+  // cards costs 0ms, because those cards have no explain prop to invalidate.
+  //
+  // So do not hand out objects at all. `explainFor` has a PERMANENTLY stable identity (empty dep
+  // list, latest inputs read through a ref), so a card's props no longer change when the ranking is
+  // recomputed, and the explanation is built on demand — which is the only time it is needed, since
+  // it exists to populate a dialog the reader opens. This also stops computing 90 explanations to
+  // display at most one.
+  // Preserves `reasons` array identity across re-ranks (see `stableReasons`).
+  const reasonCache = useRef(new Map<number, string[]>());
+  const explainInputs = useRef({ isForYou, ranked, rankCtx, activeModel });
+  explainInputs.current = { isForYou, ranked, rankCtx, activeModel };
+  const explainFor = useCallback((id: number): RankExplanation | undefined => {
+    const cur = explainInputs.current;
+    if (!cur.isForYou) return undefined;
+    const r = cur.ranked.find((x) => x.item.id === id);
+    return r ? explainItem(r.item, cur.rankCtx, cur.activeModel) : undefined;
+  }, []);
+
+
 
   const cards: FeedCard[] = useMemo(() => {
     if (isForYou) {
-      // Hide already-read stories (load-time snapshot) so they don't sit in For You
-      // AND the Read tab after a refresh — but only ones read BEFORE this page load,
-      // so in-session reads aren't yanked out mid-session.
+      // Hide already-read stories so they don't sit in For You AND the Read tab. The set is owned
+      // by lib/readSweep, recomputed per document load (reload / new tab) and by Refresh, and fixed
+      // within a page load — so a story read this session is never yanked out from under the reader.
       const hideRead = prefs.hideReadInFeed;
       const visibleRanked = ranked
-        .filter((r) => !hidden.has(r.item.id) && !(hideRead && readSnapshot.has(r.item.id)))
+        // A story hidden THIS session keeps its slot as a stub (see feedSession.hiddenInSession):
+        // removing the row instantly pulled everything below up a card and sent the reader's next
+        // click to the wrong story. Hides from an earlier session are simply gone.
+        .filter((r) => (!hidden.has(r.item.id) || stubs.has(r.item.id)) && !(hideRead && readSnapshot.has(r.item.id)))
         .slice(0, visible);
       return visibleRanked.map((r, i) => ({
         item: r.item,
+        hiddenStub: hidden.has(r.item.id) || stubs.has(r.item.id),
         // On a cold start the only reasons are generic ("Trending now"/"Popular") and
         // the "warming up" banner already says the feed is popularity-ranked — showing
         // an identical chip on every card is just noise, so suppress until personalized.
-        reasons: personalized ? r.reasons : NO_REASONS,
+        reasons: personalized ? stableReasons(reasonCache.current, r.item.id, r.reasons) : NO_REASONS,
         rank: i + 1,
-        explain: explains?.get(r.item.id),
+        explainable: true,
       }));
     }
     // A feed with NO ids has nothing to show. itemsQ uses keepPreviousData and, when the
@@ -377,20 +512,29 @@ export function useFeed(kind: FeedKind) {
     // story you genuinely read "Not interested" (hidden) should shape future ranking, not
     // erase the record that you read it. So the `read` feed keeps hidden items (global
     // mutes/min-points still apply, matching "Recently read").
-    return (itemsQ.data ?? [])
-      .filter((it) => (isRead || !hidden.has(it.id)) && !isFiltered(it, ctx))
-      // NO_REASONS is a module-level constant, not a fresh `[]` per card: a new array identity on
-      // every recompute changes StoryCard's props and defeats its `memo`, so any engagement (which
-      // invalidates ['affinities'] → new ctx → this memo re-runs) re-rendered the ENTIRE loaded feed.
-      .map((it) => ({ item: it, reasons: NO_REASONS }));
-    // `explains` replaces the former rankCtx/activeModel deps: it is derived from both (plus
-    // `ranked`) and is what this memo now reads, so listing it keeps the dependency honest while
-    // letting a visibility-only change reuse the same explanation objects.
-  }, [isForYou, isRead, ranked, ctx, explains, itemsQ.data, ids, hidden, visible, prefs.hideReadInFeed, readSnapshot, personalized]);
+    const fresh = (itemsQ.data ?? []).filter(
+      (it) => (isRead || !hidden.has(it.id) || stubs.has(it.id)) && !isFiltered(it, ctx)
+    );
+    // Hold HN's churn still, exactly as the personalized feed does. The Read tab is a history, not
+    // a live list, so it is left alone.
+    const ordered = isRead ? fresh : holdOrder(kind, rankIntent, fresh, (it) => it.id);
+    // NO_REASONS is a module-level constant, not a fresh `[]` per card: a new array identity on
+    // every recompute changes StoryCard's props and defeats its `memo`, so any engagement (which
+    // invalidates ['affinities'] → new ctx → this memo re-runs) re-rendered the ENTIRE loaded feed.
+    // NEVER stub on the Read tab: that is reading HISTORY, where a hidden story is shown normally
+    // (hiding is a downvote, not a history eraser). Stubbing there replaced the row with a
+    // title-less placeholder and the story appeared to drop out of your own history.
+    return ordered.map((it) => ({ item: it, reasons: NO_REASONS, hiddenStub: !isRead && (hidden.has(it.id) || stubs.has(it.id)) }));
+    // No explanation input is listed because no explanation is BUILT here any more: a card carries
+    // only the boolean `explainable`, and the explanation itself is pulled on demand through the
+    // stable `explainFor`. That is what lets a card whose item and reasons are unchanged keep
+    // identical props across a re-rank, and bail out of re-rendering.
+  }, [isForYou, isRead, ranked, ctx, itemsQ.data, ids, hidden, visible, prefs.hideReadInFeed, readSnapshot, personalized, kind, rankIntent, stubs]);
 
-  // How many already-read stories the load-time snapshot is holding out of For You,
-  // so the feed can note "N already-read hidden · see Read tab" (transparency — the
-  // user shouldn't wonder where stories went). Excludes ones already Hidden.
+
+  // How many already-read stories the read sweep is holding out of For You, so the feed can note
+  // "N already-read hidden · see Read tab" (transparency — the user shouldn't wonder where stories
+  // went). Excludes ones already Hidden.
   const readHiddenCount = useMemo(() => {
     if (!isForYou || !prefs.hideReadInFeed) return 0;
     return ranked.filter((r) => !hidden.has(r.item.id) && readSnapshot.has(r.item.id)).length;
@@ -406,28 +550,81 @@ export function useFeed(kind: FeedKind) {
     const hideRead = prefs.hideReadInFeed;
     return ranked.filter((r) => !hidden.has(r.item.id) && !(hideRead && readSnapshot.has(r.item.id))).length;
   }, [isForYou, ranked, hidden, prefs.hideReadInFeed, readSnapshot]);
+  // The page RESOLVED and every item on it was filtered out — as distinct from "no cards yet" during
+  // a load or a tab switch, which is transient. Inferring it from `cards.length === 0` alone paged
+  // the entire list on every tab switch.
+  const filteredOutAll = useMemo(
+    () => !isForYou && (itemsQ.data?.length ?? 0) > 0 && cards.length === 0,
+    [isForYou, itemsQ.data, cards.length]
+  );
   const total = isForYou ? forYouShowable : ids.length;
   const hasMore = visible < total;
   const isFetchingMore = !isForYou && itemsQ.isFetching && cards.length > 0;
   const loadMore = useCallback(() => setVisible((v) => (v >= total ? v : v + PAGE)), [total]);
 
   const isLoading = isForYou
-    ? poolQ.isLoading || affQ.isLoading
+    // Paint as soon as the FIRST batch is ready (poolFirstQ), not the whole pool — that is the
+    // progressive-render win. Still gate on the candidate ids and on the read-sweep seed (main.tsx
+    // primes ['readSnapshot'] once per page load): For You must not paint before the sweep is applied,
+    // or already-read stories flash in and then vanish.
+    ? candIdsQ.isLoading || poolFirstQ.isLoading || affQ.isLoading || readSnapshotQ.isLoading
     : isRead
       ? readIdsQ.isLoading || (itemsQ.isLoading && sliceCount > 0)
       : idsQ.isLoading || (itemsQ.isLoading && sliceCount > 0);
-  const isError = poolQ.isError || idsQ.isError || itemsQ.isError;
+  // For You errors only if the ids fail, or BOTH pool batches fail (a first-batch-only failure still
+  // paints from the full pool, and vice-versa).
+  const isError = candIdsQ.isError || (poolFirstQ.isError && poolQ.isError) || idsQ.isError || itemsQ.isError;
+
+  // PAGE PAST A FULLY-FILTERED LEADING RUN.
+  //
+  // The id list is sliced to a page BEFORE the items are fetched and filtered, so a feed whose first
+  // page is entirely filtered (mute a site you read a lot; a min-points threshold on `new`) shows
+  // nothing while qualifying stories sit deeper in the list.
+  //
+  // It lives HERE, not in the component, because it must depend on `visible` — the very thing it
+  // changes. Driven from the component it advanced exactly ONCE and then stalled forever: every
+  // other input (`filteredOutAll`, `hasMore`, `isFetching`) settled back to the identical tuple after
+  // an advance, so the effect never re-ran, and the feed sat on skeletons permanently with
+  // `hasMore` still true.
+  //
+  // BOUNDED, for two reasons. Termination: when EVERY story is filtered no advance can ever succeed,
+  // so an unbounded loop walks the whole list and leaves the reader on skeletons that never resolve.
+  // Cost: each page is a firebase N+1, and an unbounded walk was measured at 410 requests from one
+  // click. After the cap the feed stops and shows the honest "your filters are hiding these" state.
+  const autoAdvances = useRef(0);
+  useEffect(() => {
+    autoAdvances.current = 0; // a different feed, or a Refresh, gets its own budget
+  }, [kind, rankIntent]);
+  const autoAdvancing = filteredOutAll && hasMore && autoAdvances.current < MAX_AUTO_ADVANCE;
+  useEffect(() => {
+    if (!filteredOutAll || !hasMore || itemsQ.isFetching) return;
+    if (autoAdvances.current >= MAX_AUTO_ADVANCE) return;
+    autoAdvances.current += 1;
+    loadMore();
+  }, [filteredOutAll, hasMore, itemsQ.isFetching, loadMore, visible]);
 
   const refetch = useCallback(() => {
     // Explicit Refresh = force a real network fetch (bypass the cache TTLs), then reset.
     forceRef.current = true;
-    // Refresh is the user asking for a NEW list, so drop the remembered position: staying 90 cards
-    // deep (and scrolled there) in a list that has since changed is the wrong kind of stability.
-    // Everything else — opening a discussion, switching tabs — deliberately keeps it.
+    // Refresh is the user asking for a NEW list, so drop the remembered paging depth: staying 90
+    // cards deep in a list that has since changed is the wrong kind of stability. Opening a
+    // discussion or switching tabs deliberately keeps it.
     resetFeedPosition(kind);
     // Refresh is the explicit boundary at which re-ordering IS wanted — drop the pinned order so the
     // new list is presented in its true ranked sequence.
     clearPinnedOrder(kind);
+    // Refresh ALSO sweeps already-read stories out of For You, in addition to the design-#4
+    // fresh-load sweep (main.tsx). Both are explicit acts (a Refresh / a fresh load), both announce
+    // the removal and offer Undo — the earlier per-load snapshot was a defect only because it was
+    // SILENT and mid-scroll; see lib/readSweep.ts. `applyReadSweep` (not the load seed) tracks the
+    // incremental prev set so this Refresh's Undo restores exactly what it removed.
+    if (isForYou && prefs.hideReadInFeed) {
+      void getReadItemIds(1000).then((ids) => {
+        const removed = applyReadSweep(ids);
+        qc.setQueryData(['readSnapshot'], ids);
+        setJustSwept(removed);
+      });
+    }
     setVisible(PAGE);
     const reset = () => {
       forceRef.current = false;
@@ -435,15 +632,27 @@ export function useFeed(kind: FeedKind) {
     // For You Refresh also re-pulls the event-derived signals (affinities + content),
     // not just the candidate pool — so an explicit Refresh incorporates reading you did
     // this session, matching the on-engagement invalidation.
-    if (isForYou) void Promise.all([poolQ.refetch(), affQ.refetch(), contentQ.refetch()]).finally(reset);
+    if (isForYou) void Promise.all([candIdsQ.refetch(), poolFirstQ.refetch(), poolQ.refetch(), affQ.refetch(), contentQ.refetch()]).finally(reset);
     else if (isRead) void readIdsQ.refetch().finally(reset);
     else void Promise.all([idsQ.refetch(), itemsQ.refetch()]).finally(reset);
-  }, [kind, isForYou, isRead, poolQ, idsQ, readIdsQ, itemsQ, affQ, contentQ]);
+  }, [kind, isForYou, isRead, candIdsQ, poolFirstQ, poolQ, idsQ, readIdsQ, itemsQ, affQ, contentQ, qc, prefs.hideReadInFeed]);
+
+  // Put back exactly what the last sweep removed, and re-show it immediately.
+  const undoSweep = useCallback(() => {
+    undoReadSweep();
+    qc.setQueryData(['readSnapshot'], peekReadSweep());
+    setJustSwept(null);
+  }, [qc]);
+  const dismissSweptNotice = useCallback(() => setJustSwept(null), []);
 
   // When THIS feed's source data was last fetched (each tab is cached & refreshed
   // independently — they do NOT update together). Drives the "updated Xm ago" hint.
-  const updatedAt = isForYou ? poolQ.dataUpdatedAt : isRead ? readIdsQ.dataUpdatedAt : idsQ.dataUpdatedAt;
-  const isFetching = isForYou ? poolQ.isFetching : isRead ? readIdsQ.isFetching : idsQ.isFetching;
+  const updatedAt = isForYou
+    ? poolQ.dataUpdatedAt || poolFirstQ.dataUpdatedAt
+    : isRead
+      ? readIdsQ.dataUpdatedAt
+      : idsQ.dataUpdatedAt;
+  const isFetching = isForYou ? poolFirstQ.isFetching || poolQ.isFetching : isRead ? readIdsQ.isFetching : idsQ.isFetching;
 
   return {
     cards,
@@ -454,7 +663,15 @@ export function useFeed(kind: FeedKind) {
     loadMore,
     refetch,
     total,
+    autoAdvancing,
+    // Stable for the lifetime of the hook — see the note where it is defined.
+    explainFor,
     readHiddenCount,
+    // What the last explicit Refresh removed, and how to put it back. Both exist so that a change
+    // of membership is announced and reversible instead of silent.
+    justSwept,
+    undoSweep,
+    dismissSweptNotice,
     personalized,
     updatedAt,
     isFetching,

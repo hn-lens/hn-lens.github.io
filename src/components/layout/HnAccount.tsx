@@ -157,7 +157,7 @@ export default function HnAccount() {
                       }}
                       title={followed ? `Unfollow ${d}` : `Follow ${d}`}
                       className={cn(
-                        'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs',
+                        'inline-flex items-center gap-1 rounded-full border border-edge px-2 py-0.5 text-xs',
                         followed
                           ? 'bg-accent/15 text-fg'
                           : 'bg-surface-2 text-muted hover:bg-accent/10 hover:text-accent'

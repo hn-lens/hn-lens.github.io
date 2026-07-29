@@ -15,9 +15,14 @@ export interface RankContext {
   simById?: Map<number, number>; // embedding similarity to liked profile, 0..1
   termById?: Map<number, number>; // contrastive title/comment term affinity, -1..1
   learnedById?: Map<number, number>; // logistic probability, 0..1
-  // The reference point the DISPLAYED learned signal is centered on (see `learnedCenter` in
-  // strategies.ts). Set per ranking pass from the candidate pool; absent for one-off scoring.
+  // The reference the learned signal is centred on. Set per ranking pass from the candidate pool;
+  // absent for one-off scoring. Centres the SCORE, not only the displayed value — see SPEC.md §2.2.
   learnedCenter?: number;
+  // The pool's own dispersion, in log-odds. Divides the learned signal. SPEC.md §2.2.
+  learnedScale?: number;
+  // Authority earned from held-out AUC: 0.2 at chance, 1 when clearly discriminating. Multiplies the
+  // learned pull. SPEC.md §2.2.
+  learnedAmplitude?: number;
 }
 
 export interface FeatureSet {
@@ -63,9 +68,9 @@ export function computeFeatures(item: HnItem, ctx: RankContext): FeatureSet {
   // Reading a story writes engagement events; those events feed domain/author affinity; that affinity
   // then scores the very same story — so interacting with something PROMOTES it. Measured before this:
   // a genuine read moved a story from rank 10 -> 2, and saving one moved it 12 -> 1, i.e. the feed's
-  // top slot filled with the things the reader had just finished with. Training already does exactly
-  // this subtraction (`looAffinities`); `perItem` was recorded for it and simply never used here.
-  // Only the SCORED item's own contribution is removed — other candidates on the same domain keep the
+   // top slot filled with the things the reader had just finished with. This mirrors the leave-one-out
+   // the content-profile training path applies (see `content.ts`), using the per-item deltas in
+   // `perItem`. Only the SCORED item's own contribution is removed — other candidates on the same domain keep the
   // full totals, so "I read three things from this site, show me more" still works. Applying it inside
   // computeFeatures means the scorer and the "Why #N?" explainer share it and cannot disagree.
   const own = ctx.affinities.perItem?.[item.id];

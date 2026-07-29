@@ -1,6 +1,6 @@
 # Security Policy
 
-HN Lens is a **static, client-side** web app. It has no backend server and no database:
+Hacker Lens is a **static, client-side** web app. It has no backend server and no database:
 everything runs in your browser, and all data (reading history, settings, cached stories,
 model weights) is stored locally in IndexedDB and localStorage. This keeps the security
 surface small — there is no server to compromise and no shared user data.
@@ -25,7 +25,7 @@ Two further calls happen only if you turn on a feature that needs them:
 - **Read-aloud ("Listen")** — uses the browser's built-in `speechSynthesis`. On several platforms
   the default system voice is a **network** voice, so the text being read (an article body or a
   comment) may be sent to the OS/browser vendor by the platform, not by this app. Which voice is
-  used is an OS/browser setting, outside HN Lens's control.
+  used is an OS/browser setting, outside Hacker Lens's control.
 
 Two optional, **off-by-default** features send more data elsewhere only when *you* enable
 them, and each is clearly labelled in Settings:
@@ -69,12 +69,18 @@ is recorded here rather than left for each reader to redo:
 
 | Advisory | Package | Why it does not affect this app |
 | --- | --- | --- |
-| [GHSA-qwww-vcr4-c8h2](https://github.com/advisories/GHSA-qwww-vcr4-c8h2) — RSC-mode CSRF bypass | `react-router` (via `react-router-dom`) | The vulnerability is in React Server Components mode, which requires a server. HN Lens is a static client-side bundle using `HashRouter`; there is no server, no server action, and no RSC. |
+| [GHSA-qwww-vcr4-c8h2](https://github.com/advisories/GHSA-qwww-vcr4-c8h2) — RSC-mode CSRF bypass | `react-router` (via `react-router-dom`) | The vulnerability is in React Server Components mode, which requires a server. Hacker Lens is a static client-side bundle using `HashRouter`; there is no server, no server action, and no RSC. |
 | [GHSA-f88m-g3jw-g9cj](https://github.com/advisories/GHSA-f88m-g3jw-g9cj) — libvips CVEs (×4, counted as one advisory per package) | `sharp` (via `@huggingface/transformers`) | `sharp` is the **Node.js** image backend of Transformers.js. The browser build uses the WebGPU/WASM path; `sharp` is never imported into the bundle and has no native binary to run in a browser. |
 
-Both have **no patched version available**, so they cannot be resolved by upgrading. The posture is
-therefore to document rather than suppress: nothing is added to an ignore-list, so if either becomes
-reachable — say the app ever gains a server-rendered mode — the advisory is still visible.
+Neither can be resolved by moving FORWARD. `sharp` has no patched release. `react-router` does
+report `fix available` — but only via `npm audit fix --force`, which *downgrades* to 7.11.0 and is
+flagged as a breaking change, so it is a rollback rather than a patch. (An earlier version of this
+paragraph said flatly that both had "no patched version available", which the very command
+recommended below contradicts on screen.)
+
+The posture is therefore to document rather than suppress: nothing is added to an ignore-list, so if
+either becomes reachable — say the app ever gains a server-rendered mode — the advisory is still
+visible, and the react-router one gets re-evaluated the moment a forward fix ships.
 
 How to re-check after a dependency change:
 

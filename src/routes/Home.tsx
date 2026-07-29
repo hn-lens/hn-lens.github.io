@@ -36,7 +36,7 @@ export default function Home() {
 
   return (
     <main className="app-main mx-auto max-w-6xl px-3 py-4 sm:px-4">
-      <h1 className="sr-only">HN Lens — {q ? `Search: ${q}` : feed} feed</h1>
+      <h1 className="sr-only">Hacker Lens — {q ? `Search: ${q}` : feed} feed</h1>
       <div className="app-grid grid gap-6 lg:grid-cols-[1fr_300px]">
         <div className="app-content min-w-0">
           {q ? (

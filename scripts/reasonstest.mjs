@@ -65,6 +65,31 @@ const frontX = authorCap.slice(0, 3).filter((s) => s.endsWith(':x')).length;
 check('per-author cap keeps ≤2 of one author near the top', frontX <= 2, JSON.stringify(authorCap));
 check('per-author cap removes nothing (all 5 still present)', authorCap.length === 5, JSON.stringify(authorCap));
 
+// ---- save→unsave must NOT degrade the card's own habit chip (drives the REAL computeAffinities) ----
+// Two genuine saves on ex.com (items 1,2) establish a habit; a save-then-unsave on item 3 is an
+// undone mis-click. Scoring item 3 must still see the domain as one you engage with ≥2 items on —
+// the leave-one-out must not subtract for an item the undone-cleanup already removed from the tally.
+const m4 = await page.evaluate(async () => {
+  const I = window.__hnlens.interactions();
+  const F = window.__hnlens.features();
+  const S = window.__hnlens.strategies();
+  await I.clearAllData();
+  const t = (type, itemId) => I.track({ type, itemId, domain: 'ex.com', author: 'alice' });
+  await t('save', 1);
+  await t('save', 2);
+  await t('save', 3);
+  await t('unsave', 3);
+  const aff = await I.computeAffinities();
+  const p = window.__hnlens.prefs.getState();
+  p.set({ followedDomains: [], followedUsers: [], keywordsBoost: [], mutedDomains: [], mutedUsers: [], keywordsMute: [] });
+  const ctx = S.makeContext(window.__hnlens.prefs.getState(), aff);
+  const item3 = { id: 3, by: 'alice', url: 'https://ex.com/c', title: 'A neutral headline', score: 0, descendants: 0, time: Math.floor(Date.now() / 1000) - 20 * 86400, type: 'story' };
+  const fs = F.computeFeatures(item3, ctx);
+  return { domainEngagedN: fs.domainEngagedN, domainAffinity: Number(fs.domainAffinity.toFixed(3)), reasons: S.scoreItem(item3, ctx).reasons };
+});
+check('save→unsave leaves the domain habit count intact for that card (≥2)', m4.domainEngagedN >= 2, `domainEngagedN=${m4.domainEngagedN} affinity=${m4.domainAffinity}`);
+check('save→unsave does not collapse the card\u2019s "often" chip', m4.reasons.some((t) => /often/i.test(t)), JSON.stringify(m4.reasons));
+
 await b.close();
 console.log(`\n${fails.length === 0 ? 'RESULT: REASONS TEST PASS \u2713' : `RESULT: ${fails.length} FAILED`}`);
 process.exit(fails.length ? 1 : 0);

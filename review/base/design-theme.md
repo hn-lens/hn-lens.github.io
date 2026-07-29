@@ -102,6 +102,34 @@ whether the accent feels deliberate, and whether the data-viz (bars, treemap, wo
 mind map) is legible AND attractive in both modes. Call out designs that look broken, muddy, or
 low-effort.
 
+## 1c. BRAND ASSETS AT THEIR RENDERED SIZE, on the surface they actually land on
+
+Everything above tests the running DOM. The project also ships GRAPHICS THAT RENDER OUTSIDE IT —
+`public/icon.svg`, `favicon-32.png`, `apple-touch-icon.png`, `icon-192/512.png`, `og.png`, and
+the `<Logo>` mark they derive from. No amount of in-app sweeping can see them, because the browser
+draws the tab icon, the OS draws the home-screen icon, and a third-party site draws the OG card.
+
+Grade each shipped asset AT THE SIZE IT IS ACTUALLY DRAWN, not at the size it was authored:
+
+- **16px and 32px** (browser tab, bookmark bar). Rasterize and LOOK at it, upscaled with nearest-
+  neighbour so you judge the real pixels. Ask the only question that matters: is the mark still
+  identifiable, or has it collapsed into a blob? Measure the contrast of its foreground detail
+  against its own background, and count how many of its distinct elements survive.
+- **On BOTH browser chromes.** A tab strip is near-white in a light OS theme and near-black in a
+  dark one. An asset whose own background is dark disappears into dark chrome; one that is
+  transparent inherits whatever is behind it. Composite the asset over both and grade both.
+- **180 / 192 / 512px** (iOS home screen, Android, PWA install) — these are masked and shown on an
+  arbitrary wallpaper; a transparent or near-background-coloured fill is a defect there.
+- **og.png at a social card's real display width** (~500px wide in a timeline).
+
+Compare each against the IN-APP rendering of the same mark. A mark that reads well inline at 28px
+on the page background but not at 16px in the tab is a defect, and the inline version is the proof
+that the shape is fine and the SIZE/BACKGROUND treatment is not: detail that needs ~28px does not
+survive 16px, and a mark drawn for a light page does not survive dark chrome.
+
+Report per asset: rendered size, the surface composited against, the measured contrast, how many
+elements remain distinguishable, and a screenshot.
+
 ## Method
 
 Enumerate designs/layouts at runtime; for each design×mode compute the key foreground/background

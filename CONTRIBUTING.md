@@ -1,6 +1,6 @@
-# Contributing to HN Lens
+# Contributing to Hacker Lens
 
-Thanks for your interest in improving HN Lens! It's a static, in-browser Hacker News
+Thanks for your interest in improving Hacker Lens! It's a static, in-browser Hacker News
 reader — no backend, everything runs client-side and deploys to GitHub Pages.
 
 ## Getting started
@@ -27,6 +27,17 @@ npm run verify
 `npm run test:quick`; `npm run test:full` adds visual, cross-browser, and model tests. Run
 `node scripts/test.mjs --list` to see every tier.
 
+**Working from a public clone?** One step of `verify` — the internal-reference leak check — is
+maintainer-only. It matches against a pattern list that deliberately is not published, so on a
+public clone it has nothing to check and fails rather than reporting a pass it did not earn. Skip
+just that step:
+
+```bash
+LEAKCHECK_OPTIONAL=1 npm run verify
+```
+
+Everything else runs normally, and nothing you can contribute is exempt from the rest of the gate.
+
 ## Guidelines
 
 - **TypeScript is strict.** No `enum` and no constructor parameter properties
@@ -41,9 +52,11 @@ npm run verify
   loaded only via dynamic `import()` so they stay out of the main bundle.
 - **Local-first.** There is no backend; user data lives in IndexedDB and localStorage. One
   enrichment call is on by default and toggleable (story favicons); two are off by default
-  (linked-article text fetch, cloud LLM summaries). All are clearly labelled in
-  Settings → Privacy and disclosed in SECURITY.md — keep that list accurate when you add or
-  change a network call.
+  (linked-article text fetch, cloud LLM summaries). Read-aloud is a third case worth stating
+  precisely: it calls the browser's own `speechSynthesis`, which on several platforms uses a
+  *network* voice, so text can leave the device via the OS rather than via this app. All of this is
+  labelled in Settings → Privacy and disclosed in SECURITY.md — keep that list accurate when you add
+  or change a network call, and do not write "everything is local" as shorthand for it.
 
 ## Commit messages
 

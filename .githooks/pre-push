@@ -1,0 +1,29 @@
+#!/bin/sh
+# Last line of defence before anything becomes permanently public.
+#
+# The leak check also runs in the gate, but the gate is something you choose to run; `git push` is
+# the moment the decision becomes irreversible. A leak caught here costs a reword, the same leak
+# caught after a push is in the reflog of everyone who cloned. It cannot run in CI — the pattern
+# list is deliberately private and absent there — so this hook is the only automated check that
+# sits directly in front of publication.
+#
+# Enable once per clone:
+#     git config core.hooksPath .githooks
+#
+# Bypass (only when you are certain, e.g. pushing to a private fork):
+#     git push --no-verify
+set -e
+
+if [ ! -f AGENTS.local.md ]; then
+  echo "pre-push: no local pattern list on this machine — leak check skipped."
+  echo "pre-push: if you are the maintainer, this is a problem: the check is not running."
+  exit 0
+fi
+
+echo "pre-push: checking for internal references before publishing..."
+if ! node scripts/leakcheck.mjs --require-notes; then
+  echo ""
+  echo "pre-push: REFUSING TO PUSH — see the hits above."
+  echo "pre-push: reword the offending text; do not loosen the pattern."
+  exit 1
+fi

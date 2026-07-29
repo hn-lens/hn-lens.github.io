@@ -1,4 +1,4 @@
-// HN Lens has TWO design axes, both user-switchable and independent:
+// Hacker Lens has TWO design axes, both user-switchable and independent:
 //
 //   1. DESIGN (palette + typography + corner radius + surface treatment) — the
 //      `themeName` pref → data-theme="<id>" on <html>. 31 designs; the default

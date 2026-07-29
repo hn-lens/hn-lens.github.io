@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import Logo from '../ui/Logo';
 import { ArrowUp, Bookmark, ExternalLink, Moon, Search, Settings, Sun } from 'lucide-react';
 import { useTheme } from '../../hooks/useTheme';
 import { usePrefs } from '../../lib/prefs';
@@ -39,10 +40,8 @@ export default function TopNav() {
     <header className="sticky top-0 z-30 border-b border-border bg-bg/85 backdrop-blur">
       <div className="mx-auto flex h-14 max-w-6xl items-center gap-3 px-3 sm:px-4">
         <Link to="/" className="flex shrink-0 items-center gap-2 font-semibold tracking-tight">
-          <span className="grid size-6 place-items-center rounded-md bg-accent text-accent-fg">
-            <span className="size-2.5 rounded-full bg-current" />
-          </span>
-          <span className="hidden sm:inline">HN Lens</span>
+          <Logo className="size-6 shrink-0" />
+          <span className="hidden sm:inline">Hacker Lens</span>
         </Link>
 
         <form onSubmit={onSearch} className="relative ml-1 flex-1 sm:max-w-md">

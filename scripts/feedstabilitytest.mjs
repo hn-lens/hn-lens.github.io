@@ -355,10 +355,16 @@ check('the engaged story does not count ITSELF toward the "often" habit count',
   // Assert the CONTRACT, using the app's own machinery rather than re-deriving a ranking context
   // by hand (the first attempt did that, got the context shape wrong, and threw).
   //
-  //   in-session  -> the order must NOT move (that is the fix)
-  //   after reload -> the order SHOULD move (that is the boundary where re-ranking belongs, and it
-  //                   doubles as the precondition: if a reload changes nothing, the engagement never
-  //                   moved the ranking and the in-session half proves nothing).
+  //   in-session   -> the order must NOT move (that is the fix)
+  //   after RELOAD -> the order must still NOT move. A reload continues the session; it is not the
+  //                   reader asking for a new list.
+  //   after REFRESH-> the order SHOULD move. Refresh is the one explicit boundary where re-ranking
+  //                   belongs, and it doubles as the precondition: if Refresh changes nothing then
+  //                   the engagement never moved the ranking and the stability halves prove nothing.
+  //
+  // This precondition used to be pinned to RELOAD, from when a reload re-ranked. That is now the
+  // defect, not the contract — a reload re-sorting the feed and dropping stories out of view was a
+  // reported bug — so the precondition moved to the boundary that is actually supposed to re-rank.
   check(
     'engaging mid-session does NOT re-order the feed under the reader',
     JSON.stringify(before) === JSON.stringify(after.slice(0, before.length)),
@@ -369,10 +375,26 @@ check('the engaged story does not count ITSELF toward the "often" habit count',
   await page.waitForSelector('article[data-id]', { timeout: 25000 });
   await page.waitForTimeout(1200);
   const reloaded = await order();
+  // A reload must not RE-SORT the feed (the pin is preserved). Design #4 re-applies the read sweep
+  // on every load, so MEMBERSHIP can change across a reload — a newly-read story is hidden, and one
+  // no longer read (a weak open that later bounced) returns — but the surviving cards keep their
+  // relative order. That sweep behaviour is guarded by readtest; here we assert only that the order
+  // of the cards present on BOTH sides is unchanged, which still fails on a genuine re-sort.
+  const commonAfter = reloaded.filter((id) => before.includes(id));
+  const commonBefore = before.filter((id) => reloaded.includes(id));
   check(
-    'precondition: a RELOAD does re-order (else the engagement changed nothing and this proves nothing)',
-    JSON.stringify(reloaded.slice(0, before.length)) !== JSON.stringify(before),
+    'a RELOAD continues the session: it does NOT RE-SORT (pin preserved; sweep may change membership)',
+    JSON.stringify(commonAfter) === JSON.stringify(commonBefore),
     `before=${before.slice(0, 6).join(',')} reloaded=${reloaded.slice(0, 6).join(',')}`
+  );
+
+  await page.getByRole('button', { name: 'Refresh' }).first().click();
+  await page.waitForTimeout(2500);
+  const refreshed = await order();
+  check(
+    'precondition: a REFRESH does re-order (else the engagement changed nothing and this proves nothing)',
+    JSON.stringify(refreshed.slice(0, before.length)) !== JSON.stringify(before),
+    `before=${before.slice(0, 6).join(',')} refreshed=${refreshed.slice(0, 6).join(',')}`
   );
 
   // ...but the derived data DID update — the whole point of keeping invalidation live.

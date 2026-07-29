@@ -55,6 +55,16 @@ const clickItem = async (name) => {
   await page.waitForTimeout(300);
 };
 
+// M9: the domain shown in the card meta row must be DISPLAY-ONLY, not a borderless one-tap FOLLOW
+// control 2px above the title (a mis-tap hazard). Follow/unfollow lives in the Personalize menu.
+const domainCtrl = await page.evaluate(() => {
+  const meta = document.querySelector('article .sc-meta');
+  if (!meta) return { found: false };
+  const el = [...meta.querySelectorAll('*')].find((e) => /\.(com|org|net|io)\b/.test(e.textContent ?? '') && e.children.length <= 1);
+  return { found: !!el, tag: el?.tagName, inButton: !!el?.closest('button') };
+});
+check('M9: the meta-row domain is NOT a tap-to-follow button (mis-tap hazard removed)', domainCtrl.found && domainCtrl.inButton === false, JSON.stringify(domainCtrl));
+
 // --- the Personalize menu paints ABOVE the next card (no z-index/overlap artifact) ---
 // The dropdown drops down over the card below it; a later sibling card would otherwise
 // paint on top of it (its chips/Why-button bleeding through). Assert the menu is topmost.

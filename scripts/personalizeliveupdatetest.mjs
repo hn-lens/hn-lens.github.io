@@ -85,9 +85,25 @@ await coldForYou();
 check('cold For You shows the "warming up" banner', /warming up/i.test(await contentText()), '');
 
 const whyOn = await openWhyDialog();
-check('Why dialog (reranker ON, untrained): says it trains automatically', /trains itself automatically|activates once it has/i.test(whyOn), whyOn.slice(0, 160).replace(/\s+/g, ' '));
+check('Why dialog (reranker ON, untrained): says it trains automatically', /retrains in the background|activates once it has/i.test(whyOn), whyOn.slice(0, 160).replace(/\s+/g, ' '));
+// SPEC §2.4: retraining runs only while the tab is HIDDEN, so a reader who never backgrounds the tab
+// is never trained by it. Copy promising it trains "as you read" is false for exactly that reader,
+// and "no manual step" additionally denies the one control that always works.
+// Scoped to a TRAINING claim: "Position is not re-sorted as you read" is a different sentence, and
+// it is true (SPEC §2.3). Only "…trains… as you read" is the false one.
+check('Why dialog: does NOT promise training happens "as you read"', !/trains?[^.]{0,40}as you read/i.test(whyOn), '');
+check('Why dialog: does NOT deny the manual retrain path', !/no manual step/i.test(whyOn), '');
+check('Why dialog: names "Retrain now", the control that always works', /retrain now/i.test(whyOn), '');
 check('Why dialog (ON): does NOT tell the user to "Train from history" (no such button)', !/train from history/i.test(whyOn), '');
 check('Why dialog (ON): does NOT say the reranker is turned off (it is on)', !/turned off/i.test(whyOn), '');
+// The cold-start user here has only scrolled (impressions), read nothing. The interaction COUNT is
+// not the read count, so the copy must not present it as "stories you've actually read (you have N)".
+// It counts interactions against the sample gate instead.
+check(
+  'Why dialog (ON, untrained): does NOT label the interaction count as stories read',
+  !/actually read \(you have/i.test(whyOn),
+  whyOn.slice(0, 200).replace(/\s+/g, ' ')
+);
 await closeDialog();
 
 // ============================================================================
@@ -145,6 +161,9 @@ await page.waitForTimeout(200);
 const whyOff = await openWhyDialog();
 check('Why dialog (reranker OFF): says the reranker is turned off', /turned off|isn.t contributing|turn on/i.test(whyOff), whyOff.slice(0, 160).replace(/\s+/g, ' '));
 check('Why dialog (OFF): still no "Train from history" instruction', !/train from history/i.test(whyOff), '');
+// SPEC §2.4: retraining is a background task; no reranker-state copy may promise it "trains itself
+// automatically" (the OFF branch used to), which reads as passive training while the reader watches.
+check('Why dialog (OFF): does NOT claim it "trains itself automatically"', !/trains?\s+itself\s+automatically/i.test(whyOff), whyOff.replace(/\s+/g, ' ').slice(0, 160));
 await closeDialog();
 
 // ============================================================================
@@ -155,6 +174,9 @@ await coldForYou();
 const sbCold = await sidebarText();
 check('FIX 3: sidebar shows learning progress toward the gate ("… /12")', /learning your taste/i.test(sbCold) && /\/\s*12/.test(sbCold), sbCold.split('\n').find((l) => /learning your taste/i.test(l)) ?? sbCold.slice(0, 120));
 check('FIX 3: sidebar does NOT claim it is activated yet', !/reranker on|tuned to/i.test(sbCold), '');
+// Same SPEC §2.4 honesty rule as the Why dialog, on the surface that shows the stuck counter.
+check('sidebar does NOT promise training happens "as you read"', !/as you read/i.test(sbCold), sbCold.split('\n').find((l) => /as you read/i.test(l)) ?? '');
+check('sidebar names "Retrain now" beside the progress it is stuck on', /retrain now/i.test(sbCold), '');
 
 // (b) Seed a trained model past the gate → "personalizing from N examples from your activity".
 await page.evaluate(async () => {
@@ -203,6 +225,15 @@ check(
   !/reranker on|tuned to/i.test(sbFewPos) && /learning your taste/i.test(sbFewPos),
   sbFewPos.split('\n').find((l) => /reranker|learning/i.test(l)) ?? sbFewPos.slice(0, 120)
 );
+// The Why-dialog too-few-positives branch must use the SAME background/Retrain framing as the
+// too-few-samples branch, not a divergent "activates automatically" that implies passive training
+// while the reader stays in the tab (SPEC §2.4).
+const whyFewPos = await openWhyDialog();
+check('Why dialog (too-few-positives): describes retrain via background/Retrain, not passive "as you read"',
+  !/(?:re)?trains?\b[^.]{0,40}\bas you (?:browse|read)\b/i.test(whyFewPos) &&
+    (!/(activat|retrain|trains?\b)/i.test(whyFewPos) || /background|retrain now/i.test(whyFewPos)),
+  whyFewPos.replace(/\s+/g, ' ').slice(0, 180));
+await closeDialog();
 
 // ============================================================================
 // RE-CENTERED learned signal + explicit BASELINE bar (resolves the "positive features but negative
@@ -337,6 +368,21 @@ for (const lw of [0.8, 1.0, 2.5]) {
   check(`the panel gives the pool frame, not just an absolute % vs the user's rate (weight ${lw})`,
     /for a typical story in this feed/i.test(txt), txt.replace(/\s+/g, ' ').slice(0, 120));
 }
+
+// ============================================================================
+// Settings reranker description (SPEC §2.4). The screen the three corrected in-app strings redirect
+// the reader to must not itself promise passive "as you browse/read" training, and must point at the
+// control that actually works. This was the authoritative description the earlier fix missed.
+// ============================================================================
+await page.evaluate(() => { location.hash = '#/settings'; });
+await page.waitForTimeout(500);
+const settingsText = await page.evaluate(() => document.querySelector('.app-content')?.innerText ?? document.body.innerText);
+check('Settings reranker copy does NOT promise training "as you browse/read"',
+  !/(?:re)?trains?\b[^.]{0,40}\bas you (?:browse|read)\b/i.test(settingsText),
+  (settingsText.match(/[^.]*\bas you (?:browse|read)\b[^.]*/i) || [''])[0].trim().slice(0, 160));
+check('Settings reranker copy does NOT claim it "trains itself automatically"',
+  !/trains?\s+itself\s+automatically/i.test(settingsText), '');
+check('Settings names "Retrain" (the control that always works)', /retrain/i.test(settingsText), '');
 
 await b.close();
 console.log(`\n${fails.length === 0 ? 'RESULT: PERSONALIZE LIVE-UPDATE PASS \u2713' : `RESULT: ${fails.length} FAILED`}`);

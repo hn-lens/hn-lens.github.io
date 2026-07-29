@@ -38,6 +38,24 @@ longChildren.push({
   created_at_i: now - 9000, parent_id: LONG_ID, story_id: LONG_ID, points: null, type: 'comment',
   children: Array.from({ length: 5 }, (_, k) => ({ id: 960 + k, author: `qr${k}`, text: '<p>reply</p>', created_at_i: now - 8000, parent_id: 96, story_id: LONG_ID, points: null, type: 'comment', children: [] })),
 });
+// A substantive comment BURIED BEHIND AN AUTO-COLLAPSE PILL. Its parent has 4 descendants (>
+// AUTO_COLLAPSE_DESCENDANTS = 2), so the parent's replies render collapsed behind "Show N replies"
+// and the target is NOT IN THE DOCUMENT until something expands it. It still scores into the gist's
+// top-5, so the gist offers a jump to a comment `getElementById` cannot find. Guards the fix that
+// routes ThreadGist's jump through CommentsView's `jumpToComment` (which expands the target's
+// ancestor chain first): resolving the id locally was a silent no-op for exactly this shape — no
+// scroll, no fallback, no feedback.
+const BURIED_ID = 971;
+const BURIED_AUTHOR = 'buriedgem';
+longChildren.push({
+  id: 97, author: 'parenty', text: '<p>short</p>', created_at_i: now - 9000, parent_id: LONG_ID, story_id: LONG_ID, points: null, type: 'comment',
+  children: [{
+    id: BURIED_ID, author: BURIED_AUTHOR,
+    text: '<p>A deeply buried but highly substantive analysis that scores into the digest on length and replies, sitting behind a collapsed reply pill so it is absent from the document until an ancestor is expanded.</p>',
+    created_at_i: now - 8500, parent_id: 97, story_id: LONG_ID, points: null, type: 'comment',
+    children: Array.from({ length: 3 }, (_, k) => ({ id: 9710 + k, author: `br${k}`, text: '<p>reply</p>', created_at_i: now - 8000, parent_id: BURIED_ID, story_id: LONG_ID, points: null, type: 'comment', children: [] })),
+  }],
+});
 for (let i = 0; i < 11; i++) {
   longChildren.push({ id: 200 + i, author: `u${i}`, text: '<p>thanks</p>', created_at_i: now - 7000, parent_id: LONG_ID, story_id: LONG_ID, points: null, type: 'comment', children: [] });
 }
@@ -81,6 +99,15 @@ await page.evaluate(() => window.__hnlens.prefs.getState().set({ llmEnabled: fal
 await page.goto(`${BASE}#/item/${LONG_ID}`, { waitUntil: 'domcontentloaded' });
 await page.waitForSelector('[id^="comment-"]', { timeout: 15000 });
 await page.waitForTimeout(400);
+// The gist lives behind the toolbar's Summary tool now — the discussion header was collapsed from
+// four always-on blocks into one row because they pushed the first comment 493px down an 800px
+// viewport. It must still be one click away, and reachable WITHOUT AI configured.
+check(
+  'the Summary tool is on the toolbar even with AI off',
+  (await page.getByRole('button', { name: /^Summary$/ }).count()) > 0
+);
+await page.getByRole('button', { name: /^Summary$/ }).first().click();
+await page.waitForTimeout(350);
 const gist = page.getByTestId('thread-gist');
 check('long thread shows the non-AI "Quick gist" panel', await gist.isVisible());
 check('gist works without the LLM enabled', await page.evaluate(() => window.__hnlens.prefs.getState().llmEnabled === false));
@@ -107,10 +134,44 @@ const llmSel = await page.evaluate(async (children) => {
 check('LLM collectComments keeps the quote-then-respond comment (sibling of the gist fix)', llmSel.authors.includes('quoteperson'), JSON.stringify(llmSel.authors).slice(0, 160));
 check('LLM comment cleaning keeps the rebuttal + drops the quoted line', !!llmSel.quoteText && /substantive rebuttal/.test(llmSel.quoteText) && !/parent comment claimed/i.test(llmSel.quoteText), (llmSel.quoteText || '(dropped)').slice(0, 120));
 
-// clicking a gist item scrolls to that comment (it exists in the DOM)
+// ---- a gist pick must actually LAND the reader on the comment ----
+// "the element exists" is not the behaviour; the behaviour is that the comment ends up on screen.
+// `inView` measures that, so a jump that silently does nothing fails here instead of passing.
+const inView = async (cid) =>
+  await page.evaluate((id) => {
+    const el = document.getElementById(`comment-${id}`);
+    if (!el) return false;
+    const r = el.getBoundingClientRect();
+    return r.bottom > 0 && r.top < window.innerHeight;
+  }, cid);
+
+// (a) a top-level pick — mounted all along, so this only exercises the scroll.
+await page.evaluate(() => window.scrollTo(0, 0));
 await gist.getByText('alice').first().click();
-await page.waitForTimeout(300);
-check('the referenced comment exists to jump to', await page.locator('#comment-91').count() > 0);
+await page.waitForTimeout(450);
+check('clicking a gist pick scrolls that comment into view', await inView(91));
+
+// (b) a pick BEHIND AN AUTO-COLLAPSE PILL. The precondition is asserted first: if the target were
+// already mounted this guard would be vacuous (it would pass without the jumper expanding
+// anything), so a fixture that stops burying the comment fails loudly rather than going quiet.
+check(
+  `PRECONDITION: the buried pick (${BURIED_AUTHOR}) is collapsed out of the document before the jump`,
+  (await page.locator(`#comment-${BURIED_ID}`).count()) === 0
+);
+const gistNames = await gist.innerText();
+check(`PRECONDITION: the buried comment is offered as a gist pick`, gistNames.includes(BURIED_AUTHOR));
+await gist.getByText(BURIED_AUTHOR).first().click();
+await page.waitForTimeout(600);
+check(
+  'jumping to a pick behind a collapse pill expands its ancestors and mounts it',
+  (await page.locator(`#comment-${BURIED_ID}`).count()) > 0
+);
+check('...and scrolls it into view', await inView(BURIED_ID));
+check(
+  '...without bouncing the reader out to a separate page',
+  page.url().includes(`/item/${LONG_ID}`),
+  page.url().slice(-40)
+);
 
 // ---- short thread: NO gist ----
 await page.goto(`${BASE}#/item/${SHORT_ID}`, { waitUntil: 'domcontentloaded' });

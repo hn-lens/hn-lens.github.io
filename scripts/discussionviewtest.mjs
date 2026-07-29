@@ -72,11 +72,26 @@ await page.evaluate(async () => {
   window.__hnlens.prefs.getState().set({ useLearnedRanker: false, embeddingsEnabled: false, defaultFeed: 'top', minPoints: 0, mutedDomains: [], mutedUsers: [] });
 });
 
-const summaryControlVisible = () =>
-  page.evaluate(() => /AI discussion summary|AI summaries need WebGPU/i.test(document.body.innerText));
+// The summary lives behind the toolbar's Summarize TOOL now — four stacked always-on blocks used to
+// push the first comment 493px down an 800px viewport. "Visible" therefore means: the labelled tool
+// is on the toolbar, and opening it reveals the control. Checking only for on-screen text would
+// report the redesign as a regression while the feature is actually one keystroke away.
+const openSummaryTool = async () => {
+  const btn = page.getByRole('button', { name: /^Summary$/ });
+  if ((await btn.count()) === 0) return false;
+  await btn.first().click();
+  await page.waitForTimeout(350);
+  return true;
+};
+const summaryControlVisible = async () => {
+  if (!(await openSummaryTool())) return false;
+  return page.evaluate(() => /AI discussion summary|AI summaries need WebGPU/i.test(document.body.innerText));
+};
 // The discoverability CTA shown when local AI is OFF (so the feature isn't invisible).
-const ctaVisible = () =>
-  page.evaluate(() => /Enable local AI|Summarize or ask about this discussion/i.test(document.body.innerText));
+const ctaVisible = async () => {
+  if (!(await openSummaryTool())) return false;
+  return page.evaluate(() => /Enable local AI|Summarize or ask about this discussion/i.test(document.body.innerText));
+};
 
 // ===== [A] showAiSummaries gates the comments AI summary control =====
 console.log('\n[A] "Show AI summary controls in comments" (showAiSummaries) gates the control');
@@ -105,7 +120,11 @@ await page.evaluate(() => window.__hnlens.prefs.getState().set({ llmEnabled: fal
 await page.goto(`${BASE}#/item/1000`, { waitUntil: 'domcontentloaded' });
 await page.waitForFunction(() => /comments/i.test(document.body.innerText), null, { timeout: 15000 });
 await page.waitForTimeout(400);
-check('with LLM off, the summarize control itself is hidden', !(await summaryControlVisible()));
+check('with LLM off, the AI summary control itself is hidden', !(await summaryControlVisible()));
+check(
+  'with LLM off, the Summarize TOOL is still on the toolbar (feature stays discoverable)',
+  (await page.getByRole('button', { name: /^Summary$/ }).count()) > 0
+);
 check('with LLM off, a discoverability CTA to enable local AI IS shown', await ctaVisible(), 'feature must not be invisible');
 
 // A5: turning showAiSummaries OFF hides EVERYTHING (control AND the CTA).
@@ -228,6 +247,78 @@ for (const w of [360, 320]) {
   const coldUrl = page.url();
   check('Back to feed from a direct link stays in the app', coldUrl.startsWith(BASE), coldUrl);
   check('Back to feed from a direct link lands on the feed', !/#\/item\//.test(coldUrl), coldUrl);
+}
+
+// ---- [E] the discussion TOOLS: one dismissal path, a focused input, never an empty tray ----
+{
+  await page.goto(`${BASE}#/item/${STORY_IDS[0]}`, { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('[id^="comment-"]', { timeout: 20000 });
+  await page.waitForTimeout(500);
+
+  // E1 — closing Search from its own toolbar button must clear the query too. It used to close the
+  // tray while leaving the results filtering the whole page: no visible input, the button reporting
+  // aria-expanded=false while still controlling everything on screen, and Escape inert because its
+  // guard needs an open tool. Escape WHILE open cleared correctly, so the two ways to dismiss one
+  // panel disagreed.
+  await page.getByRole('button', { name: /^Search$/ }).first().click();
+  await page.waitForTimeout(250);
+  const box = page.getByLabel('Search comments in this discussion');
+  check('PRECONDITION: the search input opens', (await box.count()) > 0);
+  await box.first().fill('repl');
+  await page.waitForTimeout(800);
+  check('PRECONDITION: the query is actually filtering the discussion', /\d+ match/.test(await page.evaluate(() => document.body.innerText)));
+  await page.getByRole('button', { name: /^Search$/ }).first().click();
+  await page.waitForTimeout(600);
+  const afterClose = await page.evaluate(() => ({
+    stillFiltering: /\d+ match/.test(document.body.innerText),
+    inputVisible: !!document.querySelector('.disc-tray input[type="search"]'),
+    threadShown: !!document.querySelector('[id^="comment-"]'),
+  }));
+  check(
+    'closing Search from its own button restores the thread (no orphaned filter)',
+    !afterClose.stillFiltering && afterClose.threadShown && !afterClose.inputVisible,
+    JSON.stringify(afterClose)
+  );
+
+  // E2 — a tool that HAS an input opens with it focused. Ask never focused its box, so with focus
+  // left on <body> every letter typed was read as a shortcut: "are there objections" hit `a`
+  // (re-closing Ask) then `s` (opening Summary), destroying the question as it was written.
+  await page.evaluate(() => {
+    window.__hnlens.prefs.getState().set({ llmProvider: 'gemini', apiKeys: { gemini: 'test-key' } });
+  });
+  await page.waitForTimeout(500);
+  const askBtn = page.getByRole('button', { name: /^Ask$/ });
+  check('PRECONDITION: Ask is offered once AI is configured', (await askBtn.count()) > 0);
+  if (await askBtn.count()) {
+    await askBtn.first().click();
+    await page.waitForTimeout(600);
+    const focused = await page.evaluate(() => document.activeElement?.id || document.activeElement?.tagName);
+    check('opening Ask focuses its input, so typing goes to the question', focused === 'ask-thread', String(focused));
+    await page.keyboard.type('are there objections');
+    await page.waitForTimeout(500);
+    const typed = await page.evaluate(() => ({
+      value: document.getElementById('ask-thread')?.value ?? null,
+      tray: document.querySelector('.disc-tray')?.getAttribute('aria-label') ?? null,
+    }));
+    check(
+      'typing a normal question neither triggers shortcuts nor destroys the panel',
+      typed.value === 'are there objections' && typed.tray === 'ask panel',
+      JSON.stringify(typed)
+    );
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(300);
+  }
+
+  // E3 — with AI NOT configured, `a` must not open an empty tray. The BUTTON is correctly hidden in
+  // that case; the KEY was not, so it opened a panel headed "Ask this discussion" with nothing in
+  // it. (Summary stays available either way: it has a non-AI fallback to show. Ask has none.)
+  await page.evaluate(() => window.__hnlens.prefs.getState().set({ llmProvider: 'local', apiKeys: {} }));
+  await page.waitForTimeout(500);
+  await page.evaluate(() => document.body.click());
+  await page.keyboard.press('a');
+  await page.waitForTimeout(500);
+  const askOff = await page.evaluate(() => document.querySelector('.disc-tray')?.getAttribute('aria-label') ?? null);
+  check('with AI unconfigured, `a` does NOT open an empty Ask tray', askOff !== 'ask panel', String(askOff));
 }
 
 await b.close();

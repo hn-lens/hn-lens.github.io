@@ -1,4 +1,4 @@
-# AGENTS.md — HN Lens
+# AGENTS.md — Hacker Lens
 
 A **static, in-browser** Hacker News reader: personalized recommendation feed, custom ranking,
 comments UX, and **local** AI (embeddings + a small in-browser LLM). No backend. Everything runs
@@ -34,9 +34,9 @@ in the browser; deploys to GitHub Pages.
    propose the non-destructive alternative *before* building it. A passing test proves the code does
    what you told it to, **not** that the behavior is right — never encode a workaround as "correct" in
    a test. The `hideReadInFeed` auto-hide shipped green *twice* in bad naive forms this way (live-yank
-   and stale-snapshot); the sound resolution is a **load-time snapshot** — hide read stories from For
-   You on refresh, but stay stable in-session (no mid-read yank) — see the auto-hide lesson under
-   Product decisions.
+   and stale-snapshot); the sound resolution is **design #4** — recompute the sweep on a fresh load
+   (reload / new tab) or Refresh, **never** on in-app navigation, and keep it fixed within a page load
+   (no mid-read yank) — see the auto-hide lesson under Product decisions.
 5. **Heavy ML libs load only via dynamic `import()`** (`@huggingface/transformers`, `@mlc-ai/web-llm`).
    Never statically import them in the app path — it would bloat the main bundle.
 6. **Test at realistic laptop viewport heights** (768/800/900), never oversized canvases — that is
@@ -47,7 +47,7 @@ in the browser; deploys to GitHub Pages.
    has wrong theories — proven repeatedly), so fresh agents review and only the primary fixes. Run
    these seven lenses each round, **IN THIS ORDER**, each as its own read-only agent:
    1. **Usability** (load **`hnlens-usability`**) — role-plays a *real user pursuing a real goal*
-      (default persona: a regular daily HN reader — HN Lens is a personalized HN *reader*, so don't
+      (default persona: a regular daily HN reader — Hacker Lens is a personalized HN *reader*, so don't
       let a stray word narrow it to one feed); reports usability issues + feature requests +
       information-presentation improvements (effectiveness & ease).
    2. **UI/UX stress** — a creative "break the app" pass across a **device matrix** (desktop, mobile
@@ -93,7 +93,7 @@ in the browser; deploys to GitHub Pages.
    6. **Performance** — latency (interaction, render, feed/summary/context load) AND resource use
       (bundle size, memory, redundant fetches / network, IndexedDB growth); reports concrete costs
       + causes.
-   7. **OSS release audit** (load **`oss-release`** base prompt) — HN Lens is developed in a private
+   7. **OSS release audit** (load **`oss-release`** base prompt) — Hacker Lens is developed in a private
       environment but **published publicly** (GitHub + Pages). Audits the REPO/build/deploy/docs (not
       the running UI) for anything unsafe to make public: committed **secrets** / API keys, **internal
       leakage** (employer-internal hostnames, short-link schemes, bug/CL reference formats, group
@@ -122,8 +122,33 @@ in the browser; deploys to GitHub Pages.
      (ii) enumerate the SIBLINGS of the shape and fix them in the SAME change, stating what you
      grepped and how many sites you found; (iii) write down and TEST the invariant your fix assumes;
      (iv) after the fix batch, run one diff-scoped read-only pass over just the changed surfaces.
-     Also record each finding's ORIGIN (new-from-my-fix / incomplete-sibling / pre-existing) so the
-     self-inflicted-regression rate stays measurable.
+      Also record each finding's ORIGIN (new-from-my-fix / incomplete-sibling / pre-existing) so the
+      self-inflicted-regression rate stays measurable.
+    - **CONVERGENCE MODE (adopted 2026-07-26, after rounds 16–20 all failed to converge).** Measured
+      across round 20, **8 of 15 findings were created by round 19's own fixes** — a loop that
+      generates ~1 new finding per fix cannot terminate, and the review side was not the problem.
+      While converging, four rules bind:
+      1. **No narrative comments in source.** Reasoning goes in `review/README.md`, which is audited
+         and versioned. In code, state only what is mechanically true. Long explanatory comments
+         added during fixes were the single largest defect category (12 false claims in one round,
+         nearly all prose written to explain a fix — `Logo.tsx`, `useFeed.ts`, `feedSession.ts`,
+         `html.ts`, `index.css`). Every comment is an unverified claim; stop manufacturing them
+         faster than anything can audit them.
+      2. **Feature freeze.** Defect removal only — no new notices, controls or capabilities until a
+         round is clean. The `departed` notice was new capability added while fixing a claim audit,
+         and became a HIGH in the next round.
+      3. **Write the failing test FIRST, from the lens's own words, before touching code.** A guard
+         written after the fix encodes what you did, not what should be true — twice in one session a
+         guard passed while the behaviour was still wrong.
+      4. **Cap the batch at ~5 findings**, then gate, then run a diff-scoped read-only pass over only
+         those changes, before taking the next batch. Fixing fifteen things and gating once is how
+         the regressions get in.
+      **Prefer deletion.** When a lens says something is wrong, removing the wrong thing (a false
+      comment, a dead function, a broken notice) is usually the correct minimal fix.
+    - **TERMINATION.** "Zero findings" is unreachable — any thorough lens always finds something, which
+      is why rounds 16–20 all "failed". A round CONVERGES when: **zero BLOCKER/HIGH**, **zero
+      self-inflicted regressions**, and **every MEDIUM either fixed or explicitly accepted in writing
+      with a rationale**. That makes the self-inflicted rate the actual convergence signal.
    All seven lenses are **strictly READ-ONLY: never edit code/tests, never run the gate, never
    commit** — their only deliverable is a report. Run each as a **durable** job — a foreground
    `task` (block on it) or `session_spawn` (survives turns) — **never a background `task`** (turn-
@@ -825,8 +850,16 @@ in the browser; deploys to GitHub Pages.
   leave-one-out) → the specific data signals for that item (domain/author affinity, embedding
   relevance, title/comment term overlap, keyword). **Single source of truth:** `scoreItem()` and
   `explainItem()` share one `blend()` in `strategies.ts`, so the explanation can never drift from the
-  real score. `useFeed` computes `explainItem` only for the *visible* cards (cheap). Guarded by the
-  personalization proof's UI phase (opens the dialog, asserts the score→weights→data trace).
+  real score. `useFeed` does **not** precompute explanations at all: a card carries only a boolean
+  `explainable`, and the trace is built on demand by the identity-stable `explainFor(id)` when the
+  dialog opens. Handing every card a fresh `RankExplanation` **object** — and, in the prop next to
+  it, a fresh `reasons` **array** — defeated `memo(StoryCard)` for the entire list on every
+  save/hide/read (they invalidate `['affinities']`/`['content']` → re-rank), costing 60/111/197ms of
+  blocked frames at 25/50/90 cards versus 0ms for the same action on Top. Both are now
+  identity-stable (`explainFor` has an empty-dep `useCallback`; `stableReasons` reuses the previous
+  array when its contents are unchanged). Guarded by the
+  personalization proof's UI phase (opens the dialog, asserts the score→weights→data trace) and by
+  `feedcontinuitytest` (engaging does not re-render the whole list).
 - **Closed learning loop (dwell + auto-train):** clicks are recorded instantly; read-time (**dwell**)
   is measured via tab blur→return (`dwell.ts`), since article links open in a new tab. A quick bounce
   is a **negative** signal that trains the model *against* a story; a long read is a strong positive
@@ -1041,31 +1074,21 @@ in the browser; deploys to GitHub Pages.
   (The Read + For-You empty states are correspondingly filter-aware: a Read history hidden entirely by
   filters says "your filters are hiding your read stories", and a For You emptied only because every
   candidate is already-read says "you're all caught up · see the Read tab", not a generic "nothing to show".)
-- **For You hides read stories via a LOAD-TIME SNAPSHOT (`hideReadInFeed`, default ON; resolved
-  2026-07-20):** the earlier auto-hide was a dead-end in its two naive forms — hiding **live** yanks a
-  card out mid-read; a snapshot that RE-SNAPSHOTS on focus/navigation trades that for stale-until-
-  refresh churn. The working design (what the user asked for) is a snapshot captured **once per page
-  load** and held **fixed for the whole session**: a story read **mid-session is NOT removed** (no
-  yank), and a **browser refresh recomputes** it so already-read stories drop out then (so they're not
-  duplicated in For You *and* the Read tab). The snapshot is **PRIMED ONCE AT APP STARTUP in `main.tsx`**
-  (`queryClient.prefetchQuery({ queryKey: ['readSnapshot'], … staleTime/gcTime: Infinity })`), NOT
-  captured lazily inside `useFeed`. `useFeed`'s `readSnapshotQ` is a **plain, always-enabled reader** of
-  that primed cache (never invalidated → stable in-session, reset on reload) and only *applies* it to the
-  For-You `cards` when `hideReadInFeed` is on; scoring/`explainItem` stay pure. **The lazy-capture
-  version was a bug (fixed 2026-07-20):** gating the query `enabled: isForYou && hideReadInFeed` captured
-  the set the first time both turned true — so toggling the pref ON mid-session *yanked* a story read
-  this session, and if For You wasn't the default feed a story read before opening it vanished on first
-  view (both contradicting "load-time + stable-in-session"). Capturing at startup makes it feed- and
-  toggle-independent. Toggle in Settings → Appearance & feed. **Do NOT** make the hide reactive to
-  in-session reads (that's the yank), **do NOT** re-snapshot on tab switch/focus/first-mount (that's the
-  churn / lazy-capture bug), and **do NOT** invalidate `['readSnapshot']` on engagement in `main.tsx`
-  (that re-introduces the mid-session yank — the comment there says so) — the whole point is load-stable
-  + refresh-recompute. `readtest.mjs` guards ALL of it: after refresh read stories are gone from For You
-  but present in the Read tab (no duplication); a mid-session read STAYS; the next refresh drops it; the
-  pref OFF hides nothing; **toggling the pref ON mid-session does NOT yank a mid-session read (F3a);** and
-  **a mid-session read is not hidden when For You is opened late with a non-For-You default feed (F3b).**
-  Tests that seed read history and assert For-You *ranking/stability* (personalization proof, audit) set
-  `hideReadInFeed: false` so the snapshot doesn't remove their fixtures.
+- **For You hides read stories via the read SWEEP (`hideReadInFeed`, default ON; `lib/readSweep.ts`; design #4).**
+  The sweep is recomputed on every FRESH DOCUMENT LOAD — a browser **reload** or a **new tab** — and by the
+  explicit **Refresh** button, and **NEVER on in-app navigation** (the home icon, a feed-tab switch,
+  opening/closing a discussion). It is fixed for the life of a page load, so a story read mid-session is
+  never yanked out from under the reader; arriving fresh (reload / new tab) shows fresh stories. It is
+  announced ("N already-read hidden · Undo"), lands at the top, and keeps the pinned order + paging (a
+  reload is not a re-rank). Done RIGHT so it does not repeat the earlier dead ends: live-hide (yanks
+  mid-read) and a SILENT per-load snapshot with a seed-vs-history race — the seed now runs AFTER the
+  read-history query resolves and For You waits for it (main.tsx primes `['readSnapshot']`), so there is no
+  flash and no race. A reader reported stories vanishing on merely clicking the home icon; that path was
+  verified NOT to sweep (it is in-app nav) — only a load or Refresh does. **NOTE (supersedes an earlier
+  bullet that said the sweep "changes only on Refresh / reloading never alters it"):** that was the
+  short-lived design #3 (Refresh-only), which readers found unintuitive because read items sat in the feed
+  until a manual Refresh. Guarded by `readtest.mjs` (sweep behaviour) and `sessionsweeptest.mjs` (the
+  trigger matrix: load/new-tab/Refresh sweep; icon/tab/discussion never). See SPEC.md section 4.
 - **A tier CI never runs will rot silently, and its rot LOOKS like app bugs (2026-07-25).** The
   `webgpu` tier (`modeltest`/`evaltest`) only runs where a real GPU adapter exists, so nothing
   exercised it for a long time. When finally run it reported 2 failures — **neither was an app
@@ -1140,7 +1163,9 @@ in the browser; deploys to GitHub Pages.
    toasts + Undo for destructive actions, whole-card click via stretched link (interactive controls
    at `z-10`), empty states with icon + CTA, keyboard shortcuts, scroll-to-top, focus-visible rings.
 - **Favicon fetch is user-controllable (privacy, 2026-07-20):** story favicons load from Google's
-  public favicon service (`faviconUrl` in `time.ts` → `google.com/s2/favicons`), so the *domains* of
+  public favicon service (`faviconUrl` in `time.ts` → `t*.gstatic.com/faviconV2`, matching
+  SECURITY.md; the older `s2/favicons` alias was dropped because it 301-redirects to exactly this
+  endpoint anyway), so the *domains* of
   stories shown to you are visible to that service — the one always-on non-HN network call (distinct
   from the opt-IN reader proxy). The `remoteFavicons` pref (default ON, Settings → Privacy) turns it
   OFF: `Favicon.tsx` then renders a letter monogram only and makes **zero** requests to the service
@@ -1248,6 +1273,53 @@ in the browser; deploys to GitHub Pages.
   so For You also renders a `lg:hidden` "Tune ranking" disclosure (`Home.tsx`) with the same
   `WeightSliders`; the Read tab is reachable via the horizontally-scrollable `.feed-tabs`. Guarded by
   `mobiletest` (375×780).
+
+- **A SESSION is the one definition behind every "where was I" behaviour (2026-07-26, replaces the
+  load-time read snapshot):** a session is one continuous sitting in one tab. It STARTS when you open
+  the app in a new tab or press **Refresh**; it CONTINUES across reading, opening a discussion,
+  switching feed tab, and **reloading**. Treating a reload as a fresh start is what produced the
+  reported defect — a story read and returned to was silently gone, everything below shifted up a
+  card, and the next click opened the wrong story. `src/lib/session.ts` owns the definition and the
+  key list; `sessionStorage` is the primitive precisely because it already means "this tab, surviving
+  reload". Everything positional lives there — pinned order, paging depth, the read sweep, and
+  session-hidden stubs — so they cannot disagree.
+- **SCROLL POSITION IS NOT RESTORED, deliberately (2026-07-27, c3r21).** Arriving at a feed puts the
+  reader at the TOP of it. An anchor-based restore (which card was at the top + its offset, recorded
+  with a watermark, a debounce and a `pagehide` sample, then held through a settling loop) shipped and
+  was **deleted**: it cost ~160 lines in `Feed.tsx` plus a storage layer, it produced a defect in each
+  of four consecutive rounds, and its final one was self-inflicted — the `showingPrevious` guard added
+  to fix a tab-switch race made the restore unreachable on the default feed. The list you come back to
+  is still the list you left (pinned order + paging depth are KEPT); only the scroll offset is not.
+  Note that "restore nothing" is **not** the same as "do nothing": React Router leaves the window
+  offset where the previous route had it, so the scroll to top must be explicit, and `instant`, since
+  `scroll-behavior: smooth` is global. Guarded by `feedcontinuitytest` (list identity and order across
+  every excursion, landing at the top, and the session definition itself).
+- **The discussion header is ONE sticky toolbar + an on-demand tray (2026-07-26):** four stacked
+  always-on blocks (AI summary, Ask, search, count+sort) put the first comment **493px** down an
+  800px viewport — 62% of the first screen of a page whose job is reading comments. Now: one row
+  (`count · Sort · Search|Summary|Ask · N new`) that sticks BELOW the TopNav (`top: 3.5rem`; at 0 it
+  slides under the nav and disappears), and the tray lives INSIDE the sticky region so a tool invoked
+  at the bottom of a 150-comment thread opens where the reader already is, input focused. Keys are
+  context-scoped: `l` search, `s` summary, `a` ask — all three are free on `/item` because
+  `switchTab` returns early with no feed tabs and `s`-to-save is guarded to story cards. The action
+  group is skin-2 (`.seg-act`: raised fill + `--edge` border) so it reads as ACTIONS beside the flat
+  `.seg` selection control. Labels collapse to icon-only below `lg`, so each carries an explicit
+  `aria-label`. **Watch for duplicate accessible names** — three collisions appeared in one sitting
+  (toolbar *Summary* vs panel *Summarize*, toolbar *Ask* vs submit *Send*, toast *Undo* vs stub
+  *Restore*). Guarded by `wrapqualitytest`, which measures row SHAPE because page overflow is 0 for a
+  row that wraps while a line sits half empty.
+- **"Not interested" leaves a placeholder, it does not yank the row (2026-07-26):** removing the row
+  instantly pulled everything below up a card and sent the reader's next click to the wrong story.
+  The hide is still immediate everywhere else; only the ROW lingers as a `Hidden — <title> · Restore`
+  stub until the next session boundary. Never stub on the **Read** tab: that is history, where a
+  hidden story is shown normally.
+- **Brand: "Hacker Lens" (2026-07-26).** Display name, package name, manifest and docs only. The
+  storage identifiers are deliberately UNCHANGED — `Dexie('hnlens')`, `localStorage['hn:prefs']`,
+  the `hn:*` session keys and `window.__hnlens` — because renaming any of them silently wipes an
+  existing reader's settings and history and breaks every harness. The GitHub org/repo and the Pages
+  domain are infrastructure identity, not product name, and also stay. The mark is drawn from
+  semantic tokens (`--logo-*` aliased to `--border`/`--muted`/`--accent` in `index.css`), so all 31
+  designs × light/dark are covered automatically rather than by a hand-maintained 62-entry table.
 
 ---
 

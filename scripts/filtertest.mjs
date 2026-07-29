@@ -144,6 +144,61 @@ const searchOutage = await page.evaluate(() => document.querySelector('main')?.i
 check('Search outage shows an error, not an empty "No results"', /Couldn.t load results/i.test(searchOutage) && !/No results/i.test(searchOutage), searchOutage.replace(/\s+/g, ' ').slice(0, 80));
 check('Search outage offers a Retry', await page.getByRole('button', { name: /Retry/i }).isVisible().catch(() => false));
 
+// ---------- A fully-filtered leading run must not dead-end ----------
+// Filters remove matching stories; the reader must still reach the unfiltered ones. The id list is
+// sliced to a page BEFORE filtering, so when a whole page filters out the feed showed "your filters
+// may be hiding everything" with no way forward while qualifying stories sat deeper.
+//
+// THREE cells, because the earlier version of this guard had a filtered head of exactly 30 — one
+// advance always sufficed, so it structurally could not detect a stall after the first advance, and
+// that stall shipped. The head must exceed one page; the all-filtered case must terminate on the
+// honest empty state rather than permanent skeletons; and an UNFILTERED feed must still stop at one
+// page, or "page past the filtered ones" has quietly become "load everything".
+{
+  const mkPage = async (total, goodFrom) => {
+    const dIds = Array.from({ length: total }, (_, i) => 80001 + i);
+    const dItem = (id) => {
+      const i = id - 80001;
+      return { id, type: 'story', by: `u${i}`, title: `Deadend story ${i}`, url: `https://ex.com/${i}`,
+        score: goodFrom !== null && i >= goodFrom ? 500 : 3, descendants: 5,
+        time: Math.floor(Date.now() / 1000) - 600 };
+    };
+    const pg = await b.newPage({ viewport: { width: 1280, height: 900 } });
+    let reqs = 0;
+    await pg.route(/hacker-news\.firebaseio\.com/, (r) => {
+      reqs++;
+      const m = /item\/(\d+)\.json/.exec(r.request().url());
+      return r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(m ? dItem(Number(m[1])) : dIds) });
+    });
+    await pg.route(/hn\.algolia\.com/, (r) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ hits: [] }) }));
+    await pg.goto(BASE, { waitUntil: 'domcontentloaded' });
+    await pg.waitForFunction(() => !!window.__hnlens, null, { timeout: 20000 });
+    await pg.evaluate(() => window.__hnlens.prefs.getState().set({ minPoints: 100 }));
+    await pg.goto(`${BASE.replace(/\/$/, '')}/#/?feed=top`, { waitUntil: 'domcontentloaded' });
+    await pg.waitForTimeout(9000);
+    const st = await pg.evaluate(() => ({
+      cards: document.querySelectorAll('.story-card[data-id]').length,
+      empty: document.querySelectorAll('[data-empty-state]').length,
+      skeletons: document.querySelectorAll('[class*="animate-pulse"]').length,
+    }));
+    await pg.close();
+    return { ...st, reqs: () => reqs, requests: reqs };
+  };
+
+  // (a) A filtered head LONGER than one page: must keep advancing, not stall after one.
+  const a = await mkPage(120, 60);
+  check('a filtered run longer than one page still reaches the qualifying stories', a.cards > 0 && a.empty === 0, JSON.stringify({ cards: a.cards, empty: a.empty }));
+
+  // (b) EVERYTHING filtered: must terminate on the empty state, never sit on skeletons forever.
+  const c = await mkPage(60, null);
+  check('an entirely-filtered feed ends on the empty state, not endless skeletons', c.cards === 0 && c.empty === 1 && c.skeletons === 0, JSON.stringify({ cards: c.cards, empty: c.empty, skeletons: c.skeletons }));
+  check('an entirely-filtered feed does not materialise without bound', c.requests <= 150, `${c.requests} firebase requests`);
+
+  // (c) CONTROL: no filters -> exactly one page.
+  const d = await mkPage(120, 0);
+  check('an UNfiltered feed still stops at one page (no runaway paging)', d.cards === 25, `cards=${d.cards}`);
+}
+
 await b.close();
 console.log(`\n${fails.length === 0 ? 'RESULT: FILTER TEST PASS \u2713' : `RESULT: ${fails.length} FAILED`}`);
 process.exit(fails.length ? 1 : 0);

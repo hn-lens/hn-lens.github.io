@@ -12,6 +12,7 @@ import { initDwellTracking } from './lib/dwell';
 import { initAutoTrain } from './lib/ranking/autotrain';
 import { loadModel } from './lib/ranking/logistic';
 import { getReadItemIds, onEngagement } from './lib/interactions';
+import { getReadSweep, seedReadSweepForLoad } from './lib/readSweep';
 import { probeWebgpu } from './lib/models/registry';
 // Ranking/personalization internals — lightweight app modules already in the
 // main bundle. Imported here (statically, no extra chunk) purely so the proof
@@ -60,21 +61,29 @@ void probeWebgpu();
   article: () => articleMod,
   registry: () => registryMod, // model status store (WebGPU state) — for UI harnesses
   themes: () => themesMod, // THEME_IDS / LAYOUT_IDS — for the theme-contrast harness
+  feedSession: () => import('./lib/feedSession'), // session stubs/pins — for harnesses
+  localData: () => import('./hooks/useLocalData'), // hide/unhide/save plain fns — for harnesses
   prefs: usePrefs,
 };
 
-// LOAD-TIME SNAPSHOT for For You's "hide already-read stories" (hideReadInFeed).
-// Captured ONCE here at app startup — unconditionally (regardless of the landing
-// feed or the pref), so it reflects exactly what was read at page load. useFeed reads
-// this primed cache (staleTime/gcTime Infinity ⇒ never refetched/evicted) and only
-// APPLIES it when hideReadInFeed is on. Capturing at load (not lazily on first For-You
-// mount / first toggle) is what makes it stable in-session: a story read MID-SESSION
-// is not in the snapshot, so it's never yanked out of For You; toggling the pref just
-// shows/hides this same fixed set; and it's identical whether or not For You is the
-// landing feed. A browser refresh re-runs this, so newly-read stories drop out then.
+// The read sweep for For You's "hide already-read stories" (hideReadInFeed) — design #4 (see
+// lib/readSweep.ts). On every FRESH PAGE LOAD (new tab OR reload) we recompute it from reading
+// history so arriving fresh shows fresh stories. This is safe here where the earlier per-load
+// snapshot was not, because: it is computed AFTER the history query resolves (no seed-vs-history
+// race); useFeed GATES For You's first paint on this primed query (readSnapshotQ), so read items are
+// gone from the first frame — no flash, no shift; and it is announced + reversible ("N already-read
+// hidden · Undo") and lands at the top of a re-rendered feed, not mid-scroll. It does NOT touch the
+// pinned order or paging depth (kept across a reload), and it runs once per page load — an in-session
+// read is never swept out from under the reader. useFeed reads this primed cache (staleTime/gcTime
+// Infinity, never refetched), so a tab switch does not re-seed; only Refresh re-sweeps (applyReadSweep).
 void queryClient.prefetchQuery({
   queryKey: ['readSnapshot'],
-  queryFn: () => getReadItemIds(1000),
+  queryFn: async () => {
+    if (!usePrefs.getState().hideReadInFeed) return getReadSweep();
+    const readIds = await getReadItemIds(1000);
+    seedReadSweepForLoad(readIds); // write sessionStorage so peekReadSweep in useFeed agrees
+    return readIds;
+  },
   staleTime: Infinity,
   gcTime: Infinity,
 });
@@ -98,11 +107,12 @@ initAutoTrain();
 // ranking incorporates the new domain/author/content signals, and "Why #N?" reflects the
 // recorded engagement instead of falsely reporting "no personal signals yet".
 //
-// We deliberately do NOT invalidate ['readSnapshot'] here: that snapshot is fixed for the
-// session (see above) so in-session reads aren't yanked out of For You. It recomputes on a
-// full page reload (or an explicit "clear reading history" in DataManager, which
-// invalidates all keys). (Do not add a ['readSnapshot'] invalidation on engagement — that
-// re-introduces the mid-session-yank dead-end documented in AGENTS.md.)
+// We deliberately do NOT invalidate ['readSnapshot'] here: the sweep is fixed for the duration of a
+// page load, so a story read in THIS sitting is never yanked out from under the reader. It is
+// recomputed on the next FRESH LOAD (new tab or reload, seeded above) and by an explicit Refresh
+// (applyReadSweep) — those are the only moments it changes. (Do NOT add a ['readSnapshot']
+// invalidation on engagement — a per-read recompute is the mid-session-yank dead-end documented in
+// AGENTS.md and lib/readSweep.ts.)
 onEngagement(() => {
   queryClient.invalidateQueries({ queryKey: ['readIds'] });
   queryClient.invalidateQueries({ queryKey: ['recentRead'] });
@@ -111,13 +121,18 @@ onEngagement(() => {
   queryClient.invalidateQueries({ queryKey: ['content'] });
 });
 
-// Own scroll restoration ourselves.
+// The APP owns scroll restoration, so the browser must not also try.
 //
-// With the browser's default 'auto', going Back makes it restore ITS remembered offset for that
-// history entry — after our own restore has run — so a saved 509px came back as 33px and the feature
-// looked broken from the save side. In a hash-routed SPA the browser's remembered value is for a
-// document that has since re-rendered anyway, so it is not the one worth keeping; `Feed` records and
-// restores a per-feed offset that survives tab switches too, which browser restoration cannot do.
+// 'manual' is only correct while something actually restores, and for a while nothing did — this
+// line said 'manual', the per-feed restore it pointed at had been deleted, and Feed.tsx claimed the
+// browser handled it. All three were false and the reader was thrown to the top on every
+// navigation.
+//
+// There is now no app-side restore at all: arriving at a feed scrolls to the top (Feed.tsx).
+// `manual` still matters, because the browser's own restoration would otherwise reapply a stale
+// offset on reload and fight that.
+//
+// `scripts/feedcontinuitytest.mjs` holds this to the whole excursion x position matrix.
 if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
 
 createRoot(document.getElementById('root')!).render(

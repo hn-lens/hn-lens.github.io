@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { ChevronDown, ChevronRight, CornerDownRight, ListTree } from 'lucide-react';
-import { htmlToText } from '../../lib/html';
+import { commentToText } from '../../lib/html';
+import { commentSubstanceScore } from '../../lib/hn/topComment';
 import type { AlgoliaComment, AlgoliaItem } from '../../types';
 
 // A fast, no-download heuristic digest of a long thread for readers who won't enable
@@ -13,55 +14,67 @@ function countDescendants(c: AlgoliaComment): number {
   return c.children.reduce((n, ch) => n + 1 + countDescendants(ch), 0);
 }
 
-function clean(html: string | null): string {
-  // htmlToText (NOT stripHtml) preserves paragraph line breaks, so the per-line quote filter works:
-  // stripHtml collapses newlines to spaces, making split('\n') a no-op — a comment whose flattened
-  // text STARTED with a quote marker ("&gt; …", the common HN quote-then-respond reply) was dropped
-  // ENTIRELY (its filtered text became '' and failed the length gate), so the "most-discussed" gist
-  // silently omitted the most-replied comment. Now only the quoted LINES are dropped and the
-  // substantive rebuttal survives.
-  return htmlToText(html)
-    .split('\n')
-    .filter((l) => !/^\s*>/.test(l)) // drop quoted lines (HN quotes render as "> …")
-    .join(' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
 interface Pick {
   id: number;
   author: string;
   text: string;
+  /** Whole-subtree size — what the reader is shown ("N replies"). */
   replies: number;
+  /** DIRECT replies only — what the score uses. A long chain hanging off one answer is not twenty
+   *  people engaging with this comment, and scoring it that way let one thread take every slot. */
+  directReplies: number;
 }
 
 function topComments(children: AlgoliaComment[], count: number): Pick[] {
   const acc: Array<Pick & { depth: number }> = [];
   const walk = (nodes: AlgoliaComment[], depth: number) => {
     for (const n of nodes) {
-      const text = clean(n.text);
-      if (text.length >= 40) acc.push({ id: n.id, author: n.author ?? 'anon', text, replies: countDescendants(n), depth });
+      const text = commentToText(n.text);
+      if (text.length >= 40) acc.push({ id: n.id, author: n.author ?? 'anon', text, replies: countDescendants(n), directReplies: n.children.length, depth });
       if (n.children.length) walk(n.children, depth + 1);
     }
   };
   walk(children, 0);
   // Same signal the summarizer uses: substance (length) + replies, penalising depth.
-  const score = (c: Pick & { depth: number }) => Math.min(c.text.length, 700) + c.replies * 45 - c.depth * 18;
+  // THE shared heuristic, not a local variant. This claimed to use "the same signal the summarizer
+  // uses" while actually capping length at 700 (so a 650-char zero-reply wall outscored a short
+  // comment five people answered) and weighting WHOLE-SUBTREE descendants (so a shallow comment
+  // with one direct reply carrying a 20-deep chain scored as if twenty people had engaged with IT).
+  // On a realistic tree one off-topic chain took every slot. `commentSubstanceScore` is the version
+  // that was hardened for exactly this, and the drift is the failure its own comment warns about.
+  const score = (c: Pick & { depth: number }) =>
+    commentSubstanceScore(c.text, c.directReplies) - c.depth * 18;
   acc.sort((a, b) => score(b) - score(a));
   return acc.slice(0, count);
 }
 
-export default function ThreadGist({ tree }: { tree: AlgoliaItem }) {
+export default function ThreadGist({ tree, onJump }: { tree: AlgoliaItem; onJump?: (id: number) => void }) {
   const [open, setOpen] = useState(false);
-  // Tolerate a malformed/empty tree (a 200 without a children array) — every other tree
-  // consumer guards this; an unguarded .reduce here would white-screen the whole /item page.
-  const children = tree?.children ?? [];
-  const total = children.reduce((n, c) => n + 1 + countDescendants(c), 0);
+  // MEMOISED on the tree, not recomputed in the render body.
+  //
+  // `topComments` walks the whole tree and strips HTML from every comment to score it, and this ran
+  // on EVERY render of this component — including its own disclosure toggle, which changes no data
+  // at all. Isolated measurement (only this component re-rendering): 402 / 949 / 2,450 / 4,382 full
+  // HTML parses at 409 / 967 / 2,530 / 4,383 comments. Clicking "show" on a big thread did thousands
+  // of parses to reveal text that was already computed.
+  //
+  // Tolerates a malformed/empty tree (a 200 without a children array) — every other tree consumer
+  // guards this; an unguarded .reduce here would white-screen the whole /item page.
+  const { total, picks } = useMemo((): { total: number; picks: Pick[] } => {
+    const children = tree?.children ?? [];
+    const n = children.reduce((acc, c) => acc + 1 + countDescendants(c), 0);
+    return { total: n, picks: n < GIST_MIN_COMMENTS ? [] : topComments(children, GIST_COUNT) };
+  }, [tree]);
   if (total < GIST_MIN_COMMENTS) return null;
-  const picks = topComments(children, GIST_COUNT);
   if (!picks.length) return null;
 
+  // Delegate to the thread's own jumper, which expands the target's collapsed ancestors first.
+  // Resolving `getElementById` here instead was a silent no-op for any pick behind an auto-collapse
+  // pill — measured dead on 5 of 15 real picks, with no scroll, no fallback and no feedback — even
+  // though `CommentsView`'s jumper calls itself "THE single way to jump to a comment inside this
+  // thread". The local fallback remains only for the standalone case where no jumper is supplied.
   const jump = (id: number) => {
+    if (onJump) return onJump(id);
     document.getElementById(`comment-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   };
 

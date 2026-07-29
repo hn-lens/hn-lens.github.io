@@ -71,6 +71,10 @@ const COMPONENT = [
   ['edge', 'surface'],
   ['edge', 'bg'],
   ['edge', 'surface2'], // .seg track border + the At-a-glance bar-chart ring sit on surface-2
+  // The "Why #N?" rank-explain contribution bar fills (var(--bar-pos)/var(--bar-neg)) are graphics
+  // that must clear 3:1 vs the dialog --surface in every theme so the green/red is perceivable.
+  ['barPos', 'surface'],
+  ['barNeg', 'surface'],
 ];
 
 const b = await chromium.launch({ headless: true });
@@ -142,13 +146,15 @@ for (const d of designs) {
         s.setTheme(mode);
         const cs = getComputedStyle(document.documentElement);
         const g = (n) => cs.getPropertyValue(n).trim();
-        // --edge is a color-mix(); read its RESOLVED color by applying it to a real property.
+        // --edge / --bar-pos / --bar-neg are color-mix(); read each RESOLVED color by applying it.
         const probe = document.createElement('span');
-        probe.style.color = 'var(--edge)';
         document.documentElement.appendChild(probe);
-        const edge = getComputedStyle(probe).color;
+        const resolve = (v) => { probe.style.color = v; return getComputedStyle(probe).color; };
+        const edge = resolve('var(--edge)');
+        const barPos = resolve('var(--bar-pos)');
+        const barNeg = resolve('var(--bar-neg)');
         probe.remove();
-        return { bg: g('--bg'), surface: g('--surface'), surface2: g('--surface-2'), fg: g('--fg'), muted: g('--muted'), subtle: g('--subtle'), accent: g('--accent'), accentFg: g('--accent-fg'), edge };
+        return { bg: g('--bg'), surface: g('--surface'), surface2: g('--surface-2'), fg: g('--fg'), muted: g('--muted'), subtle: g('--subtle'), accent: g('--accent'), accentFg: g('--accent-fg'), edge, barPos, barNeg };
       },
       { d, mode }
     );
@@ -360,6 +366,150 @@ check(
   renderFails.length === 0,
   `${renderFails.length} failing`
 );
+
+// ---- the range TRACK is themed, not a hardcoded UA grey ----
+// `accent-color` styles the thumb and the FILLED portion only. The track stayed Chromium's own
+// #efefef / #3b3b3b in every design — 1.01-2.10:1 against its panel, worst on a slider that
+// defaults to 0 and so has no filled portion either. It lives in the UA shadow tree, so
+// `getComputedStyle` cannot see it and no token sweep could: this samples the painted pixel.
+{
+  await page.goto(`${BASE}#/settings`, { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('input[type=range]', { timeout: 20000 });
+  // STRUCTURAL, not pixel-sampled. `getComputedStyle(el, '::-webkit-slider-runnable-track')`
+  // returns transparent — the UA shadow tree is not readable that way, which is exactly why no
+  // token sweep caught the unthemed track, and why an earlier version of this check passed
+  // vacuously against `rgba(0,0,0,0)`. Assert instead that a rule exists, targets the track, and
+  // paints it from theme variables rather than a literal colour.
+  const rule = await page.evaluate(() => {
+    for (const sheet of Array.from(document.styleSheets)) {
+      let rules;
+      try {
+        rules = Array.from(sheet.cssRules ?? []);
+      } catch {
+        continue; // cross-origin
+      }
+      for (const r of rules) {
+        const t = r.cssText ?? '';
+        if (/slider-runnable-track|range-track/.test(t) && /background/.test(t)) return t;
+      }
+    }
+    return null;
+  });
+  check('a rule paints the range track', !!rule, rule ? rule.slice(0, 90) : 'none found');
+  check(
+    '...from theme variables, not a literal colour',
+    !!rule && /var\(--/.test(rule) && !/#[0-9a-f]{3,6}/i.test(rule),
+    rule ? rule.slice(0, 120) : ''
+  );
+  check(
+    '...and gives it a visible boundary',
+    !!rule && /border/.test(rule),
+    rule ? rule.slice(0, 120) : ''
+  );
+}
+
+// ---------------------------------------------------------------------------------------------
+// TINT-ONLY CONTROLS. The component pass above proves the `--edge` TOKEN clears 3:1 — it never
+// checks whether a control USES it. A control drawn as a bare background tint with no border, ring
+// or outline is therefore invisible to every check so far, and that is exactly how the sidebar's
+// follow chips shipped at 1.09-1.30:1 against the surface behind them: clickable, but not
+// perceivable AS controls (WCAG 1.4.11 wants >=3:1 for the boundary of an interactive element).
+//
+// Walks real rendered controls and flags any whose ONLY delineation is a low-contrast fill. Text
+// links with no background are out of scope — 1.4.11 does not require a boundary around them.
+{
+  // The earlier passes leave the page on whatever route they graded last. The chips live in the
+  // Home sidebar, so go there first — and PROVE they are on screen before grading, or this whole
+  // check silently measures an empty set. (It did: with the fix reverted it still reported 0.)
+  await page.goto(`${BASE.replace(/\/$/, '')}/#/?feed=top`, { waitUntil: 'domcontentloaded' });
+  await page.evaluate(() => {
+    const p = window.__hnlens.prefs.getState();
+    p.set({ followedDomains: ['example.com'], followedUsers: ['someone'] });
+  });
+  await page.waitForTimeout(500);
+  const chipCount = await page.evaluate(
+    () => [...document.querySelectorAll('button')].filter((b) => /^(example\.com|@someone)$/.test((b.textContent || '').trim())).length
+  );
+  check('PRECONDITION: the tint-only walk can actually see the follow chips', chipCount >= 2, `${chipCount} chips on screen`);
+
+  const tintFails = [];
+  for (const design of designs) {
+    for (const dark of [false, true]) {
+      await page.evaluate(
+        ([d, isDark]) => {
+          const p = window.__hnlens.prefs.getState();
+          p.setThemeName(d);
+          p.setTheme(isDark ? 'dark' : 'light');
+        },
+        [design, dark]
+      );
+      await page.waitForTimeout(60);
+      const bad = await page.evaluate(() => {
+        const px = (v) => parseFloat(v) || 0;
+        // Resolve ANY CSS colour form via canvas rather than hand-parsing. Tailwind v4 emits
+        // `oklab(... / 0.1)` for alpha-modified colours, which a rgb()/color(srgb) parser returns
+        // null for — and a null fill was treated as "no tint" and skipped, so this walk silently
+        // graded nothing at all (verified: it reported 0 failures with the defect reintroduced).
+        const cv = document.createElement('canvas');
+        cv.width = cv.height = 1;
+        const cx = cv.getContext('2d', { willReadFrequently: true });
+        const rgba = (css) => {
+          if (!css) return null;
+          cx.clearRect(0, 0, 1, 1);
+          cx.fillStyle = '#000';
+          cx.fillStyle = css; // invalid values leave the previous style — detected below
+          const before = cx.fillStyle;
+          cx.fillRect(0, 0, 1, 1);
+          const [r, g, b, a] = cx.getImageData(0, 0, 1, 1).data;
+          return before === '#000000' && !/^(#000000|black|rgb\(0, 0, 0\))$/i.test(css.trim()) && a === 255
+            ? { r, g, b, a: 1 }
+            : { r, g, b, a: a / 255 };
+        };
+        const lum = ({ r, g, b }) => {
+          const f = (v) => { const x = v / 255; return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4; };
+          return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+        };
+        const over = (fg, bg) => ({ r: fg.r * fg.a + bg.r * (1 - fg.a), g: fg.g * fg.a + bg.g * (1 - fg.a), b: fg.b * fg.a + bg.b * (1 - fg.a), a: 1 });
+        const ratio = (x, y) => { const a = lum(x), b2 = lum(y); const hi = Math.max(a, b2), lo = Math.min(a, b2); return (hi + 0.05) / (lo + 0.05); };
+        const bgOf = (el) => {
+          for (let n = el; n; n = n.parentElement) {
+            const c = rgba(getComputedStyle(n).backgroundColor);
+            if (c && c.a > 0.95) return c;
+          }
+          return { r: 255, g: 255, b: 255, a: 1 };
+        };
+        const out = [];
+        for (const el of document.querySelectorAll('button, [role="button"]')) {
+          const r = el.getBoundingClientRect();
+          if (r.width < 4 || r.height < 4) continue;
+          const cs = getComputedStyle(el);
+          const fill = rgba(cs.backgroundColor);
+          if (!fill || fill.a < 0.02) continue; // no tint at all -> a text control, out of 1.4.11 scope
+          const hasBorder = ['Top', 'Right', 'Bottom', 'Left'].some((side) => {
+            const w = px(cs[`border${side}Width`]);
+            const c = rgba(cs[`border${side}Color`]);
+            return w > 0 && c && c.a > 0.1;
+          });
+          // A fully transparent shadow is Tailwind's ring RESET, not a ring.
+          const hasRing = cs.boxShadow && cs.boxShadow !== 'none' && !/rgba?\([^)]*[,/]\s*0\s*\)/.test(cs.boxShadow);
+          const hasOutline = px(cs.outlineWidth) > 0 && cs.outlineStyle !== 'none';
+          if (hasBorder || hasRing || hasOutline) continue; // delineated by something other than fill
+          const behind = bgOf(el.parentElement ?? document.body);
+          const rr = ratio(over(fill, behind), behind);
+          if (rr < 3) out.push(`${(el.textContent || '').trim().slice(0, 18) || el.tagName}: ${rr.toFixed(2)}`);
+        }
+        return out.slice(0, 4);
+      });
+      if (bad.length) tintFails.push(`${design}:${dark ? 'dark' : 'light'} ${bad.join(', ')}`);
+    }
+  }
+  if (tintFails.length) console.log('tint-only control failures:\n  ' + tintFails.slice(0, 12).join('\n  '));
+  check(
+    'no control relies on a sub-3:1 fill alone for its boundary (WCAG 1.4.11)',
+    tintFails.length === 0,
+    `${tintFails.length} design x mode cells`
+  );
+}
 
 await b.close();
 console.log(`\n${fails.length === 0 ? 'RESULT: THEME CONTRAST PASS \u2713' : `RESULT: ${fails.length} FAILED`}`);

@@ -66,11 +66,16 @@ export default function Onboarding() {
       aria-modal="true"
       ref={dialogRef}
       tabIndex={-1}
-      aria-label="Welcome to HN Lens — pick your interests"
+      aria-label="Welcome to Hacker Lens — pick your interests"
+      // Escape and a backdrop tap both dismiss (= Skip). Without them, on a tiny screen with large
+      // text the exits sit below the scroll fold with no other way out (useModalBehavior deliberately
+      // leaves Escape to each dialog; this one bind it).
+      onKeyDown={(e) => { if (e.key === 'Escape') finish(false); }}
+      onClick={(e) => { if (e.target === e.currentTarget) finish(false); }}
     >
       <div className="max-h-[90vh] w-full min-w-0 max-w-md overflow-y-auto rounded-t-2xl border border-border bg-surface p-5 shadow-2xl sm:rounded-2xl">
         <h2 className="flex items-center gap-2 text-lg font-semibold">
-          <Sparkles className="size-5 text-accent" /> Welcome to HN Lens
+          <Sparkles className="size-5 text-accent" /> Welcome to Hacker Lens
         </h2>
         <p className="mt-1.5 text-sm text-muted">
           Pick a few interests and your <span className="font-medium text-fg">For You</span> feed
@@ -100,7 +105,10 @@ export default function Onboarding() {
           })}
         </div>
 
-        <div className="mt-5 flex items-center justify-end gap-2">
+        {/* STICKY footer so the exits stay on screen even when the topic list overflows a short
+            viewport (320x568 + Large text put both buttons below the fold). Bleeds to the panel edges
+            over its p-5 padding; content scrolls under the top border. */}
+        <div className="sticky bottom-0 -mx-5 -mb-5 mt-5 flex items-center justify-end gap-2 border-t border-border bg-surface px-5 py-3">
           <button
             type="button"
             onClick={() => finish(false)}

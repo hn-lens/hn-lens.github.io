@@ -151,9 +151,22 @@ check('Settings section-nav wraps on mobile (no horizontal overflow)', !!navOver
 await page.setViewportSize({ width: 320, height: 720 });
 // Seed a LONG mute keyword so a TagEditor tag CHIP is present (a long domain/keyword tag chip
 // overflowed the page pre-fix; the chip now caps + breaks the token).
-await page.evaluate(() =>
-  window.__hnlens.prefs.getState().set({ textSize: 'lg', keywordsMute: ['some-really-long-mute-keyword-token-that-would-overflow-the-page'] })
-);
+// setTextSize(), NOT set({textSize}): the plain setter writes the store but never applies the
+// `data-textsize` attribute, so both checks named "at 320px + Large text" actually ran at the
+// DEFAULT size and could not fail. Line ~225 of this file already does it correctly and says so.
+await page.evaluate(() => {
+  window.__hnlens.prefs.getState().set({ keywordsMute: ['some-really-long-mute-keyword-token-that-would-overflow-the-page'] });
+  window.__hnlens.prefs.getState().setTextSize('lg');
+});
+// Assert the precondition instead of assuming it — a guard that silently tests the wrong state is
+// worse than no guard.
+{
+  const applied = await page.evaluate(() => document.documentElement.getAttribute('data-textsize'));
+  if (applied !== 'lg') {
+    console.log(`  \u2717 PRECONDITION: Large text did not apply (data-textsize=${applied})`);
+    process.exitCode = 1;
+  }
+}
 await page.goto(`${BASE}#/settings`, { waitUntil: 'domcontentloaded' });
 await page.waitForSelector('nav[aria-label="Settings sections"] ul', { timeout: 15000 });
 await page.waitForTimeout(300);
@@ -239,10 +252,12 @@ await page.waitForTimeout(200);
 const whyDlg = await page.evaluate(() => {
   const dlg = document.querySelector('[role="dialog"][aria-label^="Why this story is ranked"]');
   if (!dlg) return null;
-  // the signed contribution bars are the colored inner divs (#3fb950 / #f85149).
+  // The signed contribution bar FILLS, selected by their stable structural classes (a distinctive
+  // 0.625rem height + a one-sided rounded corner + a width style), NOT by colour — the fill colour is
+  // a theme token (var(--bar-pos)/var(--bar-neg)), so a fixed rgb match found zero bars.
   const bars = [...dlg.querySelectorAll('div')].filter((d) => {
-    const bg = getComputedStyle(d).backgroundColor;
-    return bg === 'rgb(63, 185, 80)' || bg === 'rgb(248, 81, 73)';
+    const c = typeof d.className === 'string' ? d.className : '';
+    return c.includes('h-2.5') && (c.includes('rounded-r') || c.includes('rounded-l'));
   });
   const maxBar = Math.max(0, ...bars.map((d) => d.getBoundingClientRect().width));
   // Measure the SCROLL CONTAINER's horizontal overflow — the real defect (uiux) was the modal CARD

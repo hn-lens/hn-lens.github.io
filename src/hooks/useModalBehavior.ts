@@ -16,12 +16,21 @@ const FOCUSABLE =
  *
  * Every `aria-modal` surface shares one implementation here so they cannot drift apart (they were
  * seven independent hand-rolled dialogs with no shared primitive, which is exactly why none had it).
- * Escape handling deliberately stays with each dialog — they already own it, and duplicating it here
- * would close twice.
+ * Escape handling deliberately stays with each dialog rather than here, so a dialog that already
+ * binds it does not close twice. `Onboarding` binds none, so Escape does not dismiss the first-run
+ * modal; "Skip" does.
  *
  * `active` MUST be false whenever the dialog is not rendered — see the guard in the effect.
  */
-export function useModalBehavior(ref: RefObject<HTMLElement | null>, active = true): void {
+export function useModalBehavior(
+  ref: RefObject<HTMLElement | null>,
+  active = true,
+  // Opt-in initial focus target. A dialog with a STICKY header and a separate scroll BODY must focus
+  // the body, or the natural first-focusable (a header close button) is outside the scroller and
+  // ArrowDown/PageDown/End/Space scroll nothing — the content below the fold is keyboard-unreachable.
+  // Give the scroll body tabIndex={-1} and pass its ref. Omitted callers keep first-focusable focus.
+  initialFocusRef?: RefObject<HTMLElement | null>
+): void {
   // Keep the restore target stable across re-renders.
   const restoreRef = useRef<HTMLElement | null>(null);
 
@@ -54,20 +63,25 @@ export function useModalBehavior(ref: RefObject<HTMLElement | null>, active = tr
       const last = items[items.length - 1];
       const active = document.activeElement as HTMLElement | null;
       const outside = !active || !node.contains(active);
-      if (e.shiftKey && (outside || active === first)) {
+      // `idx === -1` covers focus sitting on a container INSIDE the dialog that is not itself in the
+      // tab order — e.g. the tabIndex={-1} scroll body an empty SignalsDialog/HiddenDialog focuses
+      // initially. Without handling it, the first Tab fell through to the page behind the overlay.
+      const idx = active ? items.indexOf(active) : -1;
+      if (e.shiftKey && (outside || idx <= 0)) {
         e.preventDefault();
         last.focus();
-      } else if (!e.shiftKey && (outside || active === last)) {
+      } else if (!e.shiftKey && (outside || idx === -1 || idx === items.length - 1)) {
         e.preventDefault();
         first.focus();
       }
     };
     document.addEventListener('keydown', onKey, true);
 
-    // Move focus into the dialog so the very first Tab is already contained.
+    // Move focus into the dialog so the very first Tab is already contained. An explicit target (the
+    // scroll body of a sticky-header dialog) wins, so arrow-key scrolling works from the start.
     if (node && !node.contains(document.activeElement)) {
-      const first = node.querySelector<HTMLElement>(FOCUSABLE);
-      (first ?? node).focus?.();
+      const target = initialFocusRef?.current ?? node.querySelector<HTMLElement>(FOCUSABLE) ?? node;
+      target.focus?.();
     }
 
     return () => {
@@ -76,5 +90,5 @@ export function useModalBehavior(ref: RefObject<HTMLElement | null>, active = tr
       document.removeEventListener('keydown', onKey, true);
       restoreRef.current?.focus?.();
     };
-  }, [ref, active]);
+  }, [ref, active, initialFocusRef]);
 }

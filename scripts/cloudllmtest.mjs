@@ -202,6 +202,10 @@ await page.evaluate(async () => {
   (await window.__hnlens.registry()).useModelStore.getState().setWebgpu('unavailable');
 });
 await page.waitForTimeout(300);
+// The summary lives behind the toolbar's Summarize tool since the discussion header was collapsed
+// into one row; open it before asserting on what it renders.
+await page.getByRole('button', { name: /^Summary$/ }).first().click().catch(() => {});
+await page.waitForTimeout(350);
 const beforeText = await page.evaluate(() => document.body.innerText);
 check('cloud key + no WebGPU: the AI summary block is shown (not the "needs WebGPU" notice)', /AI discussion summary/i.test(beforeText) && !/need WebGPU|needs WebGPU/i.test(beforeText), beforeText.match(/AI discussion summary|needs? WebGPU/i)?.[0] ?? 'neither');
 check('cloud key + no WebGPU: the non-AI gist is hidden', !(await page.getByTestId('thread-gist').isVisible().catch(() => false)));

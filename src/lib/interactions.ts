@@ -1,4 +1,5 @@
 import { db } from './db';
+import { clearReadSweep } from './readSweep';
 import { getItem } from './hn/client';
 import { domainOf } from './time';
 import { usePrefs } from './prefs';
@@ -134,10 +135,9 @@ const SIGNAL_WEIGHT: Partial<Record<InteractionType, number>> = {
   unsave: -2,
   upvote_out: 2.5,
   summarize: 0.5,
-  follow_domain: 3,
-  unfollow_domain: -1.5,
-  follow_user: 3,
-  unfollow_user: -1.5,
+  // No follow_/unfollow_ weights here on purpose. Following is an EXPLICIT preference, applied as a
+  // fixed term in the blend; feeding it into the behavioural affinity log too would count the same
+  // choice twice. Weights sat here for event types nothing ever emitted.
   hide: -2.5,
   // Undo of "Not interested" must CANCEL the hide's downvote (net 0) so the story returns to its
   // original rank — otherwise Undo un-hides it but the −2.5 affinity survives and buries it. (The
@@ -300,6 +300,11 @@ export async function computeAffinities(): Promise<Affinities> {
     if (rec && rec.dw <= 0 && rec.aw <= 0) {
       for (const set of domainItems.values()) set.delete(id);
       for (const set of authorItems.values()) set.delete(id);
+      // The item is no longer in the habit tally, so it must no longer count as its own leave-one-out
+      // subtraction: `computeFeatures` subtracts `counted` from domainCounts/authorCounts when scoring
+      // the item, and leaving it true double-removed the withdrawn item — dropping the card's own
+      // "often" chip on a domain it genuinely engages with.
+      rec.counted = false;
     }
   }
   const domainCounts: Record<string, number> = {};
@@ -309,7 +314,8 @@ export async function computeAffinities(): Promise<Affinities> {
   return { domains, authors, domainCounts, authorCounts, perItem };
 }
 
-// Deliberate positive actions — always count as engagement, independent of dwell.
+// Deliberate positive actions, independent of dwell. `upvote_out`/`summarize` count unconditionally;
+// `save` is additionally REVERSIBLE (an unsave cancels it — see `classifyEngagement`).
 export const STRONG_ENGAGEMENT: InteractionType[] = ['save', 'upvote_out', 'summarize'];
 const STRONG_SET = new Set<string>(STRONG_ENGAGEMENT);
 
@@ -328,8 +334,9 @@ export interface EngagementClasses {
  * where the labels were dwell-aware (a bounce trains AGAINST a story) but the content profile was not
  * (a bounced article's terms leaked into the LIKED profile, ranking that topic UP — contradicting the
  * label). Rules mirror the app's read definition:
- *   • strong actions (save/upvote/summarize) → engaged, unconditional;
- *   • IMPORTED (hn_import) open_link/open_comments → engaged, unconditional (declared engagement);
+  *   • upvote/summarize → engaged, unconditional; save → engaged but REVERSIBLE (latest save vs
+  *     latest unsave decides, like hide/unhide) so an undone mis-click doesn't teach the ranker;
+  *   • IMPORTED (hn_import) open_link/open_comments → engaged, unconditional (declared engagement);
  *   • in-app open_link → engaged UNLESS it bounced (a genuine read wins — MONOTONIC);
  *   • dwell ≥ BOUNCE_MS → engaged (article read, or a discussion stay); dwell < BOUNCE → bounced;
  *   • a bare in-app open_comments (a glance, no stay) → NOT engaged;
@@ -433,7 +440,12 @@ export async function getEngagedItemIds(limit = 200): Promise<number[]> {
  * DO still apply to both.
  */
 export async function recentRead(limit = 6): Promise<Array<{ id: number; title: string; url?: string }>> {
-  const ids = await getReadItemIds(limit * 4); // already newest-first, read-only
+  // Draw from the FULL read history, not a `limit * 4` window. A reader who reads a lot of one site
+  // and then mutes it has a long leading run of filtered reads; a small window is entirely muted and
+  // the panel goes empty while older unmuted reads remain — which also made this panel disagree with
+  // the Read tab (the two "read" surfaces must AGREE). The loop below still stops at `limit` showable
+  // items, so the common case fetches only a handful; the bound just prevents a pathological scan.
+  const ids = await getReadItemIds(1000); // already newest-first, read-only
   // Apply the SAME global hard filters the Read tab applies (useFeed uses `isFiltered`),
   // so the two "read" surfaces AGREE: a read story from a muted domain/user, matching a
   // muted keyword, or below min-points must be absent from BOTH the Read tab and this
@@ -571,6 +583,10 @@ export async function eventCount(): Promise<number> {
 }
 
 export async function clearAllData(): Promise<void> {
+  // The For-You read sweep is derived from the event log, so it must not outlive it. Left behind,
+  // it goes on hiding stories whose "you already read this" evidence has been deleted — and it
+  // lives in sessionStorage, so clearing IndexedDB alone does not touch it.
+  clearReadSweep();
   await Promise.all([
     db.events.clear(),
     db.items.clear(),

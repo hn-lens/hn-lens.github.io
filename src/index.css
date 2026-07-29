@@ -33,7 +33,35 @@
   --accent-fg: #ffffff;
   --up: #2f8a44;
   --ring: #3f607e;
+  /* Rank-explain contribution bars. Mixed toward --fg (always high-contrast vs surface) so the
+     green/positive and red/negative fills follow the theme AND stay legible as graphics in every
+     design + mode, instead of the two fixed literals that ignored the palette. Defined once here;
+     the color-mix resolves against each theme's own --fg, so no per-theme override is needed. */
+  --bar-pos: color-mix(in srgb, #16a34a 45%, var(--fg));
+  --bar-neg: color-mix(in srgb, #dc2626 45%, var(--fg));
   color-scheme: light;
+}
+
+/*
+ * Brand mark tokens.
+ *
+ * The logo spec supplied a per-theme table of these three colours. Declaring them ONCE as aliases of
+ * the semantic palette instead means all 31 designs x light/dark are covered automatically, a 32nd
+ * design inherits a correct mark for free, and the mark inherits the contrast guarantees those
+ * tokens already carry — none of which is true of a hand-maintained 62-entry table. A designer can
+ * still override any of the three inside a `[data-theme=...]` block to art-direct one theme.
+ *
+ * The faintest tier is `--edge`, NOT `--border`. `--border` is deliberately a sub-3:1 decorative
+ * hairline, so aliasing the mark's outer bars
+ * to it made the claim above false for exactly the tier most at risk of disappearing — a graphic
+ * that carries meaning is held to WCAG 1.4.11's 3:1, and `--edge` is the token derived to guarantee
+ * that against both `--surface` and `--bg` in every design and mode. With that swap all three tiers
+ * are normalised: `--edge` >= 3:1 as a graphic, `--muted` and `--accent` at AA as text.
+ */
+:root {
+  --logo-muted: var(--edge);
+  --logo-secondary: var(--muted);
+  --logo-accent: var(--accent);
 }
 
 /* Reader — dark ("Midnight"): deep canvas, boxed surfaces, cyan accent. */
@@ -1157,8 +1185,10 @@ button:not(:disabled) {
   color-scheme: dark;
 }
 
-/* Optional atmosphere for a few designs — subtle body washes behind solid panes
-   (content sits on --surface, so these never touch text contrast). */
+/* Optional atmosphere for a few designs — subtle body washes behind the panes.
+   These CAN sit directly behind text: `list` and `compact` give `.story-card` a transparent
+   background, and those are the default layouts of `geist` and `cyber`. Grade a wash against the
+   painted pixel, not against --surface. */
 [data-theme='cyber'].dark body {
   background-image:
     radial-gradient(60rem 40rem at 15% -10%, rgba(255, 43, 214, 0.14), transparent 60%),
@@ -1303,15 +1333,28 @@ button:not(:disabled) {
 [data-layout='compact'] .story-card:focus-within .sc-reasons {
   display: flex;
   position: absolute;
-  right: 0.5rem;
-  bottom: calc(100% + 2px);
+  /* WITHIN the card, left-middle — opposite the right-aligned actions. Floating it ABOVE the card
+     (`bottom: calc(100% + 2px)`) painted it over the PREVIOUS row, showing this card's "Why #N?"
+     number on a neighbour it did not belong to. Keeping it inside the card's own box fixes both the
+     overlap and the mismatched number; on hover it covers this card's own lead, like the actions
+     cover its own title. */
+  left: 0.5rem;
+  right: auto;
+  top: 50%;
+  transform: translateY(-50%);
   z-index: 21;
   flex: 0 0 auto;
   flex-wrap: nowrap;
   margin: 0;
   padding: 0 0.25rem;
   border-radius: 0.5rem;
-  background: var(--surface);
+  /* OPAQUE by construction. `--surface` alone is not: at least one theme defines it as an rgba()
+     with 0.72 alpha, so the row's own title painted straight through these controls. Compositing
+     the surface colour over the page background guarantees opacity in every theme without
+     hard-coding a colour or depending on backdrop-filter (which only applies to the Tailwind
+     utility, not to a raw token used here). */
+  background-color: var(--bg);
+  background-image: linear-gradient(var(--surface), var(--surface));
   box-shadow: 0 0 0 1px var(--edge);
 }
 [data-layout='compact'] .story-card:hover .sc-reasons > :not(button),
@@ -1331,18 +1374,16 @@ button:not(:disabled) {
   margin: 0;
   padding: 0 0.25rem;
   border-radius: 0.5rem;
-  /* Opaque, so the controls stay legible where they sit over the title. */
-  background: var(--surface);
+  /* Opaque, so the controls stay legible where they sit over the title — and opaque BY
+     CONSTRUCTION, not by assumption. This comment used to sit above a bare `background:
+     var(--surface)`, which is an rgba() with 0.72 alpha in at least one theme, so the claim was
+     false exactly where it mattered. Compositing over --bg makes it true everywhere. */
+  background-color: var(--bg);
+  background-image: linear-gradient(var(--surface), var(--surface));
   box-shadow: 0 0 0 1px var(--edge);
 }
-/* Cover the row cleanly. The overlay is shorter than the row, so a 6px sliver of the meta line
-   stayed visible beneath it in 14 of 20 design x width cells — a half-cut glyph, and a still-
-   clickable author link 3px from a button, which is a mis-tap waiting to happen. Suppress the meta
-   underneath while the actions are up; it is redundant with the row itself and returns on unhover. */
-[data-layout='compact'] .story-card:hover .sc-meta,
-[data-layout='compact'] .story-card:focus-within .sc-meta {
-  visibility: hidden;
-}
+/* The element that shows through beneath this overlay is `.sc-sub`, not `.sc-meta` — `.sc-meta` is
+   already `display: none` in this layout, so a rule targeting it here is inert. */
 }
 /* The overlay rules above are scoped to `@media (hover: hover)` — POINTER DEVICES ONLY.
    On touch, `:hover` is sticky and resolves between touchstart and click, so the overlay yanked the
@@ -1592,6 +1633,25 @@ button:not(:disabled) {
   flex-wrap: wrap;
 }
 
+/* grid/masonry at 3 columns: the 5-control row must stay on one line inside a ~150-178px card.
+   Targets shrink from 44/36px down to a 24px floor; see review/README.md (c3r20 UI-UX F1). */
+@media (min-width: 1100px) {
+  [data-layout='grid'] .sc-actions,
+  [data-layout='masonry'] .sc-actions {
+    gap: 0;
+    justify-content: space-between;
+    flex-wrap: nowrap;
+  }
+  [data-layout='grid'] .sc-actions > *,
+  [data-layout='masonry'] .sc-actions > *,
+  [data-layout='grid'] .sc-actions > * > button,
+  [data-layout='masonry'] .sc-actions > * > button {
+    flex: 0 1 32px;
+    width: auto;
+    min-width: 24px;
+  }
+}
+
 /* ── cover: bold full-width bands, big titles, accent left bar ── */
 [data-layout='cover'] .feed-list {
   gap: 0.9rem;
@@ -1721,11 +1781,72 @@ html {
   border-radius: 0.75rem;
 }
 
+/* Range sliders (.range-themed) use a fully custom THEMED track so the rail is visible (>=3:1) in
+   every design — the native track is too low-contrast in several light themes. `appearance:none`
+   plus an explicit thumb rule keep the thumb centred on the rail; the numeric read-out beside the
+   label carries the value (webkit paints no themed value-fill without JS). */
+.range-themed {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 1rem;
+  background: transparent;
+  cursor: pointer;
+}
+.range-themed::-webkit-slider-runnable-track {
+  height: 8px;
+  border-radius: 9999px;
+  background: var(--surface-2);
+  border: 1px solid var(--edge);
+}
+.range-themed::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 16px;
+  width: 16px;
+  margin-top: -4px;
+  border-radius: 9999px;
+  background: var(--accent);
+  border: 1px solid var(--edge);
+}
+.range-themed::-moz-range-track {
+  height: 8px;
+  border-radius: 9999px;
+  background: var(--surface-2);
+  border: 1px solid var(--edge);
+}
+.range-themed::-moz-range-thumb {
+  height: 16px;
+  width: 16px;
+  border-radius: 9999px;
+  background: var(--accent);
+  border: 1px solid var(--edge);
+}
+
 /* Visible keyboard focus for all interactive elements (was missing). */
 :where(a, button, input, select, textarea, [tabindex], [role='switch'], [role='slider']):focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 2px;
   border-radius: 6px;
+}
+
+/* ...but an OUTWARD ring is painted 4px outside the border box, and anything living inside an
+   `overflow` container has exactly that band clipped away. Measured with real Tab presses: every
+   feed tab lost its top and bottom strokes to `.feed-tabs`' horizontal scroller, the discussion's
+   Search / Summary / Ask lost theirs to `.seg-act`, and every `by <author>` link — twelve per
+   screen — was cut on three sides by `span.truncate`, rendering as `by(user0`. What survives is a
+   thin arc that reads as a stray glyph, not as focus, on the app's primary navigation.
+   Turning the ring INWARD inside those containers makes it clip-proof by construction rather than
+   by remembering to leave 4px of padding at every future call site. The offset is negative by the
+   same amount, so the indicator keeps its full 2px weight and simply sits within the control. */
+:is(.feed-tabs, .seg-act, .truncate)
+  :where(a, button, input, select, textarea, [tabindex], [role='switch'], [role='slider']):focus-visible {
+  outline-offset: -2px;
+}
+/* The author link is itself the truncating element on some surfaces, so it needs the rule directly
+   as well as via the descendant selector above. */
+:where(a, button).truncate:focus-visible {
+  outline-offset: -2px;
 }
 
 body {
@@ -1871,15 +1992,31 @@ html[data-textsize='lg'] {
 
 /* Touch-friendly tap targets on phones/tablets (<lg): the primary story-card action
    buttons (Save / Not interested / Personalize / TL;DR / open) grow to >=44px so they're
-   comfortable to tap, while desktop keeps its denser 36px mouse sizing. Scoped to
-   .sc-actions so no other IconButton is affected. The `compact` layout hides .sc-actions,
-   so it's unaffected. */
+   comfortable to tap, while desktop keeps its denser 36px mouse sizing.    Scoped to
+   .sc-actions so no other IconButton is affected. In `compact` .sc-actions is display:none at rest
+   but IS revealed (display:flex) on touch/<lg, where this touch sizing then correctly applies. */
 @media (max-width: 1023px) {
   /* Every action control, including the "Open on HN" link (an <a>, not a <button>). */
   .sc-actions button,
   .sc-actions a {
     min-height: 2.75rem;
     min-width: 2.75rem;
+  }
+  /* A square 44px target x5 does not fit a narrow phone; see the width rule below. */
+  /* Narrow phones: keep the 44px tap HEIGHT, let the width shrink so five controls stay on one
+     line. px, not rem, so the large reading-text setting cannot re-inflate them past the card.
+     See review/README.md (c3r20 UI-UX F1). */
+  @media (max-width: 360px) {
+    html:not([data-layout='newspaper']) .sc-actions {
+      flex-wrap: nowrap;
+    }
+    html:not([data-layout='newspaper']) .sc-actions > *,
+    html:not([data-layout='newspaper']) .sc-actions button,
+    html:not([data-layout='newspaper']) .sc-actions a {
+      flex: 0 1 2.75rem;
+      width: auto;
+      min-width: 24px;
+    }
   }
   /* The comments-count control opens the discussion — on a link story it's the ONLY way
      in (the card's stretched link opens the article), so it needs a comfortable tap height
@@ -1907,4 +2044,88 @@ html[data-textsize='lg'] {
   .replies-toggle {
     min-height: 2.75rem;
   }
+}
+
+/* ── Discussion toolbar ───────────────────────────────────────────────────────
+ * One compact row replaces four stacked full-width blocks (AI summary, Ask,
+ * search, and the count+sort row). Measured, those put the first comment 493px
+ * down a 800px laptop viewport — 62% of the first screen of a page whose entire
+ * job is reading comments was not comments.
+ *
+ * The row and its tray are ONE sticky region, so a tool invoked from the bottom
+ * of a 150-comment thread opens where the reader already is. Making only the
+ * bar sticky would mean pressing Search at the bottom still sent you to the top
+ * to type, which is the whole reason the tray lives inside it.
+ */
+.disc-toolbar {
+  position: sticky;
+  /* BELOW the sticky TopNav (h-14 = 3.5rem), not at 0. At 0 this row slid underneath the nav — the
+     nav owns a higher stacking context — so the bar itself was invisible and only the tray showed,
+     which looks like the toolbar vanished exactly when the reader scrolled. */
+  top: 3.5rem;
+  z-index: 20;
+  background: var(--bg);
+  padding-block: 0.5rem;
+}
+
+/* The ACTION group: same 9px-radius, same height, same joined segments as the
+ * `.seg` sort control — deliberately a DIFFERENT skin, because these are
+ * momentary actions and that is a persistent selection. Drawn as raised (edge
+ * border + inner highlight + shadow) against the flat sort control, so the
+ * difference survives every theme without depending on an accent hue. */
+.seg-act {
+  display: inline-flex;
+  border: 1px solid var(--edge);
+  border-radius: 9px;
+  overflow: hidden;
+  background: var(--surface);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.07),
+    0 1px 3px rgb(0 0 0 / 0.22);
+}
+.seg-act > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  height: 30px;
+  padding-inline: 0.625rem;
+  font-size: 0.78rem;
+  color: var(--fg);
+  white-space: nowrap;
+}
+.seg-act > button + button {
+  border-left: 1px solid var(--edge);
+}
+.seg-act > button:hover {
+  background: var(--surface-2);
+}
+.seg-act > button[aria-expanded='true'] {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+/* Touch devices get a real target; the label drops at narrow widths so the row
+ * still fits, which is why the SKIN rather than the text carries the meaning. */
+@media (pointer: coarse) {
+  .seg-act > button {
+    height: 44px;
+    padding-inline: 0.75rem;
+  }
+}
+
+/* The tray: bounded so it can never eat the screen, and scrollable within. */
+.disc-tray {
+  max-height: min(42vh, 320px);
+  overflow: auto;
+  border: 1px solid var(--edge);
+  border-radius: 0.625rem;
+  background: var(--surface);
+}
+
+/* The tray's sticky header paints the surface colour WITHOUT using the `.bg-surface` utility.
+   The neumorphic designs (bento, Claymorphism) attach a soft raised `box-shadow` to
+   `:is(.story-card, .bg-surface)` to make cards read as physical objects — correct for a card,
+   wrong for a strip inside a bordered panel, where it renders as a shadow floating over the
+   panel's own edge. Same colour, no treatment hook. */
+.disc-tray-head {
+  background: var(--surface);
 }

@@ -7,8 +7,11 @@ import {
   Bookmark,
   BookmarkCheck,
   ExternalLink,
+  ListTree,
+  MessageCircleQuestion,
   MessageSquare,
   Search,
+  Sparkles,
   X,
 } from 'lucide-react';
 import { useComments, useStory } from '../../hooks/useItem';
@@ -17,14 +20,15 @@ import { hasCloudKey, usePrefs } from '../../lib/prefs';
 import { useModelStore } from '../../lib/models/registry';
 import { trackDiscussionDwell, trackForItem } from '../../lib/interactions';
 import { markArticleOpen } from '../../lib/dwell';
-import { sanitize, stripHtml } from '../../lib/html';
-import { domainOf, faviconUrl, safeUrl, timeAgo } from '../../lib/time';
+import { sanitize, searchText } from '../../lib/html';
+import { domainOf, safeUrl, timeAgo } from '../../lib/time';
 import { cn } from '../../lib/cn';
 import Comment from './Comment';
 import ThreadSummary from './ThreadSummary';
 import AskThread from './AskThread';
 import ThreadGist from './ThreadGist';
 import ArticleReader from './ArticleReader';
+import Favicon from '../ui/Favicon';
 import type { AlgoliaComment } from '../../types';
 
 type Sort = 'default' | 'new' | 'old' | 'replies';
@@ -35,7 +39,9 @@ const SORTS: Array<[Sort, string]> = [
   ['default', 'Default'],
   ['new', 'Newest'],
   ['old', 'Oldest'],
-  ['replies', 'Most replies'],
+  // "Replies", not "Most replies": with the sort, the three tools and the new-comment jump all on
+  // one row, the longer label was ~50px of the ~100px that pushed the row into wrapping.
+  ['replies', 'Replies'],
 ];
 
 function countDescendants(c: AlgoliaComment): number {
@@ -74,6 +80,11 @@ export default function CommentsView({ id }: { id: number }) {
   const [lastVisit, setLastVisit] = useState(0);
   const [sort, setSort] = useState<Sort>('default');
   const [query, setQuery] = useState('');
+  // Which tool the reader has open, if any. Exactly one at a time: opening one closes the others,
+  // so the tray can never stack and reintroduce the wall of chrome this replaced.
+  const [tool, setTool] = useState<null | 'search' | 'summary' | 'ask'>(null);
+  const searchRef = useRef<HTMLInputElement | null>(null);
+  const lastToolBtn = useRef<HTMLElement | null>(null);
   const deferredQuery = useDeferredValue(query);
   const [newIdx, setNewIdx] = useState(-1);
   // A pending "jump to this comment in the thread" request from a search result. We can't scroll
@@ -93,7 +104,6 @@ export default function CommentsView({ id }: { id: number }) {
   const llmProvider = usePrefs((s) => s.llmProvider);
   const apiKeys = usePrefs((s) => s.apiKeys);
   // Honor the favicon privacy toggle on the discussion header too — not just feed cards.
-  const remoteFavicons = usePrefs((s) => s.remoteFavicons);
   const webgpu = useModelStore((s) => s.webgpu);
   // The AI summary block is active if a cloud provider+key is set (no WebGPU needed) OR
   // the local model is enabled and WebGPU is available. When active, the non-AI gist hides.
@@ -193,12 +203,30 @@ export default function CommentsView({ id }: { id: number }) {
     return arr; // 'default' keeps HN's own returned ordering
   }, [tree, sort]);
 
-  // Flatten once per tree; drive search + the "new since last visit" jumper off it.
+  // Flatten once per tree; drive search + the "new since last visit" jumper off it. The flatten
+  // itself is a cheap pointer walk with no parsing, so it stays eager.
   const allComments = useMemo(() => flatten(tree?.children ?? []), [tree]);
-  const haystacks = useMemo(
-    () => new Map(allComments.map((c) => [c.id, `${c.author ?? ''} ${stripHtml(c.text)}`.toLowerCase()])),
-    [allComments]
-  );
+
+  // BUILT ON FIRST SEARCH, NOT ON OPEN. Every entry costs a `stripHtml` — a DOMPurify sanitize plus
+  // a full DOM build and walk — per comment. As an eager memo that ran while the reader was waiting
+  // for the comments to appear, on every discussion open, whether or not they ever searched: the
+  // whole index was paid for by everyone and used by almost nobody, and on a large thread it
+  // dominated time-to-first-comment.
+  //
+  // A ref rather than a memo gated on `searching`, because that memo would DISCARD the index every
+  // time the query fell below the minimum length and rebuild it on the next keystroke — turning one
+  // cost into one per search. This keeps exactly one index per tree, built at most once and only if
+  // somebody actually searches.
+  const haystackRef = useRef<{ key: AlgoliaComment[]; map: Map<number, string> } | null>(null);
+  const getHaystacks = () => {
+    if (haystackRef.current?.key !== allComments) {
+      haystackRef.current = {
+        key: allComments,
+        map: new Map(allComments.map((c) => [c.id, `${c.author ?? ''} ${searchText(c.text)}`.toLowerCase()])),
+      };
+    }
+    return haystackRef.current.map;
+  };
   const q = deferredQuery.trim();
   // A 1-character query matches almost every comment in a large thread, and each match is rendered
   // as a full <Comment>. Measured on a 967-comment thread, typing one word mounted 869 comments and
@@ -212,14 +240,90 @@ export default function CommentsView({ id }: { id: number }) {
   const allMatches = useMemo(() => {
     if (!searching) return [];
     const needle = q.toLowerCase();
+    const haystacks = getHaystacks(); // materialised here, on the first search only
     return allComments.filter((c) => haystacks.get(c.id)?.includes(needle));
-  }, [allComments, haystacks, q, searching]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allComments, q, searching]);
   const matches = useMemo(() => allMatches.slice(0, MAX_RENDERED_MATCHES), [allMatches]);
   const matchOverflow = allMatches.length - matches.length;
   const newIds = useMemo(
     () => (lastVisit > 0 ? allComments.filter((c) => c.created_at_i > lastVisit).map((c) => c.id) : []),
     [allComments, lastVisit]
   );
+
+  // Opening a tool focuses its input immediately — the point of invoking Search is to type, and
+  // making the reader click the box afterwards wastes the interaction. Closing returns focus to the
+  // button that opened it, so keyboard users are not dumped at the top of the document.
+  //
+  // ONE dismissal path. `toggleTool` used to close WITHOUT clearing the query, so closing Search
+  // from its own toolbar button left the discussion filtered with no input on screen: the results
+  // still owned the page, the Search button reported `aria-expanded="false"` while controlling
+  // everything visible, and Escape was inert because its guard requires a non-null `tool`. Escape
+  // while the tray was open cleared correctly — two ways to dismiss one panel disagreed. Closing
+  // now always goes through `closeTool`, so state a tool owns cannot outlive it.
+  const closeTool = () => {
+    setTool(null);
+    setQuery('');
+    lastToolBtn.current?.focus?.();
+  };
+  const toggleTool = (t: 'search' | 'summary' | 'ask') => {
+    if (tool === t) {
+      closeTool();
+      return;
+    }
+    lastToolBtn.current = document.activeElement as HTMLElement | null;
+    setTool(t);
+  };
+  // Focus whatever the open tray's primary input is — not only Search's.
+  //
+  // Ask has an input and never received focus, so with focus left on BODY every letter went to the
+  // shortcut handler instead: typing "are there objections" hit `a` (re-closing Ask) and then `s`
+  // (opening Summary), and the question, along with the box holding it, was gone. Keyed on `tool`
+  // so "a tool opens focused" is one rule rather than a per-tool special case.
+  useEffect(() => {
+    if (tool === 'search') searchRef.current?.focus();
+    // The Ask panel mounts in this same commit, so wait a frame for its input to exist.
+    else if (tool === 'ask') requestAnimationFrame(() => document.getElementById('ask-thread')?.focus());
+  }, [tool]);
+
+  // Keys are scoped to the discussion page, which is why `s`, `a` and `l` are free here: `s` (save)
+  // is guarded to story cards and this page navigates comments, and `l` (next feed tab) returns
+  // immediately when there are no feed tabs in the DOM. Both are already no-ops here.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const el = document.activeElement;
+      const typing = el instanceof HTMLElement && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable);
+      // The dialog guard comes FIRST. It used to sit below the Escape branch, so one Escape inside
+      // any modal closed the dialog AND the tray behind it — discarding a typed in-thread search
+      // query the reader never asked to lose.
+      if (document.querySelector('[aria-modal="true"]')) return;
+      if (e.key === 'Escape' && tool) {
+        e.preventDefault();
+        closeTool();
+        return;
+      }
+      if (typing) return;
+      if (e.key === 'l') {
+        e.preventDefault();
+        toggleTool('search');
+      } else if (e.key === 's') {
+        e.preventDefault();
+        toggleTool('summary');
+      } else if (e.key === 'a' && aiSummaryActive) {
+        // Gated on the SAME condition as the Ask button. Ungated, `a` opened a tray titled "Ask
+        // this discussion" with an empty body whenever AI was not configured — the button is
+        // correctly hidden in that case but the key was not, so the shortcut could open a tool into
+        // a state with nothing in it. (Summary is deliberately always available: it has a non-AI
+        // fallback to show. Ask has none.)
+        e.preventDefault();
+        toggleTool('ask');
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tool, aiSummaryActive]);
 
   const jumpNextNew = () => {
     // Cycle through ALL new comments so the "N new" count and the reachable set agree.
@@ -284,9 +388,11 @@ export default function CommentsView({ id }: { id: number }) {
     <div className="space-y-4">
       <div>
         <div className="mb-1 flex min-w-0 items-center gap-1.5 text-xs text-subtle">
-          {domain && remoteFavicons && (
-            <img src={faviconUrl(domain, 32)} alt="" className="size-4 shrink-0" loading="lazy" />
-          )}
+          {/* Through the shared component, not a hand-rolled <img>. The bare tag inherited none of
+              its behaviour — no letter monogram, so a favicon that 404s or is slow left a
+              broken-image glyph or a blank gap — and it kept a SECOND copy of the privacy gate,
+              one edit away from disagreeing with the first about whether a request goes out. */}
+          {domain && <Favicon domain={domain} isText={false} compact />}
           {/* min-w-0 + overflow-wrap so a long unbroken domain wraps instead of overflowing the
               page horizontally on narrow phones (the sibling <h1> already guards the same way). */}
           <span className="min-w-0 [overflow-wrap:anywhere]">
@@ -391,48 +497,133 @@ export default function CommentsView({ id }: { id: number }) {
         <ArticleReader item={story} />
       ) : (
         <>
-          {/* The summary / ask / gist panels are context for reading the whole thread; hide
-              them while searching so the matches sit right under the search box (they were
-              otherwise pushed below these panels, especially cramped on mobile). */}
-          {tree && !searching && <ThreadSummary story={story} tree={tree} />}
-          {tree && !searching && aiSummaryActive && <AskThread story={story} tree={tree} />}
-          {tree && !searching && !aiSummaryActive && <ThreadGist tree={tree} />}
-
-          {/* In-thread search + catch-up on new comments */}
-          {tree && (topLevel.length > 0 || searching) && (
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="relative min-w-0 flex-1">
-                <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-subtle" />
-                <input
-                  type="search"
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Search this discussion…"
-                  aria-label="Search comments in this discussion"
-                  className="w-full rounded-lg border border-edge bg-surface py-1.5 pl-8 pr-8 text-sm outline-none focus-visible:ring-2 focus-visible:ring-accent"
-                />
-                {query && (
+          {/* ONE compact sticky toolbar + an on-demand tray, replacing four stacked blocks.
+              The tray lives INSIDE the sticky region so a tool invoked from the bottom of a long
+              thread opens where the reader already is, with its input focused. */}
+          {tree && (topLevel.length > 0 || searching || newIds.length > 0) && (
+            <div className="disc-toolbar">
+              <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-surface-2 px-2 py-1.5">
+                {/* Count + Sort travel together as ONE cluster so the count never orphans onto a line
+                    of its own (it did at ≤360px). `min-w-0` matters: without it this flex item's
+                    min-width is its content width, so the `.seg` track cannot wrap tightly inside it
+                    and the row grows taller instead of the track reflowing. */}
+                <div className="flex min-w-0 items-center gap-2">
+                  <span className="text-sm font-semibold">{story.descendants ?? topLevel.length}</span>
+                  {/* The count carries the meaning; the word is decoration and is the first thing
+                      to go when the row is tight. Kept in the accessible name via the title. */}
+                  <span className="hidden text-xs text-muted xl:inline" title="comments">
+                    {(story.descendants ?? topLevel.length) === 1 ? 'comment' : 'comments'}
+                  </span>
+                  <div
+                    className="seg"
+                    role="group"
+                    aria-label="Sort comments"
+                    title="Sort top-level comments. HN doesn't publish per-comment scores, so there's no 'top by points' — Default is HN's own ordering."
+                  >
+                    {SORTS.map(([sk, label]) => (
+                      <button key={sk} type="button" aria-pressed={sort === sk} onClick={() => setSort(sk)} className="seg-btn">
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {/* The action cluster. Right-pinned only at sm+, where the whole row fits on one
+                    line; on phones the pin is dropped so a wrapped cluster starts at the LEFT edge
+                    instead of stranding 60% of the second line blank behind an `ml-auto`. */}
+                <div className="flex flex-wrap items-center justify-start gap-2 sm:ml-auto sm:justify-end">
+                <div className="seg-act" role="group" aria-label="Discussion tools">
+                  <button type="button" aria-label="Search" aria-expanded={tool === 'search'} onClick={() => toggleTool('search')} title="Search this discussion (l)">
+                    <Search className="size-3.5" />
+                    <span className="hidden lg:inline">Search</span>
+                  </button>
+                  {/* ALWAYS present, and always labelled "Summarize", whether or not AI is
+                      configured. Showing only a non-AI "Key points" button when AI is off made the
+                      marquee feature invisible to precisely the readers who have not enabled it —
+                      the discoverability rule this app already learned once. With AI off the tray
+                      holds the heuristic gist AND the in-context CTA to turn AI on. */}
+                  {/* "Summary" (the panel), not "Summarize" (the act) — the button that actually
+                      generates lives inside the tray and is called Summarize. Two controls sharing
+                      one accessible name on the same page is ambiguous for screen readers and for
+                      anyone told to "press Summarize". */}
+                  <button type="button" aria-label="Summary" aria-expanded={tool === 'summary'} onClick={() => toggleTool('summary')} title="Summary of this discussion (s)">
+                    {aiSummaryActive ? <Sparkles className="size-3.5" /> : <ListTree className="size-3.5" />}
+                    <span className="hidden lg:inline">Summary</span>
+                  </button>
+                  {/* Asking is only meaningful with a model behind it. */}
+                  {aiSummaryActive && (
+                    <button type="button" aria-label="Ask" aria-expanded={tool === 'ask'} onClick={() => toggleTool('ask')} title="Ask this discussion (a)">
+                      <MessageCircleQuestion className="size-3.5" />
+                      <span className="hidden lg:inline">Ask</span>
+                    </button>
+                  )}
+                </div>
+                {newIds.length > 0 && (
                   <button
                     type="button"
-                    aria-label="Clear search"
-                    onClick={() => setQuery('')}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-subtle hover:text-fg"
+                    onClick={jumpNextNew}
+                    className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-edge bg-accent/10 px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-accent/15"
                   >
-                    <X className="size-4" />
+                    <ArrowDown className="size-3.5 text-accent" /> {newIds.length} new
                   </button>
                 )}
+                </div>
               </div>
-              {!searching && newIds.length > 0 && (
-                <button
-                  type="button"
-                  onClick={jumpNextNew}
-                  // Border is the control-grade --edge token (≥3:1 in every theme, WCAG 1.4.11);
-                  // the accent cue is carried by the tinted bg + the accent icon, and the label is
-                  // --fg (AA on the tint). (A tinted `border-accent/40` composited <3:1 vs surface.)
-                  className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-edge bg-accent/10 px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-accent/15"
-                >
-                  <ArrowDown className="size-3.5 text-accent" /> {newIds.length} new since last visit
-                </button>
+
+              {tool && (
+                <div className="disc-tray mt-1.5" role="region" aria-label={`${tool} panel`}>
+                  <div className="disc-tray-head sticky top-0 z-10 flex items-center gap-2 border-b border-border px-3 py-2">
+                    <strong className="text-xs font-semibold text-accent">
+                      {tool === 'search' ? 'Search this discussion' : tool === 'ask' ? 'Ask this discussion' : 'Summary'}
+                    </strong>
+                    {tool === 'search' && q && (
+                      <span className="text-xs text-muted">
+                        {allMatches.length} {allMatches.length === 1 ? 'match' : 'matches'}
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => closeTool()}
+                      className="ml-auto rounded-md border border-edge px-2 py-0.5 text-[11px] text-muted hover:text-fg"
+                    >
+                      Esc
+                    </button>
+                  </div>
+                  <div className="p-3">
+                    {tool === 'search' && (
+                      <div className="relative">
+                        <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-subtle" />
+                        <input
+                          ref={searchRef}
+                          type="search"
+                          value={query}
+                          onChange={(e) => setQuery(e.target.value)}
+                          placeholder="Find in this discussion…"
+                          aria-label="Search comments in this discussion"
+                          className="w-full rounded-lg border border-edge bg-surface-2 py-1.5 pl-8 pr-8 text-sm outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                        />
+                        {query && (
+                          <button
+                            type="button"
+                            aria-label="Clear search"
+                            onClick={() => setQuery('')}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 text-subtle hover:text-fg"
+                          >
+                            <X className="size-4" />
+                          </button>
+                        )}
+                      </div>
+                    )}
+                    {tool === 'summary' && aiSummaryActive && <ThreadSummary story={story} tree={tree} />}
+                    {tool === 'summary' && !aiSummaryActive && (
+                      <div className="space-y-2.5">
+                        <ThreadGist tree={tree} onJump={jumpToComment} />
+                        {/* Mounted precisely so the "set up AI" CTA is reachable with AI off. */}
+                        <ThreadSummary story={story} tree={tree} />
+                      </div>
+                    )}
+                    {tool === 'ask' && aiSummaryActive && <AskThread story={story} tree={tree} />}
+                  </div>
+                </div>
               )}
             </div>
           )}
@@ -467,23 +658,6 @@ export default function CommentsView({ id }: { id: number }) {
             </div>
           ) : (
             <>
-              <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5 border-b border-border pb-2">
-                <span className="text-sm font-medium">{story.descendants ?? topLevel.length} comments</span>
-                <div
-                  className="flex items-center gap-1.5 text-xs"
-                  title="Sort top-level comments. HN doesn't publish per-comment scores, so there's no 'top by points' — Default is HN's own ordering."
-                >
-                  <span className="text-subtle">Sort:</span>
-                  <div className="seg" role="group" aria-label="Sort comments">
-                    {SORTS.map(([s, label]) => (
-                      <button key={s} type="button" aria-pressed={sort === s} onClick={() => setSort(s)} className="seg-btn">
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
               {!commentsQ.isLoading && topLevel.length === 0 && (
                 <div className="text-sm text-muted">No comments yet.</div>
               )}

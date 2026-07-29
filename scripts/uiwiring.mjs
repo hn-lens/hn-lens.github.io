@@ -116,7 +116,7 @@ await page.evaluate(() =>
 );
 
 // sidebar: HN username (go home, lg viewport shows sidebar)
-await page.getByRole('link', { name: 'HN Lens' }).click();
+await page.getByRole('link', { name: 'Hacker Lens' }).click();
 await page.waitForSelector('article', { timeout: 40000 });
 const uname = page.getByPlaceholder('HN username');
 if (await uname.count()) {

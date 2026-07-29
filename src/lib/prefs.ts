@@ -20,6 +20,20 @@ export function hasCloudKey(p: Pick<Prefs, 'llmProvider' | 'apiKeys'>): boolean 
   return p.llmProvider !== 'local' && !!p.apiKeys?.[p.llmProvider]?.trim();
 }
 
+/**
+ * Is the text on screen actually produced by a Llama model running on this device?
+ *
+ * Meta's Llama 3.2 Community License asks for "Built with Llama" wherever the product uses Llama
+ * Materials. Two ways to get this wrong, so it is ONE predicate rather than a rule copied per
+ * surface: attach the credit to every AI summary and it appears over Gemini/OpenAI/Anthropic output,
+ * which is a FALSE attribution and worse than none; assume "on-device implies Llama" and it silently
+ * becomes false the day a non-Llama local model joins the catalog (`LLM_MODELS` is a list). So test
+ * the provider AND the model id.
+ */
+export function usesLlama(p: Pick<Prefs, 'llmProvider' | 'llmModel'>): boolean {
+  return p.llmProvider === 'local' && /llama/i.test(p.llmModel ?? '');
+}
+
 export const DEFAULT_WEIGHTS: RankWeights = {
   popularity: 1.0,
   recency: 1.0,
@@ -87,7 +101,7 @@ function systemTheme(): Theme {
     : 'light';
 }
 
-// Apply the visual DESIGN (one of the 20) by setting data-theme on <html>. The CSS
+// Apply the visual DESIGN by setting data-theme on <html>. The CSS
 // in index.css keys every design off [data-theme='<id>'] (and its .dark variant);
 // 'reader' has no such block and falls back to :root/.dark, which is correct.
 export function applyThemeName(name: string): void {

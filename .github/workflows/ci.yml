@@ -3,14 +3,18 @@ name: CI
 # Runs the real gate on every pull request and on pushes to main.
 #
 # Until now `deploy.yml` was the only workflow: it triggered on push-to-main only and ran
-# `npm ci && npm run build`. So the 50-check gate that guards this project existed but never ran in
+# `npm ci && npm run build`. So the full verification gate that guards this project existed but never ran in
 # CI, a contributor's pull request got no automated feedback at all, and `main` could go red without
 # anything noticing. A public repo that accepts contributions needs the opposite.
 #
 # This runs the `standard` tier (`npm run verify`) — typecheck, lint, the generated-notices and
-# internal-reference checks, the production build, and every deterministic browser harness. It does
+# source-claim checks, the production build, and every deterministic browser harness. It does
 # NOT run the `full` tier: that needs a real WebGPU adapter and downloads ~1GB of model weights,
 # which no hosted runner has.
+#
+# The internal-reference (leak) check is MAINTAINER-ONLY and is a no-op here: its pattern list lives
+# in an untracked notes file, so on a runner it reports NOT RUN and exits 0. It is enforced at
+# `pre-push` on the maintainer's machine. Do not "fix" that by publishing the list.
 
 on:
   pull_request:

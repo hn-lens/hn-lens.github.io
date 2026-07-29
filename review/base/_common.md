@@ -65,12 +65,61 @@ it; do not assume, and do not rely on memory of a previous round.
 - **Trace root causes.** For every finding, point at the responsible `file:line` (read the source
   to confirm) — a symptom without a cause is half a report.
 
+## THE SPEC IS THE AUTHORITY — read it first
+
+`review/SPEC.md` states what this app is SUPPOSED to do. It is written from product intent, not
+derived from the code, and it is the tie-breaker for every disagreement you find.
+
+**Read it before you start.** It carries the intended behaviour, the accepted design decisions WITH
+their rationale, the accepted performance costs, and an explicit list of things left unspecified.
+
+Authority order, highest first:
+
+1. **`review/SPEC.md`** — intended behaviour.
+2. **The running app and `src/`** — actual behaviour.
+3. **Everything else** — comments, `AGENTS.md`, tests, prior reports. These are ASSERTIONS UNDER
+   TEST. None of them establishes intent.
+
+### When two of those disagree, CLASSIFY — do not guess
+
+This is the step that was missing, and its absence produced a false HIGH. A comment said a ranking
+constant "cannot reorder anything"; a lens proved it could, and reported the BEHAVIOUR as a defect.
+The behaviour was correct and documented as intended in the spec — the COMMENT was wrong. With no
+spec to adjudicate, the lens had to guess, and guessing "the code is wrong" is the expensive guess.
+
+Tag every finding with exactly one:
+
+- **CODE-WRONG** — behaviour contradicts the spec. Severity from user cost. The default assumption
+  ONLY when the spec actually covers the behaviour.
+- **COMMENT-WRONG** — behaviour matches the spec; a comment, doc or UI string contradicts it or the
+  code. A real defect (it misleads the next change) but usually LOW. Quote the prose and give the
+  contradicting `file:line`.
+- **SPEC-GAP** — the spec does not cover this. Report it as a QUESTION with what you observed and
+  why it surprised you. Do NOT infer intent from a comment and do not rate it HIGH.
+- **SPEC-WRONG** — the spec says one thing, but the behaviour is clearly right and the spec is
+  mistaken or stale. Say so plainly; the spec is a draft and gets corrected too.
+
+If you cannot tell CODE-WRONG from COMMENT-WRONG, say which you tested and what would settle it.
+An honest "I could not adjudicate this" is worth more than a confident wrong severity.
+
+### Severity discipline
+
+Rate on what a REAL user can reach and what it costs them. If a finding needs a setting, viewport or
+state the UI cannot produce, say so and rate accordingly — state the worst case reachable through the
+real UI. An inflated severity costs a fix cycle and, worse, buys a regression: fixes are where this
+codebase's defects now come from.
+
 ## Deliverable format (write to the path your brief names)
 
-1. A one-line **verdict** (e.g. "2 MEDIUM, 3 LOW" or "clean beyond documented near-misses").
+1. A one-line **verdict** (e.g. "2 MEDIUM, 3 LOW" or "clean beyond documented near-misses"), with
+   the classification split (e.g. "1 CODE-WRONG, 3 COMMENT-WRONG, 1 SPEC-GAP").
 2. **Findings, severity-ranked** — BLOCKER / HIGH / MEDIUM / LOW. Each: what's wrong · exact
    reproduction (the script/steps, with measured evidence) · user/impact · root cause (`file:line`).
-   Two things every finding MUST carry, because the primary is required to use them:
+   Three things every finding MUST carry, because the primary is required to use them:
+   - **A CLASSIFICATION** — `CODE-WRONG` / `COMMENT-WRONG` / `SPEC-GAP` / `SPEC-WRONG` (see "THE SPEC
+     IS THE AUTHORITY"), plus the spec section you adjudicated against, or "spec silent" if none
+     covers it. A finding with no classification is incomplete: it leaves the primary guessing which
+     side to change, which is the guess this whole scheme exists to remove.
    - **A re-runnable REPRO.** Leave your probe script on disk and give its path, plus the exact
      measurement and the MATRIX you swept (which viewports / layouts / themes / inputs, and the
      pass-fail number per cell). The primary must re-run YOUR script across YOUR matrix after fixing
@@ -103,6 +152,40 @@ Two more failure shapes the four checks do NOT catch, both observed:
 - **Never write a comment (or a changelog line) describing compensating behaviour that does not exist
   yet.** A CSS comment promising "disclosed elsewhere instead" shipped for a whole round with no
   disclosure anywhere; the comment actively suppressed the next reader's instinct to check.
+
+## Audit the CLAIMS in the code, as a first-class target (every lens)
+
+This codebase's single most productive defect class is **a comment that asserts behaviour the code
+does not implement.** Seven separate instances have now been found, and they are dangerous precisely
+because a comment is what a reviewer reads *instead of* checking:
+
+- two files that justified themselves BY EACH OTHER — one said "the other restores scroll", the
+  other said "the browser does", and a third line disabled the browser, so all three were false;
+- a hardened wrapper whose comment said "every sibling has to be hardened too" — with zero callers;
+- a popover clamp promising to "flip above the trigger", which only ever nudged, and so slid the menu
+  over its own trigger;
+- an overlay commented "opaque, so the controls stay legible", translucent in one theme;
+- a comment stating that switching tab clears the pinned order, which it does not;
+- a helper documented as "used when reading history is deleted", wired to nothing;
+- a cache comment quoting the cost it removed, above a cap that made that cost 3-4x WORSE.
+
+So treat prose in the source as an ASSERTION UNDER TEST, not as documentation:
+
+1. When a comment states a behaviour, a guarantee, a threshold or a compensating control, **verify it
+   against the code and, where it is observable, against the running app.**
+2. Pay special attention to comments that point AT ANOTHER PLACE ("handled in X", "X restores this",
+   "disclosed elsewhere", "every caller does Y"). Go to X and confirm. Circular justification between
+   two files is invisible from either file alone.
+3. A function whose comment describes an invariant it enforces is worth a **caller check**: does
+   anything actually call it? An unreferenced guard is indistinguishable from no guard.
+4. Report a false claim as a defect **in its own right**, with the quoted comment and the
+   contradicting `file:line` — even when the underlying behaviour happens to be acceptable. The
+   comment will mislead the next change, which is how several of these became real bugs.
+5. **A false comment is evidence about the COMMENT, not about the code.** Having disproved a claim,
+   go to `review/SPEC.md` and ask which side the spec supports. If the behaviour matches the spec,
+   this is COMMENT-WRONG (usually LOW) and the behaviour is fine. Only if the behaviour ALSO
+   contradicts the spec is it CODE-WRONG. Do not let the drama of a disproved claim inflate the
+   severity of correct behaviour — that exact move produced a false HIGH on ranking normalisation.
 
 ## Browser hygiene (applies to every lens and harness)
 

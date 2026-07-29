@@ -25,5 +25,7 @@ export function useUser(id: string | undefined) {
     queryKey: ['user', id],
     queryFn: () => fetchUser(id as string),
     enabled: !!id,
+    // One quick retry, then surface the outage as an error state (with Retry) rather than spinning.
+    retry: 1,
   });
 }

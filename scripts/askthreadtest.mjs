@@ -67,11 +67,17 @@ await page.evaluate(async () => {
 await page.goto(`${BASE}#/item/7100`, { waitUntil: 'domcontentloaded' });
 await page.waitForFunction(() => /raft consensus/i.test(document.body.innerText), null, { timeout: 20000 });
 await page.waitForTimeout(400);
+// Ask is a TOOL on the discussion toolbar now rather than a parked, always-visible input — an empty
+// question box occupied ~96px above every thread. It must still be reachable in one click (or `a`).
+check('the Ask tool is on the toolbar when AI is active', (await page.getByRole('button', { name: /^Ask$/ }).count()) > 0);
+await page.getByRole('button', { name: /^Ask$/ }).first().click();
+await page.waitForTimeout(350);
 check('Ask-this-discussion input renders when AI is active', (await page.getByLabel('Ask this discussion').count()) > 0);
+check('opening Ask focuses nothing destructive and keeps comments visible', /raft consensus/i.test(await page.locator('body').innerText()));
 
 // ---- ask a question ----
 await page.getByLabel('Ask this discussion').fill('What is the hardest part of raft?');
-await page.getByRole('button', { name: 'Ask', exact: true }).click();
+await page.getByRole('button', { name: 'Send', exact: true }).click();
 await page.waitForFunction(() => /leader election is hardest|membership changes/i.test(document.body.innerText), null, { timeout: 15000 }).catch(() => {});
 await page.waitForTimeout(300);
 {

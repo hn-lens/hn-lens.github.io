@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Hacker Lens">
+  <!-- Base: LIGHT. A dark tile made the mark invisible against dark browser chrome (1.02:1) and
+       left every bar under the 3:1 graphic floor as AUTHORED.
+       Authored ratios are not rendered ratios: the outer bar is 16 of 512 units, so at a 16-32px
+       favicon it rasterises at partial coverage and measures well below its authored value. -->
+  <rect width="512" height="512" rx="115" fill="#F4F6FA"/>
+  <!-- Outer unranked news -->
+  <rect x="180" y="136" width="152" height="16" rx="8" fill="#767F91"/>
+  <rect x="180" y="376" width="152" height="16" rx="8" fill="#767F91"/>
+  <!-- Inner unranked news -->
+  <rect x="150" y="184" width="212" height="24" rx="12" fill="#394152"/>
+  <rect x="150" y="328" width="212" height="24" rx="12" fill="#394152"/>
+  <!-- The AI highlight -->
+  <rect x="96" y="240" width="320" height="56" rx="28" fill="#2F6FD0"/>
+  <!-- AI spark cutout -->
+  <circle cx="136" cy="268" r="12" fill="#F4F6FA"/>
+</svg>

@@ -49,7 +49,7 @@ log('  Hide button on Saved card:', hideOnSaved === 0 ? 'absent ✓' : 'PRESENT 
 log('\nP5 drawer closes on back navigation');
 await page.goto(BASE + '#/?feed=top', { waitUntil: 'domcontentloaded' });
 await page.waitForSelector('article', { timeout: 40000 });
-await page.getByRole('link', { name: 'HN Lens' }).click(); // push a history entry
+await page.getByRole('link', { name: 'Hacker Lens' }).click(); // push a history entry
 await page.waitForTimeout(400);
 await page.getByRole('button', { name: 'Open comments' }).first().click();
 await page.waitForTimeout(600);

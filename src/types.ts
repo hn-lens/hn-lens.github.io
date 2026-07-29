@@ -109,10 +109,6 @@ export type InteractionType =
   | 'unsave'
   | 'hide'
   | 'unhide'
-  | 'follow_domain'
-  | 'unfollow_domain'
-  | 'follow_user'
-  | 'unfollow_user'
   | 'upvote_out'
   | 'summarize'
   | 'search'
@@ -179,10 +175,9 @@ export interface Prefs {
   fetchArticleText: boolean;
   // Whether the first-run onboarding (pick interests) has been shown/dismissed.
   hasOnboarded: boolean;
-  // Hide already-read stories from For You. LOAD-TIME SNAPSHOT semantics: the set of
-  // read ids is captured when For You first loads and stays fixed for the session
-  // (so a story you read mid-session is NOT yanked out from under you); a browser
-  // refresh recomputes it (so newly-read stories drop out then). Default on.
+  // Hide already-read stories from For You. The hidden set starts EMPTY and changes only when
+  // the reader presses Refresh (lib/readSweep). Reading, navigating and reloading never alter it,
+  // so nothing is yanked out from under the reader. Default on.
   hideReadInFeed: boolean;
   // Load story favicons from Google's public favicon service (default on). Turn OFF for
   // strict privacy — favicons then render as letter monograms only, so no story domains

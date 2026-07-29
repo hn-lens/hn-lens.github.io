@@ -6,6 +6,8 @@ export interface LogisticModel {
   b: number;
   n: number; // training examples seen
   pos?: number; // POSITIVE examples (engaged) among them
+  /** Held-out AUC of this fit (0.5 = chance). Decides how much authority the blend grants it. */
+  auc?: number;
   updatedAt: number;
 }
 
@@ -173,9 +175,12 @@ export function trainPairwise(
 }
 
 /**
- * Platt scaling: fit scale `a` and bias `b` so that P(engage) ≈ sigmoid(a·(w·x)+b)
- * on the real class distribution — turns raw ranking scores into *calibrated*
- * probabilities (so the "% chance you'll engage" in the explainer is meaningful).
+ * Platt scaling: fit scale `a` and bias `b` so that P(engage) ≈ sigmoid(a·(w·x)+b).
+ *
+ * Fitted IN-SAMPLE, on the same rows the weights were fitted on (see `trainRanker`). On a separable
+ * fit that sharpens the step rather than calibrating it, so the resulting probability can sit far
+ * from the reader's actual engagement rate. Treat it as a monotone rescaling of the ranking score,
+ * not as a trustworthy probability.
  */
 export function calibrate(
   w: number[],
@@ -237,7 +242,57 @@ export function trainRanker(
   // meaningful.
   const aPos = a > 0 ? a : 1;
   const w = wRank.map((v) => v * aPos);
-  return { w, b, n: samples.length, pos: posX.length, updatedAt: Date.now() };
+  return { w, b, n: samples.length, pos: posX.length, auc: heldOutAuc(posX, negX, opts), updatedAt: Date.now() };
+}
+
+/**
+ * How well this fit separates engaged from skipped on data it did NOT train on.
+ *
+ * Recorded because the ranking blend has to decide how much authority to give the model, and
+ * "how confident does it sound" is not the same question as "is it right". Normalising a model's
+ * output so it always occupies a fair share of the blend is correct for a model that discriminates
+ * and actively harmful for one that does not — it would promote rounding noise to full authority —
+ * so the blend needs an honest measure of which it is holding. 0.5 is chance.
+ *
+ * Deterministic (strided) rather than random: this runs in the browser on every retrain, and the
+ * number scales the learned term's authority, not reports a precise score. See `heldOutAuc` for the
+ * 3-fold averaging.
+ */
+function heldOutAuc(posX: number[][], negX: number[][], opts: Parameters<typeof trainPairwise>[2]): number {
+  // STRIDED, not contiguous. Samples arrive in time order, so slicing off the tail hands the test
+  // set a different period of the reader's history than the fit saw — measured on a realistic
+  // history that reported 0.514 (chance) for a model scoring 0.603 on the pool, which would have
+  // denied a working model the authority this number exists to grant it. Every third sample is
+  // held out instead, so both halves span the whole history. Deterministic either way.
+  // ALL THREE strided folds, averaged. One fold on a small history leaves ~6 held-out positives,
+  // and a single estimate off that many points swung 0.298-0.816 across seeded histories with
+  // NOTHING to learn — far too noisy to hand authority to. Averaging the folds costs two more fits
+  // of a tiny model and makes the number worth leaning on.
+  const aucs: number[] = [];
+  for (let fold = 0; fold < 3; fold++) {
+    const isTest = (i: number) => i % 3 === fold;
+    const a = foldAuc(
+      posX.filter((_, i) => !isTest(i)), negX.filter((_, i) => !isTest(i)),
+      posX.filter((_, i) => isTest(i)), negX.filter((_, i) => isTest(i)), opts
+    );
+    if (a !== null) aucs.push(a);
+  }
+  return aucs.length ? aucs.reduce((x, y) => x + y, 0) / aucs.length : 0.5;
+}
+
+function foldAuc(
+  pTrain: number[][], nTrain: number[][], pTest: number[][], nTest: number[][],
+  opts: Parameters<typeof trainPairwise>[2]
+): number | null {
+  // Too little held out to say anything.
+  if (pTrain.length < 3 || nTrain.length < 3 || pTest.length === 0 || nTest.length === 0) return null;
+  const w = trainPairwise(pTrain, nTrain, opts);
+  const score = (x: number[]) => x.reduce((acc, v, i) => acc + v * (w[i] ?? 0), 0);
+  const ps = pTest.map(score);
+  const ns = nTest.map(score);
+  let wins = 0;
+  for (const a2 of ps) for (const b2 of ns) wins += a2 > b2 ? 1 : a2 === b2 ? 0.5 : 0;
+  return wins / (ps.length * ns.length);
 }
 
 export async function loadModel(): Promise<LogisticModel> {

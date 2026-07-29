@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useSyncExternalStore } from 'react';
 import { Link } from 'react-router-dom';
 import { useInfiniteQuery } from '@tanstack/react-query';
 import { search } from '../../lib/hn/algolia';
@@ -6,6 +6,7 @@ import { useHiddenIds, useSavedIds, useSeenMap } from '../../hooks/useLocalData'
 import { usePrefs } from '../../lib/prefs';
 import { makeContext } from '../../lib/ranking/strategies';
 import { isFiltered } from '../../lib/ranking/features';
+import { hiddenStubsSnapshot, subscribeHiddenStubs } from '../../lib/feedSession';
 import StoryCard from './StoryCard';
 import StorySkeleton from './StorySkeleton';
 import type { AlgoliaHit, HnItem } from '../../types';
@@ -45,9 +46,20 @@ export default function SearchResults({ query }: { query: string }) {
     getNextPageParam: (last) => (last.page + 1 < last.nbPages ? last.page + 1 : undefined),
   });
 
+  // A story hidden THIS session keeps its slot as a placeholder here too. `StoryCard` already wrote
+  // the session stub from this surface — `SearchResults` simply never read it, so dismissing a
+  // result yanked the row and pulled everything below up a full card (measured 122px, against the
+  // feed's 75px stub). The placeholder exists because the reader's next click lands on the story
+  // they had already picked out, and a results list is no different. Hides from an EARLIER session
+  // stay simply absent.
+  // Subscribed, not derived from `hidden`: the stub set lives in sessionStorage, and Refresh clears
+  // it WITHOUT touching db.hidden, so a memo keyed on the Dexie query rendered a cleared stub until
+  // some unrelated dismissal recomputed it and the row vanished mid-list.
+  const stubIds = useSyncExternalStore(subscribeHiddenStubs, hiddenStubsSnapshot, hiddenStubsSnapshot);
+  const stubs = useMemo(() => new Set(stubIds), [stubIds]);
   const seenIds = new Set<number>();
   const items = (q.data?.pages.flatMap((p) => p.hits.map(hitToItem)) ?? []).filter((it) => {
-    if (hidden.has(it.id)) return false; // hidden is global — filter search too (mirrors useFeed)
+    if (hidden.has(it.id) && !stubs.has(it.id)) return false; // hidden is global — mirrors useFeed
     if (isFiltered(it, filterCtx)) return false;
     if (seenIds.has(it.id)) return false; // Algolia can repeat a hit across pages — de-dupe
     seenIds.add(it.id);
@@ -65,9 +77,13 @@ export default function SearchResults({ query }: { query: string }) {
     <div className="space-y-2.5">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="min-w-0 break-words text-sm text-muted">
-          {shown < total && items.length > 0
-            ? `${shown.toLocaleString()} of ${total.toLocaleString()} results for `
-            : `${total.toLocaleString()} results for `}
+          {/* No result COUNT while the query is loading or errored — a "0 results" (data is
+              undefined ⇒ nbHits ?? 0) sitting above "Couldn't load results" is a contradiction. */}
+          {q.isError || q.isLoading
+            ? 'Results for '
+            : shown < total && items.length > 0
+              ? `${shown.toLocaleString()} of ${total.toLocaleString()} results for `
+              : `${total.toLocaleString()} results for `}
           <span className="font-medium text-fg">“{query}”</span>
         </p>
         <div className="seg shrink-0" role="group" aria-label="Sort results">
@@ -102,6 +118,7 @@ export default function SearchResults({ query }: { query: string }) {
           reasons={[]}
           seen={seen.has(item.id)}
           saved={saved.has(item.id)}
+          hiddenStub={hidden.has(item.id)}
         />
       ))}
       {!q.isLoading && !q.isError && items.length === 0 && (

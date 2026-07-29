@@ -1,7 +1,7 @@
 // ============================================================================
 // Personalization proof harness
 // ----------------------------------------------------------------------------
-// Proves — with data, not vibes — that HN Lens actually LEARNS from your history
+// Proves — with data, not vibes — that Hacker Lens actually LEARNS from your history
 // and CHANGES what you see. Every number below is produced by the *real* app
 // modules (train / logistic / features / strategies / interactions / embeddings),
 // driven through window.__hnlens; nothing here reimplements the ranking.
@@ -618,7 +618,10 @@ const dlg = await page.evaluate(() => {
 });
 say(`  rank explainer: ${dlg.present ? 'opened' : 'MISSING'}`);
 check('rank explainer opens with score → weights breakdown', dlg.present && /How the score adds up/.test(dlg.text) && /Inside the learned model/.test(dlg.text), dlg.present ? 'score + model sections present' : 'no dialog');
-check('rank explainer traces back to the training data', /of your interactions/i.test(dlg.text) && /The data behind it/.test(dlg.text), 'model provenance + data signals shown');
+// Match the PROVENANCE claim, not one phrasing of it. The panel deliberately says "examples from
+// your activity" rather than "interactions": most training rows are passive impressions labelled as
+// skips, so naming deliberate actions overstates what the model was fed.
+check('rank explainer traces back to the training data', /trained on \d+ examples from your activity/i.test(dlg.text) && /The data behind it/.test(dlg.text), 'model provenance + data signals shown');
 // The logistic saturates on small local data — the displayed engage-chance must be a
 // bounded estimate ("~X%", 5..95), never a false "100% chance you'll engage".
 const chanceMatch = dlg.text.match(/~\s*(\d+)%/);
@@ -689,25 +692,39 @@ const loop = await page.evaluate(async () => {
   // dwell → affinity direction (bounce should push a domain's affinity down)
   const dwellSig = { bounce: interactions.dwellSignal(3000), read: interactions.dwellSignal(120000) };
 
-  // auto-train: stale after a fresh engagement → trains; then rate-limited; off when disabled
+  // auto-train: the loop must still CLOSE, but only when the retrain is invisible — it is seconds
+  // of synchronous main-thread work, so it waits for enough new material AND a hidden tab.
+  // The loop must still CLOSE, but only when the retrain is invisible: it is seconds of synchronous
+  // main-thread work. The size of the increment is covered exhaustively by autotraingatetest; what
+  // matters here is that a real engagement still reaches the model, and only while hidden.
   await db.events.add({ type: 'save', itemId: 2001, domain: 'arxiv.org', author: 'pg', ts: Date.now() });
+  const m0 = await logistic.loadModel();
+  await logistic.saveModel({ ...m0, updatedAt: 0 }); // an unfitted model defers to training's own sample gate
+  const setHidden = (v) =>
+    Object.defineProperty(Document.prototype, 'hidden', { get: () => v, configurable: true });
+  autotrain.__resetForTest();
   const before = (await logistic.loadModel()).updatedAt;
   H.prefs.getState().set({ useLearnedRanker: true });
+  setHidden(false);
+  const rVisible = await autotrain.runAutoTrain(); // reader is looking → must not freeze them
+  setHidden(true);
   const r1 = await autotrain.runAutoTrain();
   const after = (await logistic.loadModel()).updatedAt;
   const r2 = await autotrain.runAutoTrain(); // within MIN_INTERVAL → skipped
   H.prefs.getState().set({ useLearnedRanker: false });
   const r3 = await autotrain.runAutoTrain(); // gated off → skipped
   H.prefs.getState().set({ useLearnedRanker: true });
+  setHidden(false);
 
-  return { bouncedLabel, readLabel, dwellSig, r1, r2, r3, before, after };
+  return { bouncedLabel, readLabel, dwellSig, rVisible, r1, r2, r3, before, after };
 });
 say(`  dwell signal: bounce(3s)=${loop.dwellSig.bounce}  read(120s)=${loop.dwellSig.read}`);
 say(`  labels: bounced story=${loop.bouncedLabel} (expect 0)  read story=${loop.readLabel} (expect 1)`);
-say(`  auto-train: fresh engagement → ${loop.r1}; immediate re-run → ${loop.r2}; disabled → ${loop.r3}`);
+say(`  auto-train: reader looking → ${loop.rVisible}; tab hidden → ${loop.r1}; immediate re-run → ${loop.r2}; disabled → ${loop.r3}`);
 check('dwell: a quick bounce is a negative signal', loop.dwellSig.bounce < 0 && loop.dwellSig.read > 0, `bounce=${loop.dwellSig.bounce}, read=${loop.dwellSig.read}`);
 check('dwell: bounced click trains as NEGATIVE, long read as POSITIVE', loop.bouncedLabel === 0 && loop.readLabel === 1, `bounced=${loop.bouncedLabel}, read=${loop.readLabel}`);
-check('auto-train fires on new engagement (model updatedAt advances)', loop.r1 === 'trained' && loop.after > loop.before, `${loop.r1}, Δt=${loop.after - loop.before}ms`);
+check('auto-train does NOT run while the reader is looking at the tab', loop.rVisible === 'skipped', `visible=${loop.rVisible}`);
+check('auto-train fires once the tab is hidden (model updatedAt advances)', loop.r1 === 'trained' && loop.after > loop.before, `${loop.r1}, updatedAt ${loop.before} → ${loop.after}`);
 check('auto-train is rate-limited + gated by the toggle', loop.r2 === 'skipped' && loop.r3 === 'skipped', `re-run=${loop.r2}, disabled=${loop.r3}`);
 
 // ===========================================================================

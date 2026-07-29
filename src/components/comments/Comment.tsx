@@ -36,10 +36,10 @@ function hasNewDescendant(c: AlgoliaComment, lastVisit: number): boolean {
   return c.children.some((ch) => ch.created_at_i > lastVisit || hasNewDescendant(ch, lastVisit));
 }
 
-// The comment author, linked to their Hacker News profile (matching the story-card /
+// The comment author, linked to the in-app `/user/:id` profile (matching the story-card /
 // discussion-header convention). A missing author renders as a plain, unlinked label.
-// `comment-author` is a stable hook for tests + keyboard nav. Opens in a new tab and
-// stops propagation so it never triggers a surrounding collapse/click.
+// `comment-author` is a stable hook for tests + keyboard nav. Stops propagation so it never
+// triggers a surrounding collapse/click.
 function AuthorLink({ author, isOp }: { author?: string | null; isOp: boolean }) {
   if (!author) return <span className="comment-author font-medium text-subtle">unknown</span>;
   return (
@@ -183,6 +183,15 @@ function CommentImpl({
             +{repliesLabel(directReplies, replies)}
           </button>
         )}
+        {/*
+          Resolving the id directly is safe HERE, unlike every other comment jump (which must go
+          through `CommentsView.jumpToComment` so a target behind an auto-collapse pill is expanded
+          first). The invariant: `parentId` is passed ONLY by the recursive child render below, so a
+          comment that has one was itself rendered inside that parent's expanded subtree — the
+          parent is necessarily mounted. Top-level comments and the root of a "Continue this thread"
+          page get no `parentId`, so no button. If that ever stops holding, route this through the
+          shared jumper too.
+        */}
         {parentId != null && !collapsed && (
           <button
             type="button"
@@ -236,7 +245,7 @@ function CommentImpl({
               >
                 <ChevronRight className={cn('size-3.5 shrink-0', newInside && 'text-accent')} />
                 {repliesLabel(directReplies, replies)}
-                {repliers && <span className="font-normal text-muted">· {repliers}</span>}
+                {repliers && <span className="font-normal">· {repliers}</span>}
                 {newInside && (
                   <span className="rounded-full bg-accent/20 px-1.5 py-px text-[10px] font-semibold">new</span>
                 )}

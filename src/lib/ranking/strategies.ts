@@ -6,18 +6,9 @@ import { MIN_TRAIN_POSITIVES, MIN_TRAIN_SAMPLES, predictProba } from './logistic
 import type { LogisticModel } from './logistic';
 import { domainOf } from '../time';
 
-/** The learned reranker is APPLIED only when it has enough samples AND enough POSITIVES —
- *  a dozen skips with one click carries no real preference signal. One source of truth so
- *  scoreItem + explainItem + the sidebar progress never disagree. */
 /**
- * WHICH clause of the gate a model fails, so every surface that EXPLAINS the reranker's state stays
- * tied to the boolean that DECIDES it.
- *
- * The gate has three parts, but the sidebar, Settings and the "Why #N?" panel each re-derived their
- * message from only the first two. A reader whose model came out degenerate was therefore told to
- * "read a few more stories" — advice they had already followed dozens of times, with no way to
- * escape it, because reading more was not what was wrong. Return the failing clause and let each
- * surface phrase that one rather than guessing.
+ * WHICH clause of the gate a model fails, so a surface can phrase the actual reason rather than
+ * defaulting to "read a few more stories".
  */
 export type RankerGate = 'trained' | 'no-model' | 'too-few-samples' | 'too-few-positives' | 'degenerate';
 
@@ -25,11 +16,13 @@ export function rankerGate(model?: LogisticModel): RankerGate {
   if (!model) return 'no-model';
   if (model.n < MIN_TRAIN_SAMPLES) return 'too-few-samples';
   if ((model.pos ?? 0) < MIN_TRAIN_POSITIVES) return 'too-few-positives';
-  // A model whose weights are ALL zero (or non-finite) is degenerate: it produces the identical
-  // probability for every story, so it contributes exactly nothing to the ranking. Counting it as
-  // "trained" made the sidebar, the "Why #N?" panel and the gate all report an active
-  // personalization that demonstrably could not move a single card.
-  if (!model.w.some((x) => Number.isFinite(x) && x !== 0)) return 'degenerate';
+  // A model whose weights are all NEGLIGIBLE is degenerate: it produces a near-identical probability
+  // for every story, so it contributes nothing a reader can see. Counting it as "trained" made the
+  // sidebar, the "Why #N?" panel and the gate all report an active personalization that could not
+  // move a card. The floor is on MAGNITUDE, not `!== 0`: a fit can converge to weights of ~1e-6
+  // (numerical noise, not signal), which `!== 0` wrongly accepted. Real trained weights are O(0.1-10)
+  // (measured), so 1e-4 cleanly separates dead from real without gating a genuinely weak model.
+  if (!model.w.some((x) => Number.isFinite(x) && Math.abs(x) > 1e-4)) return 'degenerate';
   return 'trained';
 }
 
@@ -41,14 +34,8 @@ export function rankerTrained(model?: LogisticModel): boolean {
 }
 
 /**
- * The learned model's BASE ENGAGEMENT RATE — the fraction of training examples that were positive.
- * This is a fact ABOUT THE USER (shown as such in the explainer). The displayed signal is centred on
- * the ranked POOL's median (see `withPoolCenter`); this value is the fallback when there is no pool.
- * Historically the signal was centred here (not at an absolute 0.5) so a "typical" story reads ≈ 0, an
- * above-your-average story positive, a below-average one negative. Since it's a constant per model
- * (fixed for a whole ranking pass), re-centering is RANKING-NEUTRAL — it only makes the DISPLAYED
- * sign meaningful (you engage with a MINORITY of stories, so centering at 50% made almost every
- * story show a confusing negative learned pull even when the model liked it relative to your norm).
+ * The fraction of training examples that were positive — a fact about the user, shown as such in
+ * the explainer. Used as the centring fallback when there is no pool (see `withPoolCenter`).
  */
 export function learnedBaseRate(model?: LogisticModel): number {
   if (!model || !model.n) return 0.5;
@@ -130,8 +117,16 @@ function reasonsFor(fs: FeatureSet, item: HnItem, terms: ScoreTerm[]): string[] 
     strong.push({ text: `You often engage with ${item.by}`, weight: 3.5 });
   if (fs.domainAffinity > 0.5 && fs.domainEngagedN >= 2 && fs.domain)
     strong.push({ text: `You often read ${fs.domain}`, weight: 3 });
-  if (fs.relevance > 0.6) strong.push({ text: `Similar to what you've been reading`, weight: 2.8 });
-  if (fs.termAffinity > 0.35) strong.push({ text: `About topics you read about`, weight: 2.6 });
+  // `relevance` and `termAffinity` reach the score only through the learned model, so they carry
+  // the same personal-drives guard as the soft block below.
+  const contentDrivesRank = () => {
+    const t = [...terms].sort((a, b) => b.contribution - a.contribution)[0];
+    return !!t && t.contribution > 0 && (t.key === 'relevance' || t.key === 'learned');
+  };
+  if (fs.relevance > 0.6 && contentDrivesRank())
+    strong.push({ text: `Similar to what you've been reading`, weight: 2.8 });
+  if (fs.termAffinity > 0.35 && contentDrivesRank())
+    strong.push({ text: `About topics you read about`, weight: 2.6 });
   if (strong.length) {
     strong.sort((a, b) => b.weight - a.weight);
     return strong.slice(0, 2).map((r) => r.text);
@@ -147,15 +142,8 @@ function reasonsFor(fs: FeatureSet, item: HnItem, terms: ScoreTerm[]): string[] 
   if (personalTop) {
     if (fs.authorAffinity > 0.3 && item.by) return [`By ${item.by}, whom you've engaged with`];
     if (fs.domainAffinity > 0.3 && fs.domain) return [`From ${fs.domain}, which you've engaged with`];
-    // The learned model can promote a card on CONTENT (term overlap, embedding similarity, or their
-    // crosses) with no author/domain history at all — and with no branch for that, those cards fell
-    // through to the popularity/recency chips or to nothing. So the feed was silent about exactly
-    // the stories personalization had picked: 13 of 25 trained cards carried no chip, while a card
-    // ranked by raw popularity happily claimed "About topics you read about".
-    //
-    // Phrase each case from the signal that actually earned it, and only above a floor, so the chip
-    // is backed by the same evidence the "Why #N?" panel would show. Below that floor say the honest
-    // general thing rather than inventing a specific one.
+    // Phrase the chip from the signal that actually earned it, and only above a floor; below the
+    // floor say the general thing rather than naming a signal the "Why #N?" panel would not show.
     if (top?.key === 'learned') {
       if (fs.termAffinity > 0.15) return ['Matches what you tend to read about'];
       if (fs.relevance > 0.35) return ['Similar to your recent reading'];
@@ -189,8 +177,7 @@ function reasonsFor(fs: FeatureSet, item: HnItem, terms: ScoreTerm[]): string[] 
  * Log-odds is linear in the model's `w·x`, so the ranking MARGIN survives calibration; `tanh` bounds
  * it back to ±1 so the term stays commensurate with the other signals and the sliders keep their
  * meaning; centering on the base rate keeps a typical story at ~0 (an above-average story reads
- * positive, below-average negative), so the DISPLAYED sign remains meaningful. Monotone in `p`, so it
- * can never reorder against the model's own opinion.
+ * positive, below-average negative), so the DISPLAYED sign remains meaningful.
  */
 /** Plain-language description of how often this user engages — so the baseline bar's label and the
  * explainer copy stay TRUE at any base rate, not just a low one. */
@@ -205,8 +192,29 @@ export function logitOf(v: number): number {
   return Math.log(c / (1 - c));
 }
 
-export function learnedSignal(p: number, baseRate = 0.5): number {
-  return Math.tanh((logitOf(p) - logitOf(baseRate)) / 2);
+/** The learned model's pull on -1..1, centred on `baseRate`. See SPEC.md §2.2. */
+export function learnedSignal(p: number, baseRate = 0.5, scale = 2, amplitude = 1): number {
+  return amplitude * Math.tanh((logitOf(p) - logitOf(baseRate)) / Math.max(0.05, scale));
+}
+
+/**
+ * How the "Why #N?" panel should present the model's odds for a story vs a typical one, so the prose
+ * reconciles with the Learned-model bar (SPEC §2.5). Both odds are clamped to [5,95] — we don't claim
+ * a certainty a few dozen interactions can't support — so for a very selective or very avid reader
+ * BOTH can round to the SAME number while the model still rates the story above/below typical. In
+ * that case the panel must show the DIRECTION (whose sign matches the bar), not a phantom "gap"
+ * between two identical percentages.
+ */
+export function oddsComparison(
+  probability: number,
+  baseRate: number
+): { pctThis: number; pctTypical: number; collapsed: boolean; direction: 'higher' | 'lower' | 'same' } {
+  const clamp = (p: number) => Math.min(95, Math.max(5, Math.round(p * 100)));
+  const pctThis = clamp(probability);
+  const pctTypical = clamp(baseRate);
+  const d = probability - baseRate; // logit is monotonic, so this sign == the learned pull's sign
+  const direction = Math.abs(d) < 1e-4 ? 'same' : d > 0 ? 'higher' : 'lower';
+  return { pctThis, pctTypical, collapsed: pctThis === pctTypical, direction };
 }
 
 /** The weighted blend that produces the final score — the single source of truth
@@ -215,7 +223,9 @@ function blend(
   fs: FeatureSet,
   w: RankContext['weights'],
   learned: number,
-  baseRate = 0.5
+  baseRate = 0.5,
+  learnedScale = 2,
+  learnedAmplitude = 1
 ): { score: number; terms: ScoreTerm[] } {
   const affinityRaw =
     fs.domainAffinity +
@@ -224,7 +234,7 @@ function blend(
     (fs.followedUser ? 2 : 0) +
     (fs.boostKeyword ? 1.5 : 0);
   const affinity = Math.tanh(affinityRaw / 4); // -1..1
-  const learnedPull = learnedSignal(learned, baseRate);
+  const learnedPull = learnedSignal(learned, baseRate, learnedScale, learnedAmplitude);
 
   const terms: ScoreTerm[] = [
     { key: 'popularity', label: 'Popularity', weight: w.popularity, value: fs.popularity, contribution: w.popularity * fs.popularity },
@@ -247,7 +257,7 @@ export function scoreItem(
   const used = rankerTrained(model);
   const learned = used ? predictProba(model!, featureVector(fs)) : fs.learned;
   const baseRate = used ? (ctx.learnedCenter ?? learnedBaseRate(model)) : 0.5;
-  const { score, terms } = blend(fs, ctx.weights, learned, baseRate);
+  const { score, terms } = blend(fs, ctx.weights, learned, baseRate, ctx.learnedScale, ctx.learnedAmplitude);
   return { score, reasons: reasonsFor(fs, item, terms), fs };
 }
 
@@ -277,24 +287,17 @@ export function explainItem(item: HnItem, ctx: RankContext, model?: LogisticMode
   const probability = used ? predictProba(model!, x) : fs.learned;
   const baseRate = used ? (ctx.learnedCenter ?? learnedBaseRate(model)) : 0.5;
   const engagementRate = used ? learnedBaseRate(model) : 0.5;
-  const { score, terms } = blend(fs, ctx.weights, probability, baseRate);
+  const { score, terms } = blend(fs, ctx.weights, probability, baseRate, ctx.learnedScale, ctx.learnedAmplitude);
 
-  // Express every bar in the SAME UNITS as the "Learned model" term shown in the score breakdown, so
-  // a reader can literally ADD THEM UP and land on that number.
-  //
-  // The model is additive in LOG-ODDS: z = (bias - poolCentre) + Σ wᵢxᵢ, and the displayed pull is
-  // tanh(z/2). Showing the raw log-odds bars meant the panel had THREE representations of one
-  // quantity — the bars' sum, the % they convert to, and the signed pull the other section
-  // attributes to the same model — while stating only the first link. Adding the bars up gave a
-  // number that appeared nowhere. Sigmoid/tanh are non-linear, so no per-feature decomposition sums
-  // to the pull directly; instead scale every additive term by (pull / z), the standard proportional
-  // attribution. That is exact (Σ scaled = pull), preserves each term's sign and relative size, and
-  // is numerically safe: pull/z → 0.5 as z → 0 and shrinks as tanh saturates, so it never blows up.
-  // Display-only — ranking is untouched.
+  // Display-only. The model is additive in log-odds but the displayed pull is tanh(z/scale), so
+  // scale each additive term by (pull / z) — proportional attribution, exact: Σ scaled = pull.
+  // The divisor MUST be `ctx.learnedScale`, the same constant the score used, or the bars stop
+  // summing to the figure beside them.
   const centreLogit = logitOf(baseRate);
   const zBase = used ? model!.b - centreLogit : 0;
   const zSum = zBase + x.reduce((acc, v, i) => acc + (model?.w[i] ?? 0) * v, 0);
-  const pull = Math.tanh(zSum / 2);
+  const pullScale = Math.max(0.05, ctx.learnedScale ?? 2);
+  const pull = (ctx.learnedAmplitude ?? 1) * Math.tanh(zSum / pullScale);
   // Scale to the SCORE-TABLE figure (weight × pull), not the bare pull — the table shows the
   // weighted contribution, so summing to the pull alone would only match at the default weight of
   // 1.0 and drift by exactly the weight anywhere else.
@@ -334,22 +337,17 @@ export function explainItem(item: HnItem, ctx: RankContext, model?: LogisticMode
       ]
     : featureTerms;
 
-  // The bars are displayed to 2dp, and the promise is that a reader can ADD THEM UP and get the
-  // score-table figure. Rounding each independently breaks that by a cent or two (four bars, each
-  // ±0.005), which for a small pull is a large relative error and re-opens the very mismatch this
-  // display exists to close. Apportion the rounding residual onto the largest bar (largest-remainder
-  // style) so the numbers a user actually sees reconcile EXACTLY.
-  const roundedModelTerms = used ? reconcileTo2dp(modelTerms, attrTarget) : modelTerms;
+  // ORDER MATTERS: reconcile the OUTER score table FIRST, then reconcile these bars against the
+  // figure it actually displays. The outer table pays its residual to its largest row, which may be
+  // the learned row itself, so bars reconciled against the pre-nudge figure sum to a stale number.
+  const outerTerms = reconcileTo2dp(terms, score);
+  const displayedLearned = outerTerms.find((t) => t.key === 'learned')?.contribution ?? attrTarget;
+  const roundedModelTerms = used ? reconcileTo2dp(modelTerms, displayedLearned) : modelTerms;
 
   return {
     score,
-    // Reconcile the OUTER score table to 2dp too, exactly as the model bars already are.
-    // The panel invites the reader to add these up ("Final score = sum of each signal x its
-    // weight"), but each row and the total were rounded to 2dp INDEPENDENTLY, so on ~28% of cards
-    // the displayed rows summed to 0.01 away from the displayed score. Anyone who does the
-    // arithmetic the copy asks for gets a number that appears nowhere on screen — the same defect
-    // already fixed one section lower, left unfixed in the section above it.
-    terms: reconcileTo2dp(terms, score),
+    // Reconcile the outer score table to 2dp, so the displayed rows sum to the displayed score.
+    terms: outerTerms,
     learned: {
       used,
       probability,
@@ -378,7 +376,7 @@ export function explainItem(item: HnItem, ctx: RankContext, model?: LogisticMode
 
 /** Median P(engage) across the candidates actually being ranked — the reference a reader means by
  * "a typical story". Undefined when there's no trained model to predict with. */
-function poolCenter(items: HnItem[], ctx: RankContext, model?: LogisticModel): number | undefined {
+function poolCenter(items: HnItem[], ctx: RankContext, model?: LogisticModel): { center: number; scale: number; amplitude: number } | undefined {
   if (!rankerTrained(model)) return undefined;
   const ps: number[] = [];
   for (const item of items) {
@@ -388,19 +386,33 @@ function poolCenter(items: HnItem[], ctx: RankContext, model?: LogisticModel): n
   if (ps.length === 0) return undefined;
   ps.sort((a, b) => a - b);
   const mid = ps.length >> 1;
-  return ps.length % 2 ? ps[mid] : (ps[mid - 1] + ps[mid]) / 2;
+  const center = ps.length % 2 ? ps[mid] : (ps[mid - 1] + ps[mid]) / 2;
+
+  const d = ps.map((p) => Math.abs(logitOf(p) - logitOf(center))).sort((a, b) => a - b);
+  const p90 = d[Math.min(d.length - 1, Math.floor(d.length * 0.9))];
+  const TARGET_PULL = 0.8; // what the 90th-percentile story should read as, on -1..1
+  const raw = p90 / Math.atanh(TARGET_PULL);
+  // Authority scales with held-out AUC, discounted by its own standard error. See SPEC.md §2.2.
+  const CHANCE = 0.5;
+  const CONFIDENT = 0.6;
+  const heldOutPositives = Math.max(1, Math.round((model!.pos ?? 0) / 3));
+  const se = Math.sqrt(0.25 / heldOutPositives);
+  const edge = (model!.auc ?? CHANCE) - CHANCE - se;
+  const skill = Math.min(1, Math.max(0, edge / (CONFIDENT - CHANCE)));
+  const floor = 0.35 - skill * 0.3;
+  const scale = Math.min(8, Math.max(floor, raw));
+  const amplitude = 0.2 + 0.8 * skill;
+  return { center, scale, amplitude };
 }
 
 /**
- * Augment a context with the pool-derived `learnedCenter`. Callers that ALSO explain items (the feed
- * builds a "Why #N?" trace per visible card) must pass this SAME context to `explainItem`, or the
- * explanation would be centered differently from the score that produced the rank — the exact
- * parts-don't-reconcile failure this whole surface exists to avoid.
+ * Augment a context with the pool-derived `learnedCenter`. Callers that also explain items must pass
+ * this SAME context to `explainItem`, or the explanation is centred differently from the score.
  */
 export function withPoolCenter(items: HnItem[], ctx: RankContext, model?: LogisticModel): RankContext {
   if (ctx.learnedCenter !== undefined) return ctx;
   const c = poolCenter(items, ctx, model);
-  return c === undefined ? ctx : { ...ctx, learnedCenter: c };
+  return c === undefined ? ctx : { ...ctx, learnedCenter: c.center, learnedScale: c.scale, learnedAmplitude: c.amplitude };
 }
 
 export function computeForYou(
@@ -408,14 +420,8 @@ export function computeForYou(
   ctx: RankContext,
   model?: LogisticModel
 ): RankedStory[] {
-  // Center the DISPLAYED learned signal on THIS POOL's median prediction, not on the training base
-  // rate. The trained weights are dominated by domain/author affinity, which is ~0 for any source
-  // the user hasn't engaged with — so the candidate distribution systematically undershoots the
-  // training positive-rate, and centering there made EVERY unfamiliar candidate print a negative
-  // red bar (measured: 0/20 positive, a story the model knew nothing about read -0.675 of a nominal
-  // -1) while the tooltip promised "a typical story reads ~0". The pool median restores that
-  // promise. It is one constant for the whole pass, so ranking is UNCHANGED — only the sign the
-  // reader sees becomes meaningful.
+  // Centre the displayed learned signal on this pool's median prediction, not the training base
+  // rate, so "a typical story reads ~0" holds for the candidates actually being ranked.
   const poolCtx = withPoolCenter(items, ctx, model);
   const ranked: RankedStory[] = [];
   for (const item of items) {

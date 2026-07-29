@@ -44,7 +44,7 @@ export default function WeightSliders() {
     ? 'inactive — turn on the Learned reranker in Settings'
     : rankerTrained(modelQ.data)
       ? undefined
-      : 'inactive — trains itself automatically as you read (or “Retrain now” in Settings)';
+      : 'inactive — retrains in the background (or “Retrain now” in Settings)';
 
   // A signal that's currently zero makes its weight a no-op — say so.
   const inactive: Partial<Record<keyof RankWeights, string>> = {

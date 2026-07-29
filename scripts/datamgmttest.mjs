@@ -143,6 +143,50 @@ check('signals dialog card fits a 320px viewport', fit.cardRight !== null && fit
 check('signals dialog close (X) stays on-screen at 320px', fit.closeInView, JSON.stringify(fit));
 check('signals dialog causes no horizontal page overflow at 320px', fit.pageOver <= 1, `over=${fit.pageOver}`);
 
+// ---------- Cache eviction must not throw away the learned model ----------
+// `pruneCaches` evicts by tier, and within a tier by position in the KEY-SORTED list. The learned
+// reranker shared the "expensive, evict last" tier with the AI summaries — but 'model:logistic'
+// sorts before 'sum:' and 'usersum:', so the one row that costs a full retrain to rebuild was the
+// FIRST thing dropped out of the protected tier. Overflow the cap and check what survives.
+{
+  const res = await page.evaluate(async () => {
+    const { db, pruneCaches } = window.__hnlens.db();
+    await db.kv.clear();
+    const rows = [];
+    // The cheap tiers must be SMALLER than the overflow, or eviction never reaches the expensive
+    // tier and this proves nothing. (First attempt used 4200 atext rows and passed vacuously.)
+    // 100 cheap + 4500 summaries + 1 model over a 4000 cap ⇒ ~601 to evict, so ~501 must come out
+    // of the expensive tier — which is exactly where the model used to be, sorted first.
+    for (let i = 0; i < 100; i++) rows.push({ key: `atext:${i}`, value: 'x' });
+    for (let i = 0; i < 4500; i++) rows.push({ key: `sum:${String(i).padStart(4, '0')}`, value: 'x' });
+    for (let i = 0; i < 40; i++) rows.push({ key: `usersum:${i}`, value: 'x' });
+    rows.push({ key: 'model:logistic', value: { w: [1], n: 99 } });
+    await db.kv.bulkPut(rows);
+
+    // What the PREVIOUS tiering would have done with this exact fixture, so the assertion below is
+    // known to discriminate rather than assumed to.
+    const keys = (await db.kv.orderBy('key').primaryKeys());
+    const oldTier = (k) => (k.startsWith('atext:') ? 0 : /^(topc:|aterms:|cterms:)/.test(k) ? 1 : 2);
+    const oldVictims = keys
+      .map((k, i) => ({ k, t: oldTier(k), i }))
+      .sort((a, b) => a.t - b.t || a.i - b.i)
+      .slice(0, keys.length - 4000)
+      .map((x) => x.k);
+    const modelWouldHaveDied = oldVictims.includes('model:logistic');
+
+    await pruneCaches();
+    return {
+      model: (await db.kv.get('model:logistic')) ? 1 : 0,
+      summaries: (await db.kv.where('key').startsWith('sum:').count()),
+      total: await db.kv.count(),
+      modelWouldHaveDied,
+    };
+  });
+  check('pruning actually evicted (the fixture really overflowed the cap)', res.total === 4000, JSON.stringify(res));
+  check('PRECONDITION: this fixture reaches the expensive tier (the old tiering killed the model)', res.modelWouldHaveDied === true, JSON.stringify(res));
+  check('the learned model SURVIVES cache eviction', res.model === 1, JSON.stringify(res));
+}
+
 await b.close();
 console.log(`\n${fails.length === 0 ? 'RESULT: DATA MANAGEMENT PASS \u2713' : `RESULT: ${fails.length} FAILED`}`);
 process.exit(fails.length ? 1 : 0);

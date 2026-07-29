@@ -205,7 +205,7 @@ if (!/\bready\b/i.test(llmStatus)) throw new Error('LLM did not reach ready: ' +
 // ---------- TL;DR on a card (client-side nav to preserve engine) ----------
 log('\n== TL;DR ==');
 currentStep = 'tldr';
-await page.getByRole('link', { name: 'HN Lens' }).click();
+await page.getByRole('link', { name: 'Hacker Lens' }).click();
 await page.waitForSelector('article', { timeout: 40000 });
 const card = page.locator('article').first();
 const cardId = await card.getAttribute('data-id');

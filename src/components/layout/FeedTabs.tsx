@@ -39,8 +39,21 @@ export default function FeedTabs({
     });
   }, []);
 
+  // Centre the active tab HORIZONTALLY, by moving the strip's own scrollLeft — never with
+  // `scrollIntoView`.
+  //
+  // `scrollIntoView({ block: 'nearest' })` reads as "do not move vertically", and it does not, as
+  // long as the element is already on screen. Several screens down a feed the tab strip is NOT on
+  // screen, so the browser scrolls the DOCUMENT up to reveal it — and switching tabs threw the
+  // reader to the top of the page. A control whose job is horizontal must not be able to move the
+  // vertical viewport at all, so this does the arithmetic itself and touches only the container.
   useEffect(() => {
-    activeRef.current?.scrollIntoView({ inline: 'center', block: 'nearest' });
+    const strip = scrollRef.current;
+    const tab = activeRef.current;
+    if (!strip || !tab) return;
+    const target = tab.offsetLeft - (strip.clientWidth - tab.offsetWidth) / 2;
+    const max = strip.scrollWidth - strip.clientWidth;
+    strip.scrollLeft = Math.max(0, Math.min(target, max));
   }, [value]);
 
   useEffect(() => {
@@ -74,8 +87,8 @@ export default function FeedTabs({
                 'inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm transition-colors',
                 // Active state carries THREE cues: an accent border + a tinted fill + heavier
                 // weight. The LABEL is `text-fg` (not accent) because accent-on-accent-tint fails
-                // AA in many light themes — the accent lives in the border + tint (non-text, which
-                // only needs 3:1), so selection reads AND the label stays AA-legible.
+                // AA in many light themes. Selection is carried by the BORDER: the tint alone
+                // measures 1.14-1.45 against the page, below the 3:1 a non-text cue needs.
                 active
                   ? 'border-accent bg-accent/15 font-semibold text-fg'
                   : 'border-edge bg-surface font-medium text-muted hover:text-fg'

@@ -4,7 +4,7 @@ import { useModalBehavior } from '../hooks/useModalBehavior';
 import { Braces, PencilLine, RotateCw, X } from 'lucide-react';
 import type { ChatMessage } from '../lib/models/llm';
 import type { PromptKind } from '../types';
-import { usePrefs } from '../lib/prefs';
+import { usePrefs, usesLlama } from '../lib/prefs';
 import { DEFAULT_PROMPTS, PROMPT_META } from '../lib/models/prompts';
 
 // Transparency + control row shown under every AI summary (card TL;DR, thread summary, user
@@ -24,6 +24,11 @@ export default function SummaryActions({
 }) {
   const [showReq, setShowReq] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
+  // Only when a model ACTUALLY ran. A thin-input refusal returns an empty `request` (no model call),
+  // so keying the attribution off "a local provider is selected" alone printed "Built with Llama"
+  // over text no Llama produced — a false attribution.
+  const ranModel = request.length > 0;
+  const llama = usePrefs((s) => usesLlama(s)) && ranModel;
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
       <button type="button" onClick={onRefresh} disabled={refreshing} className="inline-flex items-center gap-1 hover:text-fg disabled:opacity-60">
@@ -38,22 +43,39 @@ export default function SummaryActions({
         <PencilLine className="size-3.5" /> Edit prompt
       </button>
       {/* One caveat, on every AI summary surface, because this row is the single shared component.
-          Two measured reasons it belongs here rather than only in a doc: on ordinary threads the
-          small on-device model attaches unsupported specifics to real stories (an invented product
-          name, a figure that appears nowhere in its input), and comment text is untrusted input the
-          model can be steered by — a comment imitating the summary's own format can put its words
-          in the summary's mouth. Both are mitigated (untrusted text is fenced and defanged, an
-          empty thread is never sent to the model) and neither is eliminated at this model size, so
-          say so where the output is actually read. */}
-      <span
-        // Full `--muted`, not `/80`. Dimming it voided the AA guarantee of the very token chosen for
-        // legibility (sub-AA in 40 of 62 cells on cards), and made the accuracy caveat FAINTER than
-        // the action labels beside it — the one line here that must not be easy to miss.
-        className="text-muted"
-        title="AI summaries are generated from the story and its comments. Small models can state things the source doesn't support, and comment text can influence the result — check anything important against the discussion itself."
-      >
-        AI-generated · may be inaccurate
-      </span>
+          The app guarantees what goes IN — untrusted text is fenced and defanged, thin input is not
+          sent, and the "based on" line counts what actually reached the model. It makes no
+          guarantee about what comes OUT, including attribution: a small model can state
+          unsupported specifics and can put a view in a named commenter's mouth. Say so where the
+          output is actually read. Gated on `ranModel`: over a thin-input REFUSAL nothing was sent
+          and the text is the app's own message, not AI output, so the caveat must stay off it. */}
+      {ranModel && (
+        <span
+          // Full `--muted`, not `/80`. Dimming it voided the AA guarantee of the very token chosen for
+          // legibility (sub-AA in 40 of 62 cells on cards), and made the accuracy caveat FAINTER than
+          // the action labels beside it — the one line here that must not be easy to miss.
+          className="text-muted"
+          title="AI summaries are written by a language model — a small on-device one unless you configured a cloud provider. It can state things the source doesn't support, and it can attribute a view to a named commenter who never expressed it. Treat every claim, quote and attribution as unverified, and check anything important against the discussion itself."
+        >
+          AI-generated · may be inaccurate, including who said what
+        </span>
+      )}
+      {/* Attribution required by the Llama 3.2 Community License, shown where Llama Materials are
+          actually in use rather than as a global banner — most of this app has nothing to do with
+          Llama, and the licence accepts any one of website / user interface / about page / product
+          documentation (the README carries it too). Conditional via `usesLlama` so it never appears
+          over cloud-provider output, which would be a false attribution. */}
+      {llama && (
+        <a
+          href="https://github.com/meta-llama/llama-models/blob/main/models/llama3_2/LICENSE"
+          target="_blank"
+          rel="noreferrer"
+          className="text-muted hover:text-fg"
+          title="This summary was produced on your device by Meta's Llama 3.2, used under the Llama 3.2 Community License."
+        >
+          · Built with Llama
+        </a>
+      )}
       {showReq && <RequestDialog request={request} onClose={() => setShowReq(false)} />}
       {showEdit && (
         <PromptEditorDialog

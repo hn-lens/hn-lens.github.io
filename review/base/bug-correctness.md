@@ -152,6 +152,14 @@ which items are suspect — treat every item equally and assume nothing.
 - **Robustness**: invalid/hostile inputs (bad item id, unknown user, `javascript:`/`data:` URLs),
   outage vs. legitimately-empty (they must look different), missing fields, no white-screen/no-crash
   guarantees, and that destructive actions are undoable where promised.
+- **Outage ≠ empty, INCLUDING OFFLINE (fold in from findings).** Every list, search, and profile must
+  show a distinct error+Retry on a failed fetch — never "Nothing to show"/"No results"/"User not
+  found", and never a result COUNT above the error. Test OFFLINE specifically (`context.setOffline`):
+  queries must FAIL fast into the error state, not pause silently (the default `networkMode` pauses
+  while `navigator.onLine` is false, so `isError` never fires and the surface falls through to its
+  empty branch). Also test a lazy route whose JS CHUNK can't be fetched offline: it must show a
+  graceful message and recover on navigation, not a raw "Failed to fetch dynamically imported module"
+  that persists across nav.
 - **A per-type DELETE / purge must cover EVERY key a feature writes (folded in from findings).** When a
   feature persists several key families (a summary writes `sum:` AND `usersum:`; article text writes
   `atext:` AND the derived `aterms:` memo; comments write `topc:`/`cterms:`), a "Delete X" that removes

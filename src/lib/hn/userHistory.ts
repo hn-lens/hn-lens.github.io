@@ -15,11 +15,19 @@ export interface HnActivity {
 
 /** Public profile + activity summary for display / tracking. */
 export async function fetchHnActivity(username: string): Promise<HnActivity | null> {
-  const [profile, stories, comments] = await Promise.all([
+  // allSettled, not all: these are three INDEPENDENT sources, so one failing endpoint should cost
+  // its own slice and nothing else. Under Promise.all a single rejection discarded the two that had
+  // already succeeded and the whole profile came back null — a worse outcome than a partial one, for
+  // data that is purely additive. (`getItems` already uses allSettled for the same reason.)
+  const [profileR, storiesR, commentsR] = await Promise.allSettled([
     fetchUser(username),
     search({ tags: `story,author_${username}`, hitsPerPage: 50, byDate: true }),
     search({ tags: `comment,author_${username}`, hitsPerPage: 1 }),
   ]);
+  const EMPTY_HITS = { hits: [], nbHits: 0 };
+  const profile = profileR.status === 'fulfilled' ? profileR.value : null;
+  const stories = storiesR.status === 'fulfilled' ? storiesR.value : EMPTY_HITS;
+  const comments = commentsR.status === 'fulfilled' ? commentsR.value : EMPTY_HITS;
   if (!profile && stories.nbHits === 0 && comments.nbHits === 0) return null;
 
   const domains: Record<string, number> = {};
@@ -63,10 +71,14 @@ export async function importHnHistory(
     .map((e) => e.id as number);
   if (priorIds.length) await db.events.bulkDelete(priorIds);
 
-  const [stories, comments] = await Promise.all([
+  // Same reasoning as fetchHnActivity: importing only the stories is strictly better than importing
+  // nothing because the comment search happened to fail.
+  const [storiesR, commentsR] = await Promise.allSettled([
     search({ tags: `story,author_${username}`, hitsPerPage: 100, byDate: true }),
     search({ tags: `comment,author_${username}`, hitsPerPage: 100, byDate: true }),
   ]);
+  const stories = storiesR.status === 'fulfilled' ? storiesR.value : { hits: [], nbHits: 0 };
+  const comments = commentsR.status === 'fulfilled' ? commentsR.value : { hits: [], nbHits: 0 };
 
   const items: HnItem[] = [];
   const events: InteractionEvent[] = [];

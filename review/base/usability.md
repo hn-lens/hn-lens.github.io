@@ -131,6 +131,84 @@ Also watch for the softer version: content that arrives late and pushes what you
 DOWN. An item that changes height after you have started reaching for it is the same defect measured
 in pixels rather than list positions.
 
+### Then the harder question: AIM AT SOMETHING, LEAVE, COME BACK, AND ACT
+
+Stability while you sit still is the easy half, and grading only that has produced a "stable — clean"
+verdict on an app a real reader found badly disorienting. What a reader actually does is *aim*: they
+spot a story, go and do something, come back, and reach for the thing they were aiming at — often by
+muscle memory, at the position where they last saw it. **The measurement that matters is whether the
+action lands on the item they intended.**
+
+So run an explicit aim-and-act test, and score it by IDENTITY, not by position:
+
+1. Note the identity (title / id) of a target story several screens down, and the on-screen position
+   you would reach for.
+2. Take an excursion a reader really takes — open the story's link and come back; open its
+   discussion and come back; switch to another tab and back; leave and reload the page. Do each
+   separately, and also in combination.
+3. Come back and **click where you remember the target being.**
+4. Assert you reached the story you were aiming at. Report the mismatch rate per excursion type.
+
+**Vary TWO things about the excursion, not one.** The obvious variable is which excursion it was.
+The one that gets missed is **how far the reader scrolled INSIDE it** — a discussion read to the
+bottom, an article scrolled through, a Settings page scrolled to its end. That matters because the
+scroll offset the reader arrives back with is inherited from the page they left, so a restore that
+is a NO-OP silently means "keep the other page's position". Read the excursion to its END in at
+least one cell of every excursion type.
+
+**And vary the starting position, including the TOP.** Restoring to the top is the case most likely
+to be implemented as "do nothing", and "do nothing" is indistinguishable from correct for as long as
+the reader happens to arrive at 0. Starting at the top and returning from a deep excursion is
+therefore the single highest-yield cell in this matrix — it is where an absent restore target and a
+non-zero incoming scroll position meet.
+
+Generalise it: **whenever a restore is skipped, ask what the position will be if it is skipped.**
+A skipped restore is only correct if the page is already where the restore would have put it.
+
+A mismatch here is a serious defect *even when every underlying change was individually permitted*.
+The list may legitimately be allowed to change on an explicit act — but a permitted change is still a
+failure if it is silent, if it moves things under the reader, or if it leaves them acting on a stale
+mental model. "The rules allowed it" is not a defence when the outcome is that the reader opened the
+wrong thing.
+
+Watch specifically for MEMBERSHIP changes, not just reordering. An item *leaving* a list pulls
+everything below it upward, which is the most effective way to cause a mis-click, and it is invisible
+to any check that only compares relative order of the items that remain. For every disappearance ask
+the three questions a reader would: **did anything tell me it went?** **can I tell where it went?**
+**can I get it back or undo it?** Silent removal from a list someone is actively using should be
+reported even if it is the documented, intended behaviour — in that case the design is what is being
+questioned, and say so explicitly.
+
+Finally, combine features. Several of this app's worst experiences have come from two mechanisms that
+are each individually correct and individually tested, whose *sum* is disorienting. Testing them one
+at a time will report clean; only the composite journey reveals it.
+
+### And test the BOUNDARIES, not just the interesting middle
+
+The instruction above says to aim at a story "several screens down", and that is the interesting
+case — but a mechanism that restores the reader's place has to be correct at the EDGES too, and the
+edges are where it is easiest to be confidently wrong. Sweep the target position deliberately:
+
+- **at the very top** — the reader has not scrolled at all;
+- **one screen down** — barely moved;
+- **several screens down** — the ordinary case;
+- **at the very bottom** — the end of everything loaded.
+
+At the top, apply the strictest test there is: **restoring must be a NO-OP.** If the reader was at
+the top and comes back to the top, the page must not move by a single pixel. A restore that puts
+them at the first item rather than at the top of the PAGE is a defect even though it looks defensible
+in code — the reader did not ask to be moved, and being moved after doing nothing is more alarming
+than not being restored at all. The same holds for every "remember where I was" mechanism: **if
+there was nothing to restore, restoring must do nothing.**
+
+Watch for the tell-tale shape: a small, consistent downward jump of roughly the height of whatever
+sits above the list (a header, a tab strip, a notice). That is a restore computing a position
+relative to the wrong origin, and it is invisible to any check that only ever measures from a
+mid-list position, because mid-list the same arithmetic happens to look right.
+
+Report the movement in pixels per position, not just hit/miss — "moved 225px after a refresh from
+the top" is actionable in a way that "MISS" is not.
+
 ## What to report
 
 Usability problems, feature requests, and information-presentation improvements — ranked by how

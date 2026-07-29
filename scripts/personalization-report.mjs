@@ -194,7 +194,7 @@ const html = `<!doctype html>
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>HN Lens — Personalization Proof</title>
+<title>Hacker Lens — Personalization Proof</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='3' fill='%23ff6600'/></svg>"/>
 <style>
   :root{ --bg:#0d1117; --panel:#161b22; --panel2:#0b0f14; --fg:#e6edf3; --muted:#8b949e; --border:#30363d; --accent:#58a6ff; }
@@ -238,7 +238,7 @@ const html = `<!doctype html>
 <div class="wrap">
   <header class="top">
     <div>
-      <h1>HN Lens — Personalization, Proven</h1>
+      <h1>Hacker Lens — Personalization, Proven</h1>
       <p class="sub">Generated ${esc(R.meta.generatedAt)} · every number below is produced by the app's <em>real</em> ranking modules, driven through <code>window.__hnlens</code>.</p>
     </div>
     <button class="tgl" onclick="document.documentElement.dataset.theme=document.documentElement.dataset.theme==='dark'?'light':'dark'">◐ theme</button>

@@ -5,17 +5,12 @@ import { BarChart3, Database, Scale, Sparkles, X } from 'lucide-react';
 import { stripHtml } from '../../lib/html';
 import { usePrefs } from '../../lib/prefs';
 import type { RankExplanation, ScoreTerm } from '../../lib/ranking/strategies';
+import { oddsComparison } from '../../lib/ranking/strategies';
+import { MIN_TRAIN_SAMPLES } from '../../lib/ranking/logistic';
 
 function fmt(n: number, digits = 2): string {
   const s = n.toFixed(digits);
   return n > 0 ? `+${s}` : s;
-}
-
-// The logistic saturates to 0/1 on small, separable local data, so a raw
-// "100% chance you'll engage" is false confidence. Show it as an approximate,
-// bounded band instead — never claim certainty from a few dozen interactions.
-function engageChancePct(p: number): number {
-  return Math.min(95, Math.max(5, Math.round(p * 100)));
 }
 
 // Plain-language definitions of what each blend signal compares against.
@@ -35,19 +30,15 @@ const HINTS: Record<string, string> = {
 };
 
 /** A signed horizontal bar for one contribution, scaled to `max`. */
-// `showFormula`: only the SCORE breakdown's bars literally equal weight×value. The learned-model
-// bars are each feature's proportional SHARE of the learned pull (so they sum to it), so printing
-// "(w×v)" beside them would restate the very mismatch this panel exists to remove.
-function Bar({ term, max, hint, showFormula = true }: { term: ScoreTerm; max: number; hint?: string; showFormula?: boolean }) {
+function Bar({ term, max, hint }: { term: ScoreTerm; max: number; hint?: string }) {
   const pct = max > 0 ? (Math.abs(term.contribution) / max) * 100 : 0;
   const positive = term.contribution >= 0;
   return (
     // Columns are shrinkable so Large reading text on a narrow phone can't starve the bar to 0px or
     // clip the value past the modal edge: the label truncates (`min-w-0 shrink truncate`), the bar
-    // keeps a `min-w-8` floor while still filling on desktop (`flex-1`), the value sizes to content,
-    // and the supplementary (weight×value) formula is hidden below `sm` (it's redundant with the
-    // signed number and is what overflowed at 320px+Large). Fixed rem widths (w-44/w-24) inflate under
-    // Large text and overflowed the modal — see RankExplain a11y fix.
+    // keeps a `min-w-8` floor while still filling on desktop (`flex-1`), and the value sizes to
+    // content. Fixed rem widths (w-44/w-24) inflate under Large text and overflowed the modal — see
+    // RankExplain a11y fix.
     <div className="flex items-center gap-2 text-xs">
       <div className="w-28 min-w-0 shrink truncate leading-tight text-muted sm:w-44" title={hint || term.label}>
         {term.label}
@@ -57,16 +48,11 @@ function Bar({ term, max, hint, showFormula = true }: { term: ScoreTerm; max: nu
         <div className="absolute left-1/2 h-full w-px bg-border" />
         <div
           className={positive ? 'ml-[50%] h-2.5 rounded-r' : 'mr-[50%] ml-auto h-2.5 rounded-l'}
-          style={{ width: `${pct / 2}%`, background: positive ? '#3fb950' : '#f85149' }}
+          style={{ width: `${pct / 2}%`, background: positive ? 'var(--bar-pos)' : 'var(--bar-neg)' }}
         />
       </div>
       <div className="shrink-0 text-right font-medium tabular-nums sm:w-24">
         {fmt(term.contribution)}
-        {showFormula && term.key !== 'baseline' && (
-          <span className="ml-1 hidden text-subtle sm:inline">
-            ({fmt(term.weight, 1)}×{term.value.toFixed(2)})
-          </span>
-        )}
       </div>
     </div>
   );
@@ -112,7 +98,14 @@ export default function RankExplainDialog({
     // itself the meaningful statement "this story starts about where a typical one does".
     .filter((t) => t.key === 'baseline' || Math.abs(t.contribution) > 1e-6)
     .sort((a, b) => Math.abs(b.contribution) - Math.abs(a.contribution));
+  const odds = oddsComparison(explain.learned.probability, explain.learned.baseRate);
   const modelMax = Math.max(...modelTerms.map((t) => Math.abs(t.contribution)), 0.0001);
+  // The learned model only "moves the rank" if its blend contribution is non-negligible: the Learned
+  // weight slider bottoms out at 0, and a collapsed-directional prediction can carry a sub-0.01 pull.
+  // In both cases the model rates the story up/down but does not actually shift its position, so the
+  // copy must not claim it does.
+  const learnedTerm = explain.terms.find((t) => t.key === 'learned');
+  const learnedMovesRank = !!learnedTerm && Math.abs(learnedTerm.contribution) >= 0.005;
 
   // Plain-language data signals for this specific item (only the ones that fired).
   const s = explain.signals;
@@ -174,7 +167,7 @@ export default function RankExplainDialog({
           {explain.learned.used && (
             <>
               <span className="text-subtle">←</span>
-              <span>model trained on {explain.learned.examples} of your interactions</span>
+              <span>model trained on {explain.learned.examples} examples from your activity</span>
             </>
           )}
         </div>
@@ -185,9 +178,11 @@ export default function RankExplainDialog({
             <Scale className="size-4 text-accent" /> How the score adds up
           </h3>
           <p className="mt-0.5 text-xs text-subtle">
-            Final score = sum of each signal × its weight. Tune the weights in Settings. The feed
-            then applies per-site/author diversity caps, so a card&apos;s position can differ
-            slightly from its raw score.
+            Final score = sum of each signal × its weight. Tune the weights in Settings.{' '}
+            <strong className="font-medium text-muted">Position is not re-sorted as you read:</strong>{' '}
+            the feed keeps the order you arrived with, so a card&apos;s number reflects the ranking
+            when the list was built, not the score above. Press Refresh to re-order. Per-site and
+            per-author diversity caps can also move a card from its raw score.
           </p>
           <div className="mt-2 space-y-1.5">
             {explain.terms.map((t) => (
@@ -223,16 +218,33 @@ export default function RankExplainDialog({
                 with about{' '}
                 <span className="font-semibold text-fg">{Math.round(explain.learned.engagementRate * 100)}%</span> of
                 the stories you see overall. For this one it predicts{' '}
-                {/* BOTH sides go through the same display transform. One was clamped to [5,95] and
-                    the other rendered raw, so for a selective reader every below-median story
-                    printed "~5%, against ~3%" — an apparently POSITIVE gap — directly above a
-                    negative red "Learned model" bar (12 of 24 candidates). The clamp must stay: it
-                    exists so the panel never claims a certainty a few dozen interactions cannot
-                    support. Applying it to only one of two compared numbers is what made them
-                    disagree. */}
-                <span className="font-semibold text-fg">~{engageChancePct(explain.learned.probability)}%</span>,
-                against <span className="font-semibold text-fg">~{engageChancePct(explain.learned.baseRate)}%</span>{' '}
-                for a typical story in this feed; that gap — not the absolute number — is what moves the rank.
+                {/* Both odds are clamped to [5,95] (never claim a certainty a few dozen interactions
+                    can't support). For a selective/avid reader BOTH can round to the SAME number while
+                    the model still rates the story higher/lower — so show the DIRECTION (which matches
+                    the Learned-model bar's sign), not a phantom "gap" between two equal percentages.
+                    See oddsComparison(). */}
+                <span className="font-semibold text-fg">~{odds.pctThis}%</span>
+                {odds.collapsed ? (
+                  odds.direction === 'same' ? (
+                    <> — about the same as a typical story in this feed; the model doesn&apos;t move it much.</>
+                  ) : (
+                    <>
+                      {' '}— about the same odds as a typical story in this feed (~{odds.pctTypical}%), but the model
+                      rates it <span className="font-semibold text-fg">{odds.direction}</span>
+                      {learnedMovesRank
+                        ? '; that direction, shown by the Learned model bar, is what moves the rank.'
+                        : ', though at the current Learned-model weight that barely shifts its position.'}
+                    </>
+                  )
+                ) : (
+                  <>
+                    , against <span className="font-semibold text-fg">~{odds.pctTypical}%</span> for a typical story
+                    in this feed
+                    {learnedMovesRank
+                      ? '; that gap — not the absolute number — is what moves the rank.'
+                      : '; at the current Learned-model weight, though, that gap barely shifts its position.'}
+                  </>
+                )}
                 {/* Only promise bars when bars are actually rendered. The sentence used to be
                     unconditional, so a story whose features are all neutral got "each bar below …
                     they add up to it" immediately above the words "All features are neutral". */}
@@ -250,7 +262,7 @@ export default function RankExplainDialog({
                     overall engagement rate, so a balanced or avid reader saw a ~95% estimate sitting
                     beside no explanation at all, while the clause fired next to numbers it did not
                     describe. */}
-                {modelTerms.length > 0 && engageChancePct(explain.learned.probability) < 50
+                {modelTerms.length > 0 && odds.pctThis < 50
                   ? ' Because a typical story in this feed starts low, mostly-positive features can still land below 50%:'
                   : ''}
               </p>
@@ -259,7 +271,7 @@ export default function RankExplainDialog({
                     the sentence above promises "the baseline + the feature bars below sum to that
                     estimate" broke that promise — the visible bars did not add up. */}
                 {modelTerms.map((t) => (
-                  <Bar key={t.key} term={t} max={modelMax} showFormula={false} />
+                  <Bar key={t.key} term={t} max={modelMax} />
                 ))}
                 {modelTerms.length === 0 && (
                   <p className="text-xs text-subtle">All features are neutral for this story.</p>
@@ -278,13 +290,26 @@ export default function RankExplainDialog({
                   pattern for the reranker to fit. Reading a wider mix of stories will give it something to work
                   with. Until then, ranking uses popularity, recency, and your affinities.
                 </>
+              ) : explain.learned.gate === 'too-few-positives' ? (
+                <>
+                  {/* Enough examples, too few genuine reads — here "read a few stories" IS the correct
+                      instruction, because it is positives (reads/engagements), not raw count, that is short. */}
+                  Still learning — you have enough examples, but too few are stories you&apos;ve actually read.
+                  The reranker needs a few genuine reads to tell your taste from what you scroll past; read a few
+                  stories, then it activates on the next background retrain (or press &ldquo;Retrain now&rdquo; in
+                  Settings). Until then, ranking uses popularity, recency, and your affinities.
+                </>
               ) : (
                 <>
-                  Still learning — the reranker activates once it has enough of your interactions, including a few
-                  stories you&apos;ve actually read (you have{' '}
-                  <span className="font-semibold text-fg">{explain.learned.examples}</span> so far). It trains
-                  itself automatically as you read — there&apos;s no manual step. Until then, ranking uses
-                  popularity, recency, and your affinities — no noisy predictions from too little data.
+                  {/* Not enough training rows yet. `examples` is model.n, counted against the sample
+                      gate — and called "examples", NOT "interactions" (see the rule above: most rows
+                      are passive impressions labelled as skips) and NOT "stories you've read", which
+                      it very much is not. */}
+                  Still learning — the reranker activates once it has seen enough of your activity (you have{' '}
+                  <span className="font-semibold text-fg">{explain.learned.examples}</span> of {MIN_TRAIN_SAMPLES}{' '}
+                  examples so far). It retrains in the background while this tab is inactive; &ldquo;Retrain
+                  now&rdquo; in Settings applies it immediately. Until then, ranking uses popularity, recency,
+                  and your affinities — no noisy predictions from too little data.
                 </>
               )}
             </p>
@@ -294,7 +319,8 @@ export default function RankExplainDialog({
               <Link to="/settings" className="text-accent hover:underline" onClick={onClose}>
                 Settings
               </Link>{' '}
-              and it&apos;ll train itself automatically from your reading history.
+              and it&apos;ll retrain in the background from your reading history (or press
+              &ldquo;Retrain now&rdquo; in Settings).
             </p>
           )}
         </section>

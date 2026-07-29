@@ -81,16 +81,51 @@ export function pickTopComments(
  * The CALLER gates this on the showTopComments pref + card visibility so the feed costs
  * nothing when off / off-screen.
  */
+// CROSS-CARD bound. Many cards enter view at once (a fling / a tall layout on a big monitor), and
+// each fetches its own preview. With only the per-card getItems(kids, 3) limit they collectively
+// flooded the shared 6-connection firebase origin — queue depth 85, p95 dispatch wait 1.2s, some
+// requests aborting on their own timeout while still queued, and starving the For-You item fetches.
+// This module-level gate caps how many cards fetch a preview AT ONCE across the whole feed, so the
+// preview traffic can never monopolise the origin. Cache hits and childless stories never enter it.
+const PREVIEW_CARD_CONCURRENCY = 2; // 2 cards × getItems-bound(3) = 6 concurrent ≈ the origin's 6-connection budget
+let previewActive = 0;
+const previewWaiters: Array<() => void> = [];
+async function acquirePreviewSlot(): Promise<void> {
+  if (previewActive < PREVIEW_CARD_CONCURRENCY) {
+    previewActive++;
+    return;
+  }
+  await new Promise<void>((resolve) => previewWaiters.push(resolve));
+  previewActive++;
+}
+function releasePreviewSlot(): void {
+  previewActive--;
+  previewWaiters.shift()?.();
+}
+
 export async function getTopComments(item: HnItem): Promise<TopComment[]> {
   const cached = await kvGet<TopComment[]>(cacheKey(item.id));
   if (cached) return cached;
   const kids = (item.kids ?? []).slice(0, MAX_KIDS);
   if (!kids.length) return []; // genuinely childless — nothing to show
-  const comments = await getItems(kids);
+  // 3 per card, not the default 8 — AND gated by a cross-card slot (see above) so a fling of visible
+  // cards can't put dozens of requests on the 6-connection origin at once.
+  await acquirePreviewSlot();
+  let comments;
+  try {
+    comments = await getItems(kids, 3);
+  } finally {
+    releasePreviewSlot();
+  }
   const picked = pickTopComments(comments);
-  // Cache only a non-empty pick: if the story HAS top-level comments but we got none back,
-  // it's likely a transient fetch failure (getItems yields [] on network errors) — return []
-  // WITHOUT caching so a later view can retry, mirroring the old tree-fetch behaviour.
-  if (picked.length) await kvSet(cacheKey(item.id), picked);
+  // An empty pick has two causes: a transient fetch failure, or comments that are genuinely all too
+  // short/muted to preview. Only the first is worth retrying, so a genuine empty is cached.
+  //
+  // This test errs toward NOT caching: `getItems` also drops dead/deleted comments, so a story with
+  // a deleted top-level kid looks like a failed fetch and is re-fetched. Measured on live data, ~11%
+  // of front-page stories have such a kid; the re-fetch only bites when EVERY surviving comment is
+  // also below the substance floor. Erring the other way would cache a transient failure forever.
+  const fetchFailed = comments.length < kids.length;
+  if (picked.length || !fetchFailed) await kvSet(cacheKey(item.id), picked);
   return picked;
 }

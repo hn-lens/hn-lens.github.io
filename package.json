@@ -1,5 +1,5 @@
 {
-  "name": "hn-lens",
+  "name": "hacker-lens",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -24,6 +24,7 @@
     "static-site"
   ],
   "scripts": {
+    "prepare": "node scripts/arm-hooks.mjs",
     "dev": "vite",
     "build": "tsc -b && vite build",
     "build:single": "tsc -b && SINGLEFILE=1 vite build --outDir dist-single --emptyOutDir && node scripts/inline.mjs dist-single",
@@ -47,6 +48,8 @@
     "test:edge": "node scripts/edgetest.mjs",
     "test:extreme": "node scripts/extremetest.mjs",
     "test:a11y": "node scripts/a11ytest.mjs",
+    "test:dialogreach": "node scripts/dialogreachtest.mjs",
+    "test:leakself": "node scripts/leakcheckselftest.mjs",
     "test:layout": "node scripts/layouttest.mjs",
     "test:comments": "node scripts/commenttest.mjs",
     "test:discussionview": "node scripts/discussionviewtest.mjs",
@@ -61,6 +64,7 @@
     "test:hnaccount": "node scripts/hnaccounttest.mjs",
     "test:weighthints": "node scripts/weighthintstest.mjs",
     "test:rankergate": "node scripts/rankergatetest.mjs",
+    "test:autotraingate": "node scripts/autotraingatetest.mjs",
     "test:diversity": "node scripts/diversitytest.mjs",
     "test:cardteach": "node scripts/cardteachtest.mjs",
     "test:mobile": "node scripts/mobiletest.mjs",

@@ -204,3 +204,39 @@ is incomplete for this lens.
   symmetric padding renders the label *under* the arrow, and `text-overflow` computes to `clip`, so
   there isn't even an ellipsis. Measure the selected label's text width against the content box minus
   the arrow, for EVERY option, not just the default one.
+
+
+## Wrapping QUALITY, not just overflow
+
+Every overflow check in this repo measures `scrollWidth - clientWidth`. That number is **0** for one
+of the ugliest layout failures the app can produce: a control row that *wraps* — pushing half its
+contents onto a second line and leaving the first line two-thirds empty — while the page itself fits
+perfectly. Nothing overflows, so every guard reports clean, and the result still looks broken.
+
+So measure the SHAPE of every multi-control row, not just whether the page scrolls sideways:
+
+1. For each control row (the discussion toolbar, story-card action rows, the feed header, filter
+   rows, dialog button rows), group its children by their `getBoundingClientRect().top` to get the
+   actual number of RENDERED rows.
+2. For each rendered row, compute the fill ratio: summed child width (plus gaps) over the
+   container's inner width.
+3. Flag TWO distinct failures, which look identical to a user but need opposite fixes:
+   - **(a) It wrapped although it would fit.** Sum the children's widths plus gaps; if the total is
+     less than the container's inner width and it STILL rendered on two rows, that is a layout bug —
+     typically a greedy `flex-1` spacer eating the slack, or a cluster that can only move as a block.
+   - **(b) It wrapped at an ordinary desktop width (>= 768px).** Here the content genuinely does not
+     fit, and no amount of re-arranging helps: the row is over-stuffed and something has to get
+     shorter (an abbreviated label, a word dropped, labels reduced to icons at mid widths).
+   Reporting only (a) misses the more common case, and reporting only (b) misdiagnoses it — say
+   which one you measured, and give the numbers (`total 827px into 718px` is the actionable form).
+4. Sweep this across widths in small steps (e.g. 1440, 1280, 1150, 1024, 900, 820, 768, 600, 430,
+   390), not just at the two or three breakpoints — these failures live in the narrow band right
+   where a cluster stops fitting, and testing only at round breakpoints steps straight over it.
+
+Report the width band in which the bad wrap occurs and the fill ratio of the offending row, e.g.
+"at 980-1120px the toolbar wraps to 2 rows with row 1 only 55% full". Wrapping itself is fine and
+expected on a phone; wrapping that leaves obvious empty space beside the controls is not.
+
+Related, and worth checking in the same pass: when a row *does* legitimately wrap, does it wrap into
+a sensible shape (balanced, aligned, grouped by function), or does one stray control end up alone on
+a line? A single orphaned control is the same defect in a milder form.

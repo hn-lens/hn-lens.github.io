@@ -104,14 +104,20 @@ function fenceUntrusted(label: string, body: string): string {
 export function neutralizeInjection(body: string): string {
   return (
     body
-      // Our own structural markers — the impersonation vector. Zero-width space after the asterisks
-      // keeps the words readable while stopping them parsing as the model's section headers.
-      .replace(/\*\*\s*(Gist|What commenters say|Disagreement|Summary|TL;?DR)\s*:?\s*\*\*/gi, '$1:')
+      // Our own structural markers — the impersonation vector. Strips the emphasis wrappers so the
+      // words stay readable but no longer parse as the model's section headers. Both **bold** and
+      // __bold__ forms, since a comment can use either.
+      .replace(/(\*\*|__)\s*(Gist|What commenters say|Disagreement|Summary|TL;?DR)\s*:?\s*\1/gi, '$2:')
       // Fence markers, so a payload cannot close the fence and escape into instruction context.
       .replace(/<<<+/g, '<‌<‌<').replace(/>>>+/g, '>‌>‌>')
       .replace(/-{3,}\s*(BEGIN|END)/gi, '- - - $1')
-      // Role labels that turn following text into a new "turn".
-      .replace(/^\s*(system|assistant|user|developer)\s*:/gim, '$1 -')
+      // Role labels that turn following text into a new "turn". `model` and `tool` are the wire roles
+      // the cloud providers themselves emit (Gemini replies as `model`), so a comment opening with
+      // one is the most impersonation-shaped text there is; `human` is the classic transcript label.
+      // (`ai` is deliberately omitted — two characters, no provider uses it as a role, and it
+      // collides with ordinary text.) Matched except inside a longer word (`filesystem:`) via the
+      // negative lookbehind; the rewrite only swaps the colon for a dash, so content is never removed.
+      .replace(/(?<!\w)(system|assistant|user|developer|model|tool|human)\s*:/gi, '$1 -')
       // Direct imperatives aimed at the model.
       .replace(/\b(ignore|disregard|forget)\s+(all\s+|any\s+)?(previous|prior|above|earlier)\s+(instructions?|prompts?|rules?)/gi,
         '[instruction-like text removed]')
@@ -141,29 +147,75 @@ function templateVars(kind: PromptKind, d: PromptData): Record<string, string> {
   const question = d.question ?? '';
   const userId = d.userId ?? '';
   if (kind === 'user') {
-    const stories = d.stories?.length
-      ? fenceUntrusted('SUBMISSIONS', d.stories.map((x) => `- ${x}`).join('\n').slice(0, big ? 8000 : 2500))
-      : '(none)';
-    const comments = d.comments?.length
-      ? fenceUntrusted('COMMENTS', d.comments.map((c) => `- ${c.slice(0, big ? 1200 : 500)}`).join('\n').slice(0, big ? 12000 : 4000))
-      : '(none)';
+    const p = personaForPrompt(d);
+    const stories = p.stories.length ? fenceUntrusted('SUBMISSIONS', p.stories.join('\n')) : '(none)';
+    const comments = p.comments.length ? fenceUntrusted('COMMENTS', p.comments.join('\n')) : '(none)';
     return { title, url, post, question, userId, stories, comments, article: '' };
   }
+  const articleText = articleForPrompt(kind, d);
   if (kind === 'tldr') {
-    const article = d.article ? fenceUntrusted('ARTICLE', d.article.slice(0, big ? 6000 : 1600)) : '';
-    const comments = d.comments?.length
-      ? fenceUntrusted('TOP COMMENTS', d.comments.slice(0, big ? 30 : 12).join('\n').slice(0, big ? 8000 : 1800))
-      : '';
+    const article = articleText ? fenceUntrusted('ARTICLE', articleText) : '';
+    const kept = commentsForPrompt(kind, d);
+    const comments = kept.length ? fenceUntrusted('TOP COMMENTS', kept.join('\n')) : '';
     return { title, url, post, question, userId, stories: '', article, comments };
   }
   // thread + ask
-  const article = d.article
-    ? fenceUntrusted('ARTICLE TEXT (extracted from the linked page)', d.article.slice(0, big ? 16000 : 3500))
+  const article = articleText
+    ? fenceUntrusted('ARTICLE TEXT (extracted from the linked page)', articleText)
     : '';
-  const comments = d.comments?.length
-    ? fenceUntrusted('COMMENTS', d.comments.join('\n').slice(0, big ? 24000 : 6000))
-    : '(no comments provided)';
+  const kept = commentsForPrompt(kind, d);
+  const comments = kept.length ? fenceUntrusted('COMMENTS', kept.join('\n')) : '(no comments provided)';
   return { title, url, post, question, userId, stories: '', article, comments };
+}
+
+function commentBudget(kind: PromptKind, big: boolean): number {
+  if (kind === 'tldr') return big ? 8000 : 1800;
+  return big ? 24000 : 6000; // thread + ask
+}
+
+/**
+ * Take whole items until the budget is spent.
+ *
+ * WHOLE items, because a joined string cut at N characters ends the last one mid-sentence and there
+ * is then no honest number to report: the reader is told "16 comments" and the model saw 15 and a
+ * fragment. The single-item fallback is the one case a fragment is still better than nothing.
+ */
+function fitWhole(items: string[], budget: number): string[] {
+  const kept: string[] = [];
+  let used = 0;
+  for (const c of items) {
+    const cost = (kept.length ? 1 : 0) + c.length;
+    if (used + cost > budget) break;
+    kept.push(c);
+    used += cost;
+  }
+  if (!kept.length && items.length) kept.push(items[0].slice(0, budget));
+  return kept;
+}
+
+/**
+ * What actually reaches the model, per field.
+ *
+ * These exist so the provenance the reader is shown ("Based on N top comments + article text
+ * (~M words)") is counted from the REQUEST, not from what happened to be available. The two diverge
+ * whenever a budget binds, which on a real thread is most of the time.
+ */
+export function commentsForPrompt(kind: PromptKind, d: PromptData): string[] {
+  const all = kind === 'tldr' ? (d.comments ?? []).slice(0, d.large ? 30 : 12) : (d.comments ?? []);
+  return fitWhole(all, commentBudget(kind, !!d.large));
+}
+
+export function articleForPrompt(kind: PromptKind, d: PromptData): string {
+  const budget = kind === 'tldr' ? (d.large ? 6000 : 1600) : d.large ? 16000 : 3500;
+  return (d.article ?? '').slice(0, budget);
+}
+
+export function personaForPrompt(d: PromptData): { stories: string[]; comments: string[] } {
+  const big = !!d.large;
+  return {
+    stories: fitWhole((d.stories ?? []).map((x) => `- ${x}`), big ? 8000 : 2500),
+    comments: fitWhole((d.comments ?? []).map((c) => `- ${c.slice(0, big ? 1200 : 500)}`), big ? 12000 : 4000),
+  };
 }
 
 // Substitute {placeholders}, then collapse the blank lines left by empty placeholders.
@@ -469,21 +521,21 @@ export async function askThread(
     selftext?: string;
     comments: string[];
     article?: string;
+    // Must be threaded through, not defaulted: the caller shows the built messages in "View
+    // request", so if this wrapper rebuilt them at a different size the reader would be shown a
+    // request that was never sent.
+    large?: boolean;
     onToken?: (full: string) => void;
   }
 ): Promise<string> {
-  const out = await generate(model, buildAskMessages(opts), { onToken: opts.onToken, maxTokens: 600, temperature: 0.3 });
-  // Same attribution hardening as the thread summary. It was applied only in `summarizeItem`, so on
-  // the SAME thread the summary rewrote a fabricated "dang says…" while this answer published it
-  // verbatim — and this prompt explicitly asks the model to name commenters, so it is the more
-  // exposed of the two. When one output path is hardened, every sibling that reaches the same model
-  // with the same data has to be as well.
-  return sanitizeAttributions(out, authorsFromComments(opts.comments));
-}
-
-/** Handles that actually authored the supplied comments — the allow-list for attribution. */
-export function authorsFromComments(comments: string[]): string[] {
-  return comments.map((c) => /^-?\s*([\w.-]+):/.exec(c)?.[1] ?? '').filter(Boolean);
+  // Refuse before spending a model call on nothing. Asked to answer from an empty or near-empty
+  // thread, the model invents the commenters it was told to cite.
+  if (tooThinToAnswer({ comments: opts.comments, article: opts.article, selftext: opts.selftext })) {
+    const msg = "This discussion doesn't have enough content to answer from yet.";
+    opts.onToken?.(msg);
+    return msg;
+  }
+  return generate(model, buildAskMessages(opts), { onToken: opts.onToken, maxTokens: 600, temperature: 0.3 });
 }
 
 export async function tldr(
@@ -532,7 +584,9 @@ export interface SummaryResult {
 //     and the key includes a fingerprint of the system instruction (changing it re-summarizes).
 // v7: prompts are now {system, user-template} and BOTH are user-editable, so the key
 //     fingerprints BOTH parts — editing either the system OR the user template re-summarizes.
-export const SUMMARY_PROMPT_VER = 9; // 9: post/title fenced, substance gate, attribution sanitised // 8: untrusted content is fenced; empty threads are not sent to the model
+// 10: output correction removed (see review/README.md c3r21); substance floor; whole-comment budget
+// 9: post fenced, title defanged, substance gate // 8: untrusted content fenced; empty threads not sent
+export const SUMMARY_PROMPT_VER = 10;
 
 function wordCount(s: string): number {
   return s ? s.trim().split(/\s+/).filter(Boolean).length : 0;
@@ -622,12 +676,17 @@ export async function summarizeItem(
       articleProxy = '';
     }
   }
+  // Counted from what the request will actually carry, per field: the budgets bind on most real
+  // threads, and a provenance line describing what was merely AVAILABLE is a false statement about
+  // the only thing the reader can check.
+  const promptData = { comments, article: articleText, selftext: item.text, large: isCloud };
+  const sentArticle = articleForPrompt(kind, promptData);
   const sources: SummarySources = {
-    articleWords: wordCount(articleText),
-    comments: comments.length,
+    articleWords: wordCount(sentArticle),
+    comments: commentsForPrompt(kind, promptData).length,
     selftext: !!item.text,
     articleAvailable: !!item.url && !opts.fetchArticle,
-    articleProxy,
+    articleProxy: sentArticle ? articleProxy : '',
     backend: describeBackend(prefs),
   };
 
@@ -648,14 +707,16 @@ export async function summarizeItem(
   // single junk or meta comment ("this again?") gave the model nothing to work with and it invented
   // a whole discussion — one 1-comment thread produced four quoted fabrications. Require either real
   // article/self text, or enough comment SUBSTANCE to summarise.
-  const commentChars = comments.reduce((n, c) => n + (c?.length ?? 0), 0);
-  const tooThin = !articleText && !item.text && (comments.length < 2 || commentChars < 200);
+  const tooThin = tooThinToAnswer({ comments, article: articleText, selftext: item.text });
   if (tooThin) {
     return {
       text: sources.articleAvailable
         ? 'Not enough to summarize yet — this discussion is still too short, and the article text is not available (turn on linked-article text in Settings → Privacy to include it).'
         : 'Not enough to summarize yet — this discussion is still too short to summarize.',
-      sources,
+      // Nothing was sent, so nothing may be claimed as a basis — the BACKEND included. This path
+      // returns before any provider call, so "sent to Google Gemini" beneath a refusal describes a
+      // request that was never made.
+      sources: { ...sources, articleWords: 0, comments: 0, selftext: false, articleProxy: '', backend: '' },
       articleText: '',
       request: [],
       cached: false,
@@ -677,14 +738,8 @@ export async function summarizeItem(
     temperature: kind === 'thread' ? 0.35 : 0.2,
   });
 
-  // Enforce honest attribution before anything is shown or cached (see sanitizeAttributions).
-  const safeText = sanitizeAttributions(text, authorsFromComments(comments));
-  const result: CachedSummary = { text: safeText, sources, articleText, request };
-  // Never cache output that was cut off. Previously anything not starting with "Could not" was
-  // written to IndexedDB, so a mid-word truncation was preserved and re-served on every later view —
-  // the reader had no way to know the text was incomplete, and only an explicit Refresh could
-  // dislodge it. A truncated generation is a transient failure; treat it like one.
-  if (safeText && !/^Could not/i.test(safeText) && !looksTruncated(safeText)) await kvSet(key, result);
+  const result: CachedSummary = { text, sources, articleText, request };
+  if (text && !/^Could not/i.test(text)) await kvSet(key, result);
   return { ...result, cached: false };
 }
 
@@ -703,77 +758,6 @@ const PROVIDER_LABEL: Record<string, string> = {
   anthropic: 'Anthropic',
 };
 
-/**
- * Did generation stop mid-thought rather than finish?
- *
- * Cheap and deliberately conservative — it must never reject a legitimately terse summary, only
- * catch output that ran out of budget. Two signals: the text ends without any sentence-ending
- * punctuation (a model that finished nearly always closes its last sentence), or it ends in the
- * middle of a markdown structure it had started.
- */
-/**
- * Never let a summary attribute a claim to a person who did not make it.
- *
- * The thread template asked the model to name commenters, and a 1B model obliges by inventing: on
- * one thread it had HN's moderator stating a position on encryption backdoors that he never took,
- * reproduced on 4 of 4 runs, with wrong attributions in 6 of 8 threads. Every other AI defect here
- * degrades into a bad summary the reader can discount; this one puts words in a real, identifiable
- * person's mouth under their real handle, and no disclaimer makes that acceptable.
- *
- * The model cannot be relied on to get it right, so this is enforced afterwards and deterministically:
- * any handle the summary attributes a statement to must ACTUALLY be one of the authors whose comments
- * were supplied. Anything else is rewritten to an anonymous attribution — the point survives, the
- * false ascription does not.
- *
- * Deliberately conservative: it only rewrites where the text is clearly ASCRIBING (a leading
- * "handle:" bullet, or "handle says/argues/notes/points out/thinks/claims/warns"), so a handle merely
- * mentioned in passing is left alone.
- */
-const COMMON_SUBJECTS = new Set(
-  ('commenter commenters comment comments someone one many some others other people reader readers ' +
-    'author authors poster op user users everyone nobody discussion thread article post story it he ' +
-    'she they we you i this that which who what everybody anyone several few most all both')
-    .split(' ')
-);
-
-export function sanitizeAttributions(text: string, authors: string[]): string {
-  const allowed = new Set(authors.map((a) => a.toLowerCase()));
-  const VERBS = 'says|said|argues|argued|notes|noted|points out|pointed out|thinks|claims|claimed|warns|warned|explains|explained|adds|added|mentions|mentioned|believes|suggests|asks|writes|wrote';
-  return (
-    text
-      // "- handle: ..." / "* handle: ..." at the start of a bullet.
-      .replace(/(^|\n)(\s*[-*]\s*)([A-Za-z][\w.-]{1,24})(\s*:\s)/g, (m, br, bullet, name, tail) =>
-        allowed.has(String(name).toLowerCase()) ? m : `${br}${bullet}A commenter${tail}`
-      )
-      // "handle says ..." anywhere in a sentence.
-      //
-      // This must only fire on something that could plausibly BE a handle. The first version matched
-      // any word before a reporting verb, so it rewrote ordinary prose — including the very word the
-      // prompt tells the model to use — producing "A A commenter mentions" and "The A commenter
-      // notes". Measured on real output: 10 of 12 summaries corrupted, 24 rewrites, precision 0.00.
-      // Not one was a genuine misattribution. Corrupting every summary to catch nothing is strictly
-      // worse than the defect it was aimed at.
-      //
-      // So require handle SHAPE and exclude ordinary vocabulary: HN handles are lowercase-ish, often
-      // contain digits or punctuation, and are never sentence-initial capitalised English words. The
-      // bullet rule above ("- handle: ...") stays broad because that position genuinely is an
-      // attribution slot.
-      .replace(new RegExp(`(^|[^\\w.-])([A-Za-z][\\w.-]{2,24})\\s+(${VERBS})\\b`, 'g'), (m, pre, name, verb) => {
-        const n = String(name);
-        const low = n.toLowerCase();
-        if (allowed.has(low)) return m;
-        // Ordinary words that appear before reporting verbs in normal prose.
-        if (COMMON_SUBJECTS.has(low)) return m;
-        // A capitalised word that is not a known handle is far more likely to be a sentence subject
-        // than a handle; leave it rather than mangle the sentence.
-        if (/^[A-Z]/.test(n)) return m;
-        // Capitalise only where a sentence actually starts, so the replacement reads naturally in
-        // both positions rather than dropping "A commenter" into the middle of a clause.
-        const atSentenceStart = pre === '' || /[.!?]\s$|^\n|\n\s*$/.test(pre) || /^[\n\r]/.test(pre);
-        return `${pre}${atSentenceStart ? 'A' : 'a'} commenter ${verb}`;
-      })
-  );
-}
 
 /**
  * Cheap relevance check on extracted article text: does it share meaningful words with the title?
@@ -797,19 +781,43 @@ export function articleLooksRelevant(title: string, article: string): boolean {
   return hits / titleWords.length >= 0.25;
 }
 
-export function looksTruncated(text: string): boolean {
-  const t = text.trim();
-  if (!t) return false;
-  // An unterminated bold run means the markdown itself was cut mid-structure.
-  if ((t.match(/\*\*/g)?.length ?? 0) % 2 === 1) return true;
-  // A trailing bare "-"/"*" bullet with nothing after it.
-  if (/(^|\n)\s*[-*]\s*$/.test(t)) return true;
-  // Stopping mid-sentence — but only for output long enough that a missing full stop is genuinely
-  // abnormal. Requiring merely "ends without punctuation" was too strict: it rejected terse but
-  // COMPLETE summaries, which then failed to cache and were regenerated on every view — turning a
-  // guard against serving bad output into a guarantee of repeating expensive work. Better to cache
-  // an occasional truncation than to never cache a clean short one.
-  return t.length > 240 && /[a-z0-9,;]$/i.test(t);
+// ── Input hygiene: is there enough real material to send to the model at all? ────────────────
+//
+// ONE definition, used by every path that puts thread content in front of the model. It used to
+// live inline in the thread/TL;DR path only, so "Ask this discussion" would happily answer a
+// zero-comment thread — and a 1B model asked to answer from nothing invents the nothing it was
+// asked about, quoting "Commenter1/2/3" directly above the app's own "No comments yet". A refusal
+// is returned as ordinary text rather than thrown, so the reader sees an honest sentence.
+const THIN_MIN_COMMENTS = 2;
+const THIN_MIN_COMMENT_CHARS = 200;
+// A body (article or self-text) with no discussion under it has to carry the summary alone, so it
+// needs more than the comment floor. Any non-empty body used to short-circuit this whole function.
+const THIN_MIN_BODY_CHARS = 600;
+
+export function tooThinToAnswer(opts: { comments?: string[]; article?: string; selftext?: string }): boolean {
+  const bodyChars = (opts.article?.trim().length ?? 0) + (opts.selftext?.trim().length ?? 0);
+  if (bodyChars >= THIN_MIN_BODY_CHARS) return false;
+  const comments = (opts.comments ?? []).filter(Boolean);
+  const commentChars = comments.reduce((n, c) => n + c.length, 0);
+  if (comments.length >= THIN_MIN_COMMENTS && commentChars >= THIN_MIN_COMMENT_CHARS) return false;
+  return bodyChars + commentChars < THIN_MIN_BODY_CHARS;
+}
+
+// The persona summary has a different input shape (a user's own titles + comments) but the same
+// failure mode: an account whose entire visible activity was the word "same" produced a confident
+// two-paragraph invented biography about a REAL, named person. Judge it on total substance.
+// Tuned against BOTH failure directions, because only checking one produced a wrong bound twice.
+// Too loose and a single four-character comment ("same") yields an invented biography about a real,
+// named person. Too tight and a genuine but quiet account — three real submission titles and a
+// comment, ~115 characters — is refused, which is its own kind of wrong answer. Requiring a couple
+// of items AND some actual substance separates the two cleanly.
+const THIN_PERSONA_ITEMS = 2;
+const THIN_PERSONA_CHARS = 60;
+
+export function tooThinForPersona(opts: { stories: string[]; comments: string[] }): boolean {
+  const items = [...opts.stories, ...opts.comments].filter(Boolean);
+  const chars = items.reduce((n, s) => n + s.length, 0);
+  return items.length < THIN_PERSONA_ITEMS || chars < THIN_PERSONA_CHARS;
 }
 
 export function describeSources(s: SummarySources): string {
@@ -834,7 +842,8 @@ export function describeProvenance(s: SummarySources): string {
 // comment about, built ONLY from their recent submissions + comments — so a reader
 // can size up an author from their own profile page. Grounded strictly in the
 // provided activity (no invented facts, no guessing identity/judgement).
-export const USER_SUMMARY_VER = 1;
+// 2: output correction removed (see review/README.md c3r21)
+export const USER_SUMMARY_VER = 2;
 
 /** Build the exact messages (system + user) for a user persona summary — the "full request". */
 export function buildUserSummaryMessages(opts: {
@@ -864,7 +873,10 @@ export async function summarizeUser(
     prefs.llmProvider === 'local'
       ? model
       : `${prefs.llmProvider}/${cloudModelFor(prefs.llmProvider, prefs.cloudModels?.[prefs.llmProvider])}`;
-  const counts = { stories: opts.stories.length, comments: opts.comments.length };
+  // Counted from what the request carries, not from what was fetched — same rule as the summary
+  // provenance. The persona budgets bind on any prolific account.
+  const fitted = personaForPrompt(opts);
+  const counts = { stories: fitted.stories.length, comments: fitted.comments.length };
   const inputFp = fingerprint([opts.userId, ...opts.stories, ...opts.comments].join('|'));
   // Include a fingerprint of the (editable) user-persona prompt so editing it re-summarizes,
   // matching the tldr/thread cache behavior (previously omitted → prompt edits were ignored).
@@ -877,10 +889,19 @@ export async function summarizeUser(
       return { text: hit.text, request: hit.request ?? [], cached: true, counts };
     }
   }
+  // Thin-input refusal, the third sibling. An account whose entire recent activity was one
+  // four-character comment produced a confident invented biography about a real, named person —
+  // the worst output this app can produce, because it is a fabrication ATTACHED TO AN IDENTITY.
+  // Not cached: the account will have more activity later.
+  if (tooThinForPersona(opts)) {
+    const msg = 'Not enough recent activity to describe this user.';
+    opts.onToken?.(msg);
+    // Nothing was sent, so nothing may be claimed as a basis.
+    return { text: msg, request: [], cached: false, counts: { stories: 0, comments: 0 } };
+  }
   const request = buildUserSummaryMessages(opts);
   const text = await generate(model, request, { onToken: opts.onToken, maxTokens: 300, temperature: 0.4 });
-  // Refuse to cache truncated output, like the thread path. This sibling was missed, so a persona
-  // summary cut off mid-word was written to IndexedDB and re-served forever with no way to notice.
-  if (text && !/^Could not/i.test(text) && !looksTruncated(text)) await kvSet(key, { text, request });
+  if (text && !/^Could not/i.test(text)) await kvSet(key, { text, request });
   return { text, request, cached: false, counts };
 }
+

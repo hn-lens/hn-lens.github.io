@@ -41,13 +41,13 @@ export async function fetchItem(id: number): Promise<HnItem | null> {
 }
 
 export async function fetchUser(id: string): Promise<HnUser | null> {
-  try {
-    const res = await fetchWithTimeout(`${BASE}/user/${encodeURIComponent(id)}.json`);
-    if (!res.ok) return null;
-    return (await res.json()) as HnUser | null;
-  } catch {
-    return null;
-  }
+  // THROW on a network/5xx failure (and let a timeout/reject propagate) so the caller can tell an
+  // OUTAGE apart from a genuinely-absent user. A 200 with a null body (user does not exist) still
+  // returns null. `useUser` surfaces the throw as an error state with Retry; `userHistory` already
+  // tolerates a rejection via allSettled.
+  const res = await fetchWithTimeout(`${BASE}/user/${encodeURIComponent(id)}.json`);
+  if (!res.ok) throw new Error(`HN user "${id}" failed: ${res.status}`);
+  return (await res.json()) as HnUser | null;
 }
 
 export async function fetchList(kind: Exclude<FeedKind, 'foryou' | 'read'>): Promise<number[]> {

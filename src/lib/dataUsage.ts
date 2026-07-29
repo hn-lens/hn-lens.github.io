@@ -4,7 +4,8 @@
 // live in Cache Storage and are managed separately (see lib/models/storage.ts +
 // CachedModels) — this covers the IndexedDB side.
 import { db } from './db';
-import { unhideAll } from '../hooks/useLocalData';
+import { clearReadSweep } from './readSweep';
+import { unhideAll, unsaveAll } from '../hooks/useLocalData';
 import { queryClient } from './query';
 
 export type DataCategoryId =
@@ -113,6 +114,9 @@ export async function clearDataCategory(id: DataCategoryId): Promise<number> {
     case 'events':
       removed = await db.events.count();
       await db.events.clear();
+      // Same reason as clearAllData: the read sweep is derived from these events and must not
+      // survive them, or For You keeps hiding stories with nothing left to justify it.
+      clearReadSweep();
       break;
     case 'embeddings':
       removed = await db.embeddings.count();
@@ -131,7 +135,10 @@ export async function clearDataCategory(id: DataCategoryId): Promise<number> {
       break;
     case 'saved':
       removed = await db.saved.count();
-      await db.saved.clear();
+      // Through the shared helper, like `hidden` below, so the save's affinity upvote and its
+      // STRONG training label are reversed. Clearing the table alone left every deleted save still
+      // counted as engagement: 5/5 derivations unchanged, against 5/5 reversed by a per-item Unsave.
+      await unsaveAll();
       break;
     case 'hidden':
       removed = await db.hidden.count();

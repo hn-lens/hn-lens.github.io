@@ -68,6 +68,9 @@ export async function pruneCaches(): Promise<void> {
   const MAX_ITEMS = 2500;
   const MAX_EMB = 4000;
   const MAX_EVENTS = 10000; // generous — years of use for a personal reader; bounds storage
+  // Lower than the event cap on purpose: unlike `events`, the entire `seen` table is read into a
+  // Map on the feed's critical path, so its size is a per-load cost and not just storage.
+  const MAX_SEEN = 5000;
   try {
     // Cap the append-only interaction log (drops the OLDEST events; recent history +
     // affinities are what matter). Ordered by ts so we evict oldest first.
@@ -86,25 +89,53 @@ export async function pruneCaches(): Promise<void> {
       const excess = await db.embeddings.limit(embCount - MAX_EMB).primaryKeys();
       await db.embeddings.bulkDelete(excess);
     }
-    // Cap the kv table too — it holds fetched article bodies (atext:*, ~5KB each), inline
-    // top-comment previews (topc:*), AI summaries (sum:*/usersum:*), and external context
-    // (wiki:*/news:*), which would otherwise grow forever. Evict the LEAST-valuable entries
-    // first by prefix: atext:/news: are bulky and trivially re-fetched; topc:/wiki: are cheap
-    // to rebuild (a few HN item fetches / one API call); AI summaries (sum:/usersum:) are the
-    // most expensive to regenerate (a model run — cloud costs API quota), so keep them longest.
-    // No per-row timestamp exists, so within a tier key order is a stable tiebreak (V8's sort
-    // is stable). (A plain alphabetical evict dropped sum: before topc:/wiki: — an inversion.)
+    // `seen` is capped here because it is not merely stored — the WHOLE of it is read
+    // into a Map on the feed's critical path (`useSeenMap`, a live query over `db.seen.toArray()`),
+    // so it is loaded and rebuilt on every change for the life of the app. One row per story ever
+    // scrolled past grows without bound for a daily reader, and it pays that cost on every load.
+    // Capped like the event log, oldest-first: `seen` only dims a card the reader has already
+    // encountered, so forgetting the oldest entries costs a re-dim of stories from long ago.
+    const seenCount = await db.seen.count();
+    if (seenCount > MAX_SEEN) {
+      const stale = await db.seen.orderBy('ts').limit(seenCount - MAX_SEEN).primaryKeys();
+      await db.seen.bulkDelete(stale);
+    }
+    // Cap the kv table too — it holds fetched article bodies (atext:*, ~5KB each), the term memos
+    // derived from those bodies and from comments (aterms:*/cterms:*), inline top-comment previews
+    // (topc:*) and AI summaries (sum:*/usersum:*), which would otherwise grow forever. Evict the
+    // LEAST-valuable entries first by prefix: atext: is bulky and trivially re-fetched; topc: and
+    // the term memos are cheap to rebuild; AI summaries (sum:/usersum:) are the most expensive to
+    // regenerate (a model run — cloud costs API quota), so keep them longest. No per-row timestamp
+    // exists, so within a tier key order is a stable tiebreak (V8's sort is stable). (A plain
+    // alphabetical evict dropped sum: before topc: — an inversion.)
+    //
+    // `aterms:`/`cterms:` are tiered explicitly rather than falling through to the catch-all. Left
+    // unlisted they landed in tier 2, "expensive, evict last", alongside AI summaries — while the
+    // `atext:` bodies they are DERIVED FROM sit in tier 0 and go first, so eviction could leave a
+    // term memo feeding `termAffinity` for an article body that no longer exists. They are cheap to
+    // recompute from a re-fetch, so they belong beside `topc:`.
+    //
+    // The `wiki:`/`news:` prefixes this list used to name no longer exist: the At-a-glance context
+    // panel that wrote them was deleted, so the comment was describing tiers for keys nothing
+    // produces.
     const MAX_KV = 4000;
     const kvCount = await db.kv.count();
     if (kvCount > MAX_KV) {
       const need = kvCount - MAX_KV;
       const allKeys = (await db.kv.orderBy('key').primaryKeys()) as string[];
       const tier = (k: string) =>
-        k.startsWith('atext:') || k.startsWith('news:')
+        k.startsWith('atext:')
           ? 0 // bulky, cheap to refetch → drop first
-          : k.startsWith('topc:') || k.startsWith('wiki:')
-            ? 1 // cheap to rebuild
-            : 2; // sum:/usersum: and anything else — expensive/important, evict last
+          : k.startsWith('topc:') || k.startsWith('aterms:') || k.startsWith('cterms:')
+            ? 1 // cheap to rebuild (and aterms: must not outlive the atext: it came from)
+            : k.startsWith('model:')
+              ? 3 // the LEARNED MODEL — genuinely last; see below
+              : 2; // sum:/usersum: and anything else — expensive, evicted after the cheap tiers
+      // `model:` needs its OWN tier, because "evict last" is not what tier 2 delivered. Within a
+      // tier the tiebreak is position in the KEY-SORTED list, and 'model:logistic' sorts before
+      // 'sum:' and 'usersum:' — so the single row the learned reranker depends on, the one thing
+      // here that costs a full retrain to rebuild, was the FIRST victim of the supposedly-protected
+      // tier, ahead of every AI summary. It is one small row; there is no space argument for it.
       const victims = allKeys
         .map((k, i) => ({ k, t: tier(k), i }))
         .sort((a, b) => a.t - b.t || a.i - b.i)

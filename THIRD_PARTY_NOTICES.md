@@ -1,8 +1,19 @@
 # Third-party notices
 
-HN Lens is MIT-licensed (see `LICENSE`). It is distributed as a static browser bundle, so
-the runtime dependencies below are redistributed with it. This file lists them, their
-licenses, and any upstream NOTICE text they require.
+Hacker Lens is MIT-licensed (see `LICENSE`). It is distributed as a static browser bundle.
+This file lists the packages in the runtime dependency closure reached through each
+package's own `dependencies`, their licenses, and any upstream NOTICE text they require.
+It also lists the AI models the app downloads to your browser at runtime, which carry
+their own attribution requirements.
+
+Listing is deliberately conservative: a package appears here if it is in that dependency
+closure, whether or not it ends up in the shipped bundle. Some do not — for example `sharp`,
+the Node-only image backend of Transformers.js, which the browser build never imports (see
+`SECURITY.md`). They are listed anyway rather than risk omitting an attribution that is owed.
+
+Scope: optional and peer dependencies are not walked. The only copyleft they would add is the
+`@img/sharp-libvips-*` platform binaries (LGPL-3.0), which are `sharp` optionalDependencies —
+never fetched by the browser build, never in `dist/`, so not redistributed by this project.
 
 Build-time-only packages (`devDependencies`) are not listed: they are not part of the
 shipped bundle and are not redistributed.
@@ -13,38 +24,112 @@ shipped bundle and are not redistributed.
 
 | Package | Version | License |
 | --- | --- | --- |
+| @huggingface/jinja | 0.5.9 | MIT |
+| [@huggingface/tokenizers](https://github.com/huggingface/tokenizers.js#readme) | 0.1.3 | Apache-2.0 |
 | [@huggingface/transformers](https://github.com/huggingface/transformers.js#readme) | 4.2.0 | Apache-2.0 |
+| [@img/colour](https://github.com/lovell/colour) | 1.1.0 | MIT |
 | [@mlc-ai/web-llm](https://github.com/mlc-ai/web-llm) | 0.2.84 | Apache-2.0 |
+| [@protobufjs/aspromise](https://github.com/dcodeIO/protobuf.js) | 1.1.2 | BSD-3-Clause |
+| [@protobufjs/base64](https://github.com/dcodeIO/protobuf.js) | 1.1.2 | BSD-3-Clause |
+| [@protobufjs/codegen](https://github.com/dcodeIO/protobuf.js) | 2.0.5 | BSD-3-Clause |
+| [@protobufjs/eventemitter](https://github.com/dcodeIO/protobuf.js) | 1.1.1 | BSD-3-Clause |
+| [@protobufjs/fetch](https://github.com/dcodeIO/protobuf.js) | 1.1.1 | BSD-3-Clause |
+| [@protobufjs/float](https://github.com/dcodeIO/protobuf.js) | 1.0.2 | BSD-3-Clause |
+| [@protobufjs/path](https://github.com/dcodeIO/protobuf.js) | 1.1.2 | BSD-3-Clause |
+| [@protobufjs/pool](https://github.com/dcodeIO/protobuf.js) | 1.1.0 | BSD-3-Clause |
+| [@protobufjs/utf8](https://github.com/protobufjs/protobuf.js) | 1.1.2 | BSD-3-Clause |
+| [@tanstack/query-core](https://tanstack.com/query) | 5.101.2 | MIT |
 | [@tanstack/react-query](https://tanstack.com/query) | 5.101.2 | MIT |
+| [@types/node](https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/node) | 24.13.3 | MIT |
+| [adm-zip](https://github.com/cthackers/adm-zip) | 0.6.0 | MIT |
+| [boolean](git://github.com/thenativeweb/boolean) | 3.2.0 | MIT |
 | clsx | 2.1.1 | MIT |
+| cookie | 1.1.1 | MIT |
+| [define-data-property](https://github.com/ljharb/define-data-property#readme) | 1.1.4 | MIT |
+| [define-properties](git://github.com/ljharb/define-properties) | 1.2.1 | MIT |
+| [detect-libc](git://github.com/lovell/detect-libc) | 2.1.2 | Apache-2.0 |
+| [detect-node](https://github.com/iliakan/detect-node) | 2.1.0 | MIT |
 | [dexie](https://dexie.org) | 4.4.4 | Apache-2.0 |
 | [dexie-react-hooks](https://dexie.org) | 4.4.0 | Apache-2.0 |
 | [dompurify](https://github.com/cure53/DOMPurify) | 3.4.12 | (MPL-2.0 OR Apache-2.0) |
+| [es-define-property](https://github.com/ljharb/es-define-property#readme) | 1.0.1 | MIT |
+| [es-errors](https://github.com/ljharb/es-errors#readme) | 1.3.0 | MIT |
+| [es6-error](https://github.com/bjyoungblood/es6-error) | 4.1.1 | MIT |
+| escape-string-regexp | 4.0.0 | MIT |
+| [flatbuffers](https://google.github.io/flatbuffers/) | 25.9.23 | Apache-2.0 |
+| [global-agent](https://github.com/gajus/global-agent) | 3.0.0 | BSD-3-Clause |
+| [globalthis](git://github.com/ljharb/System.global) | 1.0.4 | MIT |
+| [gopd](https://github.com/ljharb/gopd#readme) | 1.2.0 | MIT |
+| [guid-typescript](https://github.com/NicolasDeveloper/guid-typescript) | 1.0.9 | ISC |
+| [has-property-descriptors](https://github.com/inspect-js/has-property-descriptors#readme) | 1.0.2 | MIT |
+| [json-stringify-safe](https://github.com/isaacs/json-stringify-safe) | 5.0.1 | ISC |
+| [loglevel](https://github.com/pimterry/loglevel) | 1.9.2 | MIT |
+| [long](https://github.com/dcodeIO/long.js) | 5.3.2 | Apache-2.0 |
 | [lucide-react](https://lucide.dev) | 1.25.0 | ISC |
+| matcher | 3.0.0 | MIT |
+| [object-keys](git://github.com/ljharb/object-keys) | 1.1.1 | MIT |
+| [onnxruntime-common](https://github.com/Microsoft/onnxruntime) | 1.24.3 | MIT |
+| [onnxruntime-node](https://github.com/Microsoft/onnxruntime) | 1.24.3 | MIT |
+| [onnxruntime-web](https://github.com/Microsoft/onnxruntime) | 1.26.0-dev.20260416-b7804b056c | MIT |
+| platform | 1.3.6 | MIT |
+| [protobufjs](https://protobufjs.github.io/protobuf.js/) | 7.6.5 | BSD-3-Clause |
 | [react](https://react.dev/) | 19.2.7 | MIT |
 | [react-dom](https://react.dev/) | 19.2.7 | MIT |
+| [react-router](https://github.com/remix-run/react-router) | 7.18.1 | MIT |
 | [react-router-dom](https://github.com/remix-run/react-router) | 7.18.1 | MIT |
+| [roarr](git@github.com:gajus/roarr) | 2.15.4 | BSD-3-Clause |
+| [scheduler](https://react.dev/) | 0.27.0 | MIT |
+| [semver](https://github.com/npm/node-semver) | 7.8.5 | ISC |
+| [semver-compare](https://github.com/substack/semver-compare) | 1.0.0 | MIT |
+| serialize-error | 7.0.1 | MIT |
+| [set-cookie-parser](https://github.com/nfriedly/set-cookie-parser) | 2.7.2 | MIT |
+| [sharp](https://sharp.pixelplumbing.com) | 0.34.5 | Apache-2.0 |
+| [sprintf-js](https://github.com/alexei/sprintf.js) | 1.1.3 | BSD-3-Clause |
+| type-fest | 0.13.1 | (MIT OR CC0-1.0) |
+| [undici-types](https://undici.nodejs.org) | 7.18.2 | MIT |
 | [zustand](https://github.com/pmndrs/zustand) | 5.0.14 | MIT |
 
 ## Apache License 2.0
 
 The following are licensed under the Apache License, Version 2.0:
 
+- @huggingface/tokenizers 0.1.3
 - @huggingface/transformers 4.2.0
 - @mlc-ai/web-llm 0.2.84
+- detect-libc 2.1.2
 - dexie 4.4.4
 - dexie-react-hooks 4.4.0
 - dompurify 3.4.12
+- flatbuffers 25.9.23
+- long 5.3.2
+- sharp 0.34.5
 
 You may obtain a copy of the license at <https://www.apache.org/licenses/LICENSE-2.0>.
 Unless required by applicable law or agreed to in writing, software distributed under
 the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
 KIND, either express or implied.
 
+## AI models (downloaded to your browser at runtime)
+
+These are not npm packages and are not in the bundle; the app fetches them on demand from
+the model host when you enable on-device AI. They are listed here because their licenses
+require attribution when the model is used in a product.
+
+| Model | License |
+| --- | --- |
+| [Llama 3.2 (Meta)](https://github.com/meta-llama/llama-models/blob/main/models/llama3_2/LICENSE) | Llama 3.2 Community License |
+| [all-MiniLM-L6-v2 (via Xenova ONNX)](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2) | Apache-2.0 |
+| [bge-small-en-v1.5 (BAAI, via Xenova ONNX)](https://huggingface.co/BAAI/bge-small-en-v1.5) | MIT |
+| [gte-small (via Xenova ONNX)](https://huggingface.co/thenlper/gte-small) | MIT |
+
+**Built with Llama.**
+
 ## Dual-licensed packages
 
-- **dompurify** 3.4.12 — offered as `(MPL-2.0 OR Apache-2.0)`. HN Lens elects the
+- **dompurify** 3.4.12 — offered as `(MPL-2.0 OR Apache-2.0)`. Hacker Lens elects the
   **Apache-2.0** option, so its terms are covered by the section above.
+- **type-fest** 0.13.1 — offered as `(MIT OR CC0-1.0)`. Hacker Lens elects the
+  **MIT** option.
 
 ## Upstream NOTICE files
 

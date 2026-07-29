@@ -30,10 +30,10 @@ await page.waitForTimeout(400);
 
 const body = () => page.evaluate(() => document.body.innerText);
 // Hint-specific phrasing (avoid matching the "Enable embeddings" toggle / "Retrain now"
-// button that also live on the Settings page). The learned hint says the reranker trains
-// itself automatically as you read (there is NO "Train from history" button).
+// button that also live on the Settings page). Per SPEC §2.4 the hint must NOT promise training
+// happens "as you read" — retraining runs only while the tab is hidden.
 const RELEVANCE_HINT = /enable Embeddings in Settings/i;
-const LEARNED_HINT = /trains itself automatically.*Retrain now/i;
+const LEARNED_HINT = /retrains in the background.*Retrain now/i;
 const AFFINITY_HINT = /grows as you follow/i;
 let t = await body();
 check('affinity shows inactive hint (no data)', AFFINITY_HINT.test(t), '');

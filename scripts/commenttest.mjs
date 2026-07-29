@@ -1,6 +1,6 @@
 // Functional test for comment ORGANIZATION (#2) and RANKING (#3), over a mocked
 // Algolia item tree. Asserts concrete behaviour, not "it renders":
-//   - sort control offers Default / Newest / Oldest / Most replies and reorders
+//   - sort control offers Default / Newest / Oldest / Replies and reorders
 //   - the story author gets an OP badge
 //   - large reply subtrees auto-collapse behind a "Show N replies" button (recursive)
 //   - collapsing a comment hides its body/replies
@@ -84,7 +84,7 @@ const topAuthors = () =>
   );
 
 // ---- sort control exists with all four options ----
-for (const label of ['Default', 'Newest', 'Oldest', 'Most replies']) {
+for (const label of ['Default', 'Newest', 'Oldest', 'Replies']) {
   const n = await page.getByRole('button', { name: label, exact: true }).count();
   check(`sort option "${label}" present`, n > 0);
 }
@@ -148,8 +148,15 @@ check(
 }
 
 // ---- C1: in-thread comment search (flat filter) ----
-const searchBox = page.getByPlaceholder('Search this discussion…');
+// Search is now a TOOL on the discussion toolbar rather than a box parked above the comments —
+// the four stacked blocks that used to sit there pushed the first comment 493px down an 800px
+// viewport. It opens on demand (click, or the `l` key) into a tray inside the sticky region, with
+// its input focused so the reader can type immediately.
+await page.getByRole('button', { name: /^Search$/ }).first().click();
+await page.waitForTimeout(250);
+const searchBox = page.getByPlaceholder('Find in this discussion…');
 check('C1: in-thread search box present', (await searchBox.count()) > 0);
+check('C1: opening Search focuses its input', await page.evaluate(() => document.activeElement?.getAttribute('aria-label') === 'Search comments in this discussion'));
 await searchBox.fill('original poster');
 await page.waitForTimeout(350);
 {
@@ -176,7 +183,12 @@ await page.waitForTimeout(300);
     (await page.getByRole('button', { name: 'Default', exact: true }).count()) > 0 &&
       /oldest top-level comment/.test(restored)
   );
-  check('C1: the summary/gist panel returns after clearing search', /Summarize or ask about this discussion|Quick gist/i.test(restored));
+  // The summary/gist is no longer parked above the comments; it is a TOOL on the toolbar. What must
+  // be true after clearing search is that it is reachable again, not that a panel reappeared.
+  check(
+    'C1: the summary/gist tool is available again after clearing search',
+    (await page.getByRole('button', { name: /^Summary$/ }).count()) > 0
+  );
 }
 
 // ---- C1: "In thread" on a SHALLOW (in-tree) comment EXITS search AND scrolls it into view ----
@@ -242,8 +254,8 @@ authors = await topAuthors();
 console.log('  [oldest] top authors:', JSON.stringify(authors));
 check('Oldest sort: oldest comment (aresant) is first', authors[0] === 'aresant', authors[0]);
 
-// ---- Most replies sort puts the most-replied comment first ----
-await page.getByRole('button', { name: 'Most replies', exact: true }).click();
+// ---- Replies sort puts the most-replied comment first ----
+await page.getByRole('button', { name: 'Replies', exact: true }).click();
 await page.waitForTimeout(300);
 authors = await topAuthors();
 console.log('  [replies] top authors:', JSON.stringify(authors));
@@ -283,19 +295,38 @@ await page.waitForTimeout(400);
 const newBadges = await page.getByText('new', { exact: true }).count();
 check('comments newer than last visit show a "new" badge', newBadges >= 1, `${newBadges} badge(s)`);
 
+// ---- reply-pill repliers preview contrast (WCAG 1.4.11 twin) ----
+// The collapsed "N replies" pill for a subtree with unread replies uses text-fg on an accent tint
+// for its LABEL (a fix already applied). The repliers-preview span ("· d0") must match it, not sit
+// at the fainter --muted, which measures <AA on that tint. Assert the span's rendered color equals
+// the pill's, on a newInside pill (border-accent + a "new" badge), rather than its markup.
+const replyPill = await page.evaluate(() => {
+  for (const p of document.querySelectorAll('button.replies-toggle')) {
+    const hasNew = [...p.querySelectorAll('span')].some((s) => s.textContent.trim() === 'new');
+    if (!hasNew) continue;
+    const span = [...p.querySelectorAll('span')].find((s) => s.textContent.trim().startsWith('\u00b7'));
+    if (!span) continue;
+    return { pill: getComputedStyle(p).color, span: getComputedStyle(span).color };
+  }
+  return null;
+});
+check('reply-pill repliers preview matches the pill text color (AA on the accent tint)',
+  replyPill !== null && replyPill.pill === replyPill.span, JSON.stringify(replyPill));
+
 // ---- C1: catch-up "new since last visit" jumper ----
 check(
   'C1: catch-up jump button present when there are new comments',
-  (await page.getByRole('button', { name: /new since last visit/i }).count()) >= 1
+  // Label shortened to "N new" so the control fits the single toolbar row.
+  (await page.getByRole('button', { name: /\d+\s+new/i }).count()) >= 1
 );
 // C-1: the count must reflect ALL new comments (incl. beyond-cap ones), and the cycler
 // must be able to reach them. With seen seeded ~8000s ago, everything except aresant(10)
 // and its early replies is new = 10 (op_user, newguy, deeproot 40 + its 7-deep chain).
 check(
   'C1: catch-up count reflects all new comments (incl. beyond-cap)',
-  /\b10 new since last visit\b/i.test(await page.locator('body').innerText())
+  /\b10 new\b/i.test(await page.locator('body').innerText())
 );
-await page.getByRole('button', { name: /new since last visit/i }).click();
+await page.getByRole('button', { name: /\d+\s+new/i }).click();
 await page.waitForTimeout(300);
 const caughtUp = await page.evaluate(() => document.querySelector('.kbd-selected')?.id || '');
 check('C1: catch-up jumps to a new comment', caughtUp === 'comment-20', caughtUp);

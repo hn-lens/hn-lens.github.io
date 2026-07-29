@@ -11,9 +11,9 @@
 // removed from the profile it belongs to, so a story is never compared against a
 // profile that already contains it (which would leak the label).
 //
-// Hard limit: linked ARTICLE bodies can't be read in-browser (arbitrary sites have
-// no CORS), so "content" here means titles, HN self-text, and HN comments — all of
-// which are fetchable — never the external page text.
+// "content" here is titles, HN self-text, and HN comments (all CORS-fetchable), PLUS linked
+// article text when the opt-in reader proxy is enabled — the one path past the article-body CORS
+// wall. Article terms are read from cache only (see `enrichmentTermsFor`).
 import { db, kvGet, kvSet } from '../db';
 import { getCachedItems } from '../hn/client';
 import { getEngagedItemIds, getDislikedItemIds } from '../interactions';
@@ -103,12 +103,10 @@ async function commentTermsFor(items: HnItem[], maxItems = 20, maxComments = 6):
 }
 
 /** Extra content terms per engaged item: top comments, and (opt-in) linked-article text.
- *  Article terms are read from the CACHE only — never fetched here. Profile-building runs
- *  inside training/auto-train, which must not do live network I/O (a hung/unreachable proxy
- *  would stall the background retrain and the ['ranker'] refetch). Engaged items are ones you
- *  OPENED (or summarized), so their bodies are already cached by the on-click/summary fetch;
- *  reading the cache keeps profiling fast and consistent with the embeddings + candidate paths
- *  (both already cache-only). */
+ *
+ *  ARTICLE terms are cache-only — never fetched here, because a hung reader proxy would stall the
+ *  background retrain. COMMENT terms are NOT cache-only: with `withComments`, `commentTermsFor`
+ *  fetches up to 20 comment trees sequentially on a cache miss, each bounded by `fetchWithTimeout`. */
 async function enrichmentTermsFor(
   items: HnItem[],
   opts: { withComments?: boolean; fetchArticle?: boolean }

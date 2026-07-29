@@ -34,7 +34,9 @@ const json = (r, x) => r.fulfill({ status: 200, contentType: 'application/json',
 await page.route(/hacker-news\.firebaseio\.com/, (r) => {
   const u = r.request().url();
   const mu = u.match(/user\/([^.]+)\.json/);
-  if (mu) return json(r, mu[1] === 'testuser' ? USER : null); // unknown users → null
+  // A backend outage must be distinguishable from a genuinely-absent user.
+  if (mu && mu[1] === 'outageuser') return r.fulfill({ status: 503, contentType: 'text/plain', body: 'upstream error' });
+  if (mu) return json(r, mu[1] === 'testuser' ? USER : null); // unknown users → null (200)
   const mi = u.match(/item\/(\d+)\.json/);
   if (mi) return json(r, ITEMS[mi[1]] ?? FEED[mi[1]] ?? null);
   if (/topstories/.test(u)) return json(r, [501]);
@@ -121,6 +123,15 @@ await page.waitForTimeout(500);
 await page.goto(`${BASE}#/user/nobody`, { waitUntil: 'domcontentloaded' });
 await page.waitForFunction(() => /User not found|no Hacker News user/i.test(document.body.innerText), null, { timeout: 15000 }).catch(() => {});
 check('unknown user shows a "User not found" state', /User not found/i.test(await page.locator('main').innerText()));
+
+// ---- OUTAGE (503) must NOT look like a missing user; it must offer Retry ----
+await page.goto(`${BASE}#/user/outageuser`, { waitUntil: 'domcontentloaded' });
+await page.waitForFunction(() => /couldn.t load|try again|retry|not found/i.test(document.body.innerText), null, { timeout: 15000 }).catch(() => {});
+{
+  const outage = await page.locator('main').innerText();
+  check('a profile OUTAGE shows a "couldn\u2019t load" error, not "User not found"', /couldn.t load|couldn.t reach|try again/i.test(outage) && !/User not found/i.test(outage), outage.replace(/\s+/g, ' ').slice(0, 140));
+  check('a profile outage offers a Retry control', (await page.getByRole('button', { name: /retry|try again/i }).count()) >= 1, '');
+}
 
 // ---- a feed card's author name navigates to the in-app profile ----
 await page.goto(`${BASE}#/?feed=top`, { waitUntil: 'domcontentloaded' });

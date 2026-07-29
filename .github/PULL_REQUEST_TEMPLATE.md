@@ -1,4 +1,4 @@
-<!-- Thanks for contributing to HN Lens! -->
+<!-- Thanks for contributing to Hacker Lens! -->
 
 ## What this changes
 

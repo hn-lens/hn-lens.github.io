@@ -1,5 +1,11 @@
 import { useEffect, useState, useRef} from 'react';
 
+// SPLIT BY SURFACE, because three keys are rebound on a discussion page and a flat list could only
+// ever be wrong about them. `CommentsView` takes `s`, `l` and `a` for its toolbar tools while
+// `/item` is open, so a reader following the old flat help pressed `s` to save the story they were
+// reading, got a Summary panel, and reasonably concluded the app had ignored them — with a Save
+// control sitting in the header. `a` was the one keyboard-only feature and the help never mentioned
+// it. Every row here must do what it says ON THE SURFACE IT IS LISTED UNDER.
 const SHORTCUTS: Array<[string, string]> = [
   ['j / k', 'Next / previous story (or comment)'],
   ['[ / ]', 'Prev / next comment (skip replies)'],
@@ -12,6 +18,13 @@ const SHORTCUTS: Array<[string, string]> = [
   ['/', 'Focus search'],
   ['?', 'Toggle this help'],
   ['Esc', 'Close this help'],
+];
+
+/** Keys that mean something DIFFERENT while a discussion (`/item/:id`) is open. */
+const DISCUSSION_SHORTCUTS: Array<[string, string]> = [
+  ['l', 'Find in this discussion'],
+  ['s', 'Summary of this discussion'],
+  ['a', 'Ask this discussion (needs AI configured)'],
 ];
 
 // j/k navigate the CURRENT list: comments when a discussion page is open (/item),
@@ -40,6 +53,7 @@ function switchTab(dir: -1 | 1): void {
   if (next !== cur) tabs[next].click();
 }
 
+import { X } from 'lucide-react';
 import { useModalBehavior } from '../hooks/useModalBehavior';
 
 export default function KeyboardShortcuts() {
@@ -175,26 +189,45 @@ export default function KeyboardShortcuts() {
     <div
       className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4"
       onClick={() => setHelpOpen(false)}
-      role="dialog"
-      aria-modal="true"
-      ref={dialogRef}
-      tabIndex={-1}
-      aria-label="Keyboard shortcuts"
     >
-      {/* Clamp + scroll, like every other dialog in the app. This was the one modal with neither,
-          and `useModalBehavior` sets body{overflow:hidden} while it is open — so in any landscape
-          phone orientation the card spilled past the bottom of the screen with no scroll container
-          anywhere and the last rows were simply unreachable (measured +28 to +156px). What got cut
-          off was the "everything is also reachable with Tab/Shift+Tab + Enter" note: the
-          accessibility escape hatch, lost exactly where keyboard help matters most. */}
+      {/* The DIALOG is the scroll container, not the overlay. `useModalBehavior` moves focus to the
+          first focusable child (the close button below) — which lives inside this scrollable card, so
+          ArrowDown / PageDown / End / Space and Tab all reach the content below the fold. When the
+          ref sat on the overlay, focus landed on a non-scrollable element and a keyboard user could
+          not reach the last rows (the "reachable with Tab" note) at all, though the wheel worked. */}
       <div
-        className="max-h-[85vh] w-full min-w-0 max-w-sm overflow-y-auto rounded-xl border border-border bg-surface p-5 shadow-2xl"
+        className="relative max-h-[85vh] w-full min-w-0 max-w-sm overflow-y-auto rounded-xl border border-border bg-surface p-5 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        ref={dialogRef}
+        tabIndex={-1}
+        aria-label="Keyboard shortcuts"
       >
+        <button
+          type="button"
+          onClick={() => setHelpOpen(false)}
+          aria-label="Close keyboard shortcuts"
+          className="absolute right-3 top-3 rounded-md border border-edge p-1 text-muted hover:text-fg"
+        >
+          <X className="size-4" />
+        </button>
         <h2 className="mb-3 text-sm font-semibold">Keyboard shortcuts</h2>
         <dl className="space-y-1.5 text-sm">
           {SHORTCUTS.map(([k, d]) => (
             <div key={k} className="flex items-center justify-between gap-4">
+              <dt className="text-muted">{d}</dt>
+              <dd>
+                <kbd className="rounded border border-border bg-surface-2 px-1.5 py-0.5 text-xs">{k}</kbd>
+              </dd>
+            </div>
+          ))}
+        </dl>
+        <h3 className="mb-2 mt-4 text-sm font-semibold">On a discussion page</h3>
+        <p className="mb-2 text-xs text-muted">These three do something different while you have a discussion open:</p>
+        <dl className="space-y-1.5 text-sm">
+          {DISCUSSION_SHORTCUTS.map(([k, d]) => (
+            <div key={`disc-${k}`} className="flex items-center justify-between gap-4">
               <dt className="text-muted">{d}</dt>
               <dd>
                 <kbd className="rounded border border-border bg-surface-2 px-1.5 py-0.5 text-xs">{k}</kbd>

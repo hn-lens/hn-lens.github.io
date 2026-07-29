@@ -10,6 +10,7 @@ import {
   BarChart3,
   Bookmark,
   BookmarkCheck,
+  EyeOff,
   FileText,
   MessageSquare,
   MoreHorizontal,
@@ -26,6 +27,7 @@ import SummaryActions from '../SummaryActions';
 import type { ChatMessage } from '../../lib/models/llm';
 import { useModelStore } from '../../lib/models/registry';
 import { hideItem, markSeen, toggleSaved, unhideItem } from '../../hooks/useLocalData';
+import { clearAllPinnedOrders, hiddenStubHeight, markHiddenInSession, unmarkHiddenInSession } from '../../lib/feedSession';
 import { toast } from '../../hooks/useToast';
 import { trackForItem } from '../../lib/interactions';
 import { markArticleOpen } from '../../lib/dwell';
@@ -62,17 +64,27 @@ function StoryCard({
   rank,
   index,
   total,
-  explain,
+  explainable,
+  explainFor,
   allowHide = true,
+  hiddenStub = false,
 }: {
   item: HnItem;
   reasons: string[];
   seen: boolean;
   saved: boolean;
   rank?: number;
+  hiddenStub?: boolean; // hidden this session: hold the slot instead of collapsing the list
   index?: number; // 1-based position in the feed; shown only by list/compact layouts (CSS)
   total?: number;
-  explain?: RankExplanation;
+  /** Whether a rank traceback exists for this card (For You only). */
+  explainable?: boolean;
+  /**
+   * Pulls the explanation on demand. A STABLE function, never a fresh object per card: handing each
+   * card a new `RankExplanation` on every re-rank defeated this component's `memo` for the entire
+   * list, so one save cost ~197ms of blocked frames at 90 cards. Called only when the dialog opens.
+   */
+  explainFor?: (id: number) => RankExplanation | undefined;
   allowHide?: boolean;
 }) {
   const ref = useImpression<HTMLElement>(item);
@@ -114,6 +126,10 @@ function StoryCard({
   const articleDialogRef = useRef<HTMLDivElement>(null);
   useModalBehavior(articleDialogRef, showTldrArticle);
   const [showExplain, setShowExplain] = useState(false);
+  // Built only while the dialog is open, from the latest ranking. Deliberately NOT memoized: it
+  // runs once per open, and memoizing it would put the ranking inputs back into this component's
+  // dependencies — the exact coupling that made every card re-render on every save.
+  const explainDetail = showExplain ? explainFor?.(item.id) : undefined;
   // Lazy-load the inline top comment only once the card scrolls near the viewport, so the
   // feed doesn't fetch a comment tree per card on load.
   const [inView, setInView] = useState(false);
@@ -168,12 +184,14 @@ function StoryCard({
   const topComment = showTopComments
     ? (topCommentsQ.data ?? []).find((c) => !mutedUsers.includes(c.by)) ?? null
     : null;
-  // Will a preview probably appear here? Known at FIRST PAINT from the story's own comment count,
-  // which is why the space can be reserved before the fetch resolves. Once the query has settled
-  // with nothing usable (every candidate from a muted author, or no readable comment), stop
-  // reserving — holding empty space forever would be its own defect.
-  const expectsTopComment =
-    showTopComments && !previewHiddenByLayout && comments > 0 && !topCommentsQ.isFetched;
+  // Known at FIRST PAINT from the story's own comment count, so the space is reserved before the
+  // fetch resolves and HELD whatever it returns.
+  const mayHaveTopComment =
+    showTopComments && !previewHiddenByLayout && comments > 0 && (item.kids?.length ?? 0) > 0;
+  const expectsTopComment = mayHaveTopComment && !topCommentsQ.isFetched;
+  // Once space has been reserved it is HELD, even if the fetch settles with nothing usable. See
+  // review/README.md (c3r20 batch 2).
+  const settledEmpty = mayHaveTopComment && topCommentsQ.isFetched && !topComment;
   // One node feeds both the impression observer (useImpression) and the in-view lazy-load
   // observer below.
   const setCardRef = useCallback(
@@ -183,6 +201,19 @@ function StoryCard({
     },
     [ref]
   );
+
+  // The card's rendered height, kept current while it IS a card, so the dismissal placeholder can
+  // stand in at the same size instead of collapsing the row (see the `hiddenStub` branch below).
+  // Recorded into the SESSION, not just a ref. A ref is destroyed by a reload, and a reload
+  // continues the session — so the placeholder fell back to its natural single-line height and the
+  // list jumped 86-103px on the one navigation the session model promises changes nothing.
+  const lastCardHeight = useRef(0);
+  useLayoutEffect(() => {
+    if (hiddenStub) return;
+    const h = ref.current?.offsetHeight ?? 0;
+    if (h > 0) lastCardHeight.current = h;
+  });
+  const stubHeight = hiddenStub ? lastCardHeight.current || hiddenStubHeight(item.id) : undefined;
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -205,12 +236,9 @@ function StoryCard({
   useLayoutEffect(() => {
     const el = menuContentRef.current;
     if (!menuOpen || !el) return;
-    // Re-clamp on any VIEWPORT CHANGE too, not only when the menu opens.
-    //
-    // The clamp ran once on open, so rotating a phone (or any resize) while the menu was up left it
-    // stranded: 0-40% of it on screen in 6 of 6 layouts, with no way to see what was being chosen.
-    // The geometry it was clamped against no longer exists after a resize, so the answer has to be
-    // recomputed rather than kept.
+    // Clamped on open; CLOSED on any later viewport change (see the listener below) — after a
+    // resize the card has usually moved to a different column, so there is no correct position to
+    // re-clamp to.
     const clamp = () => {
         el.style.transform = 'none';
       const r = el.getBoundingClientRect();
@@ -227,17 +255,41 @@ function StoryCard({
       let dy = 0;
       const overflowBottom = r.bottom - (window.innerHeight - pad);
       if (overflowBottom > 0) {
-        // Lift by however much hangs below the fold, but never past the top edge.
-        dy = -Math.min(overflowBottom, Math.max(0, r.top - pad));
+        // THE MENU MUST NEVER COVER ITS OWN TRIGGER.
+        //
+        // The comment above promised a flip; the code only ever nudged, which is worse than doing
+        // nothing. Lifting by the amount hanging below the fold slid the menu up OVER the ⋯ button,
+        // so the natural "tap ⋯ again to close" landed on a menu ITEM. Measured: an item sat under
+        // the tap point in 22 of 55 cells (most often `Mute <user>`), and 4 of 5 touch cells plus
+        // 9 of 18 mouse cells actually mutated the reader's mutes/follows. A dismissal silently
+        // muting an author is the worst outcome a mis-tap can have.
+        //
+        // Flip fully ABOVE the trigger when there is room; otherwise nudge up but stop short of the
+        // trigger's top edge. Either way the trigger stays uncovered and a second tap closes.
+        const trigger = menuRef.current?.getBoundingClientRect();
+        const gap = 4;
+        const roomAbove = (trigger?.top ?? r.top) - pad;
+        if (trigger && roomAbove >= r.height + gap) {
+          dy = trigger.top - gap - r.bottom; // menu's bottom sits just above the trigger
+        } else {
+          const maxLift = trigger
+            ? Math.max(0, r.bottom - (trigger.top - gap)) // never rise past the trigger
+            : Math.max(0, r.top - pad);
+          dy = -Math.min(overflowBottom, maxLift);
+        }
       }
       if (dx || dy) el.style.transform = `translate(${dx}px, ${dy}px)`;
     };
     clamp();
-    window.addEventListener('resize', clamp);
-    window.addEventListener('orientationchange', clamp);
+    // Re-clamping is not enough on a rotate: the card itself moves to a different column, so the
+    // menu's anchor is somewhere else entirely and no clamp recovers it (measured 0% visible, 3/3,
+    // with no self-heal). Close it instead. See review/README.md (c3r20 batch 2).
+    const closeOnResize = () => setMenuOpen(false);
+    window.addEventListener('resize', closeOnResize);
+    window.addEventListener('orientationchange', closeOnResize);
     return () => {
-      window.removeEventListener('resize', clamp);
-      window.removeEventListener('orientationchange', clamp);
+      window.removeEventListener('resize', closeOnResize);
+      window.removeEventListener('orientationchange', closeOnResize);
     };
   }, [menuOpen]);
 
@@ -276,11 +328,22 @@ function StoryCard({
     setMenuOpen(false);
   };
   const muteDomain = () => {
+    const wasMuted = domMuted;
     toggleMuteDomain(domain);
     toast(
-      domMuted
+      wasMuted
         ? { message: `Unmuted ${domain}` }
-        : { message: `Muted ${domain}`, actionLabel: 'Undo', onAction: () => toggleMuteDomain(domain) }
+        : {
+            message: `Muted ${domain}`,
+            actionLabel: 'Undo',
+            onAction: () => {
+              toggleMuteDomain(domain);
+              unmarkHiddenInSession(item.id);
+              // The pin drops a filtered-out story, so un-muting alone could not bring the other
+              // rows back — the Undo reverted the pref and nothing visible changed.
+              clearAllPinnedOrders();
+            },
+          }
     );
     setMenuOpen(false);
   };
@@ -296,11 +359,20 @@ function StoryCard({
   };
   const muteUser = () => {
     if (!item.by) return;
+    const wasMuted = userMuted;
     toggleMuteUser(item.by);
     toast(
-      userMuted
+      wasMuted
         ? { message: `Unmuted ${item.by}` }
-        : { message: `Muted ${item.by}`, actionLabel: 'Undo', onAction: () => item.by && toggleMuteUser(item.by) }
+        : {
+            message: `Muted ${item.by}`,
+            actionLabel: 'Undo',
+            onAction: () => {
+              if (item.by) toggleMuteUser(item.by);
+              unmarkHiddenInSession(item.id);
+              clearAllPinnedOrders();
+            },
+          }
     );
     setMenuOpen(false);
   };
@@ -337,10 +409,21 @@ function StoryCard({
   // keep the training pipeline unchanged.
   const onHide = () => {
     void hideItem(item);
+    // Keep the ROW as a placeholder for the rest of the session so the list does not shift under
+    // the reader's next click. The hide itself is immediate everywhere else.
+    // Carry the measured height across a reload alongside the id (see `hiddenStubHeight`).
+    markHiddenInSession(item.id, lastCardHeight.current || undefined);
     toast({
       message: "Not interested — you'll see fewer like this",
       actionLabel: 'Undo',
-      onAction: () => void unhideItem(item.id, item), // pass item so Undo cancels the hide's affinity (restores rank)
+      onAction: () => {
+        // Clear the DB record first, then the placeholder. Dropping the placeholder while
+        // `db.hidden` still holds the id leaves the row failing both tests for one render, which
+        // drops it from the pinned order — it then returns as a newcomer at the end of the list
+        // instead of in the slot it was dismissed from.
+        void unhideItem(item.id, item) // pass item so Undo cancels the hide's affinity
+          .finally(() => unmarkHiddenInSession(item.id));
+      },
     });
   };
   const onSave = () => {
@@ -385,6 +468,46 @@ function StoryCard({
     }
   };
 
+  // Hidden THIS session: keep the slot, so nothing below jumps up under the reader's next click.
+  // The hide is already real everywhere else — this is only about not moving the page.
+  //
+  // The slot keeps the REPLACED CARD'S HEIGHT, not the placeholder's natural one. A single-line row
+  // is ~75px shorter than the card it stands in for, so the list still moved most of a card upward
+  // — more than half the jump this placeholder exists to prevent, and enough to change what sits
+  // under a moving cursor or thumb. `lastCardHeight` is captured on every non-stub layout and
+  // survives the flip because this is the same component instance (same key).
+  if (hiddenStub) {
+    return (
+      <article
+        data-id={item.id}
+        data-hidden-stub="true"
+        style={stubHeight ? { minHeight: stubHeight } : undefined}
+        className="story-card flex items-center rounded-xl border border-dashed border-edge bg-surface/40 px-3.5 py-2.5"
+      >
+        <div className="flex w-full items-center gap-2 text-xs text-muted">
+          <EyeOff className="size-3.5 shrink-0" />
+          <span className="min-w-0 truncate">Hidden — {item.title}</span>
+          <button
+            type="button"
+            onClick={() => {
+              // DB record first, THEN the placeholder — the same order the toast Undo uses. Clearing
+              // the placeholder while `db.hidden` still holds the id leaves the row failing both arms
+              // of useFeed's keep-test for one render, which drops it from the pinned order; it then
+              // returns as a newcomer at the END of the list instead of its own slot.
+              void unhideItem(item.id, item).finally(() => unmarkHiddenInSession(item.id));
+            }}
+            className="ml-auto shrink-0 font-medium text-accent hover:underline"
+          >
+            {/* "Restore", not "Undo": the toast that appears at the same moment already has an Undo,
+                and two controls sharing one accessible name is ambiguous for a screen reader and
+                for automation. The toast is the transient affordance; this is the durable one. */}
+            Restore
+          </button>
+        </div>
+      </article>
+    );
+  }
+
   return (
     <article
       ref={setCardRef}
@@ -413,15 +536,14 @@ function StoryCard({
         <div className="sc-body min-w-0 flex-1">
           <div className="sc-meta flex items-center gap-1.5 text-xs text-muted">
             {domain ? (
-              <button
-                type="button"
-                onClick={followDomain}
-                title={domFollowed ? `Unfollow ${domain}` : `Follow ${domain}`}
-                className="relative z-10 inline-flex max-w-[60%] items-center gap-1 truncate hover:text-accent hover:underline"
-              >
+              // Display only — NOT a tap target. It sits 2px above the title and had no rest
+              // affordance (looked like plain muted text), so a borderless one-tap FOLLOW here was a
+              // mis-tap hazard: a thumb aimed at the headline followed the site. Follow/unfollow lives
+              // in the ⋯ Personalize menu (and the Star below still shows the followed state).
+              <span className="inline-flex max-w-[60%] items-center gap-1 truncate" title={domain}>
                 {domFollowed && <Star className="size-3 shrink-0 fill-accent text-accent" />}
                 <span className="truncate">{domain}</span>
-              </button>
+              </span>
             ) : (
               <span>discussion</span>
             )}
@@ -482,7 +604,7 @@ function StoryCard({
             )}
           </h3>
 
-          {(reasons.length > 0 || (explain && typeof rank === 'number')) && (
+          {(reasons.length > 0 || (explainable && typeof rank === 'number')) && (
             <div className="sc-reasons mt-1.5 flex flex-wrap items-center gap-1.5">
               {reasons.map((r) => (
                 // Label in --fg for AA: text-accent on the accent/10 tint is a different (lower)
@@ -496,11 +618,14 @@ function StoryCard({
                   {r}
                 </span>
               ))}
-              {explain && typeof rank === 'number' && (
+              {explainable && typeof rank === 'number' && (
                 <button
                   type="button"
                   onClick={() => setShowExplain(true)}
-                  aria-label={`Why is this ranked number ${rank}`}
+                  // WCAG 2.5.3 (Label in Name): the accessible name must CONTAIN the visible label,
+                  // so speech control works when someone says what they can see. "Why is this ranked
+                  // number 3" does not contain "Why #3?" — the visible text leads, explanation after.
+                  aria-label={`Why #${rank}? See how this story was ranked`}
                   className="relative z-10 inline-flex items-center gap-1 rounded-full border border-edge px-2 py-0.5 text-xs text-muted hover:bg-surface-2 hover:text-fg"
                 >
                   <BarChart3 className="size-3" /> Why #{rank}?
@@ -557,6 +682,12 @@ function StoryCard({
               <div className="mt-1 h-[0.95rem] w-2/3 rounded bg-surface-2" />
             </div>
           )}
+          {settledEmpty && (
+            <div className="sc-topcomment-skeleton mt-2 pl-3" aria-hidden="true">
+              <div className="h-[1.05rem]" />
+              <div className="mt-1 h-[0.95rem]" />
+            </div>
+          )}
           {topComment && (
             <div className="sc-topcomment relative z-10 mt-2 border-l-2 border-edge pl-3">
               {/* rem for the same reason as .sc-title above: this preview is reading text, so it
@@ -579,7 +710,7 @@ function StoryCard({
                   onClick={onOpenComments}
                   className="font-semibold text-accent hover:underline"
                 >
-                  Read {comments} comments →
+                  Read {comments} {comments === 1 ? 'comment' : 'comments'} →
                 </button>
               </div>
             </div>
@@ -696,12 +827,13 @@ function StoryCard({
         </div>
       </div>
 
-      {showExplain && explain && typeof rank === 'number' && (
+      {/* Built HERE, when the dialog is actually open — the only moment it is needed. */}
+      {showExplain && typeof rank === 'number' && explainDetail && (
         <RankExplainDialog
           rank={rank}
           total={total ?? rank}
           title={item.title ?? ''}
-          explain={explain}
+          explain={explainDetail}
           onClose={() => setShowExplain(false)}
         />
       )}
@@ -762,8 +894,14 @@ function StoryCard({
   );
 }
 
-// Memoized: the feed re-renders on a 30s "updated Xm ago" tick and on unrelated store
-// changes; StoryCard takes no function props (it uses internal hooks), so a shallow-props
-// memo skips those parent-driven re-renders while its own live-query subscriptions still
-// update it. `item`/`reasons`/`explain` refs are stable across the tick (useFeed memoizes them).
+// Memoized: the feed re-renders on a 30s "updated Xm ago" tick and on unrelated store changes, so a
+// shallow-props memo skips those parent-driven re-renders while this component's own live-query
+// subscriptions still update it.
+//
+// The memo only pays off while EVERY prop identity is stable across such a render. `item` and
+// `reasons` are memoized by `useFeed` (and plain feeds share one `NO_REASONS` constant). The one
+// function prop, `explainFor`, has an empty-dependency `useCallback` and so never changes — it is a
+// function precisely so that this stays true: it replaced a per-card `RankExplanation` OBJECT, which
+// was rebuilt on every re-rank and therefore broke this memo for the whole list on every save, hide
+// or read (measured ~197ms of blocked frames at 90 cards).
 export default memo(StoryCard);

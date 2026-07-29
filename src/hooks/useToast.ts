@@ -5,6 +5,8 @@ export interface Toast {
   message: string;
   actionLabel?: string;
   onAction?: () => void;
+  /** When it appeared, so the action can ignore taps already in flight (see Toaster). */
+  shownAt?: number;
 }
 
 interface ToastStore {
@@ -27,7 +29,7 @@ export const useToast = create<ToastStore>((set) => ({
       // stories all show "Saved") — that piled up and lingered. Toasts with an
       // action (e.g. Hide → Undo) are per-item, so they're never de-duped.
       const dup = !t.onAction && s.toasts.some((x) => !x.onAction && x.message === t.message);
-      let next = dup ? s.toasts : [...s.toasts, { ...t, id }];
+      let next = dup ? s.toasts : [...s.toasts, { ...t, id, shownAt: Date.now() }];
       if (next.length > MAX_TOASTS) next = next.slice(next.length - MAX_TOASTS); // cap concurrent
       return { toasts: next };
     });

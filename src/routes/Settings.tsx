@@ -217,14 +217,14 @@ export default function Settings() {
           checked={prefs.hideReadInFeed}
           onChange={(v) => prefs.set({ hideReadInFeed: v })}
           label="Hide read stories from For You"
-          description="Stories you've already read drop out of For You on the next refresh (they stay in the Read tab). Within a session the feed stays put — nothing is removed while you're reading."
+          description="Stories you've already read drop out of For You when you reload, open a new tab, or press Refresh (they stay in the Read tab). Within a session the feed stays put — nothing is removed while you're reading."
         />
       </Section>
 
       <div id="ranking" className="scroll-mt-20">
         <Section
           title="For You ranking weights"
-          description="Blend the signals used to re-rank your feed. Only affects the For You feed; changes apply when you return to it. Tip: you can also tune these live from the For You sidebar."
+          description="Blend the signals used to re-rank your feed. Only affects the For You feed; changes apply when you return to it. Tip: you can also tune these live from the Tune ranking panel on For You."
         >
           <WeightSliders />
         </Section>
@@ -233,7 +233,7 @@ export default function Settings() {
       <Section
         id="reranker"
         title="Learned reranker (logistic regression)"
-        description="Trains locally on your activity — the stories you read, save or hide, and the ones you scroll past — to predict what you'll engage with. When enabled, it retrains automatically as you browse; the button below just forces an immediate retrain."
+          description="Trains locally on your activity — the stories you read, save or hide, and the ones you scroll past — to predict what you'll engage with. When enabled, it retrains in the background; the button below forces an immediate retrain."
       >
         <Toggle
           checked={prefs.useLearnedRanker}
@@ -352,7 +352,7 @@ export default function Settings() {
       <Section
         id="privacy"
         title="Privacy"
-        description="HN Lens runs entirely in your browser — reading history, ranking, and personalization never leave your device. The two always-relevant exceptions are toggles here: linked-article text (above) and story favicons. AI-related calls (the one-time on-device model download, and a cloud provider if you configure one) are described in the AI section above; read-aloud uses your platform's voice, which may be a network voice."
+        description="Hacker Lens runs entirely in your browser — reading history, ranking, and personalization never leave your device. The two always-relevant exceptions are toggles here: linked-article text (above) and story favicons. AI-related calls (the one-time on-device model download, and a cloud provider if you configure one) are described in the AI section above; read-aloud uses your platform's voice, which may be a network voice."
       >
         <Toggle
           checked={prefs.remoteFavicons}
@@ -410,7 +410,7 @@ export default function Settings() {
                 type="button"
                 onClick={loadLlm}
                 disabled={llmLoading || !gpu}
-                className="inline-flex items-center gap-2 rounded-lg border border-edge px-3 py-2 text-sm hover:bg-surface-2 disabled:opacity-60"
+                className="inline-flex items-center gap-2 rounded-lg border border-edge px-3 py-2 text-sm hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {llmLoading ? <Loader2 className="size-4 animate-spin" /> : <Cpu className="size-4" />}
                 Load model
@@ -481,7 +481,7 @@ export default function Settings() {
                   type="button"
                   onClick={loadCloudModels}
                   disabled={cloudModelsLoading || !prefs.apiKeys[prefs.llmProvider].trim()}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-edge px-3 py-2 text-sm hover:bg-surface-2 disabled:opacity-60"
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-edge px-3 py-2 text-sm hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {cloudModelsLoading ? <Loader2 className="size-4 animate-spin" /> : null}
                   Load models
@@ -756,7 +756,7 @@ function SettingsToc() {
               className={cn(
                 'w-full whitespace-nowrap rounded-lg px-2.5 py-1.5 text-left text-sm transition-colors',
                 active === s.id
-                  ? 'bg-accent/15 font-semibold text-fg'
+                  ? 'bg-accent/15 font-semibold text-fg ring-1 ring-accent'
                   : 'text-muted hover:bg-surface-2 hover:text-fg'
               )}
             >

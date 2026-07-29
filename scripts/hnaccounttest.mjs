@@ -69,6 +69,20 @@ check('shows comment count (from nbHits)', /\b37\b/.test(stats), '');
 check('shows "You post most from" domain', /rust-lang\.org/.test(stats), '');
 check('shows a "Recent posts" title', /Rust internals/.test(stats), '');
 
+// The "You post most from" chips are one-tap FOLLOW controls. They must be perceivable AS controls
+// (WCAG 1.4.11) — the twin of the Sidebar interest chips, which carry `border border-edge`. Assert a
+// rendered border on the unfollowed chip, not its markup.
+const chipBorder = await page.evaluate(() => {
+  const btn = document.querySelector('button[title$="rust-lang.org"]');
+  if (!btn) return null;
+  const cs = getComputedStyle(btn);
+  return { style: cs.borderTopStyle, width: cs.borderTopWidth, color: cs.borderTopColor };
+});
+check('HN-account follow chip has a perceivable border (WCAG 1.4.11), like the Sidebar twin',
+  chipBorder !== null && chipBorder.style === 'solid' && parseFloat(chipBorder.width) >= 1 &&
+    !/rgba\(0,\s*0,\s*0,\s*0\)|transparent/.test(chipBorder.color),
+  JSON.stringify(chipBorder));
+
 // ---- before import: button invites import, no "personalizing" line ----
 check('button reads "Use my history" before import', (await page.getByRole('button', { name: /Use my history/i }).count()) > 0, '');
 check('no "personalizing your feed" line yet', !/personalizing your feed/i.test(stats), '');
@@ -78,6 +92,16 @@ await page.getByRole('button', { name: /Use my history/i }).click();
 await page.waitForFunction(() => /Imported \d+ posts/i.test(document.querySelector('.app-sidebar')?.innerText ?? ''), null, { timeout: 15000 });
 const afterImport = await sidebarText();
 check('import reports what it imported', /Imported 2 posts \+ 1 discussions/i.test(afterImport), '');
+// Poll rather than sample once: the label is driven by `countHnImport()`, a Dexie query that
+// resolves independently of the "Imported N posts" message waited on above, so a single read races
+// it (observed failing ~1 run in 2).
+await page
+  .waitForFunction(
+    () => [...document.querySelectorAll('button')].some((b) => /Re-import/i.test(b.textContent ?? '')),
+    null,
+    { timeout: 10000 }
+  )
+  .catch(() => {});
 check('button flips to "Re-import…"', (await page.getByRole('button', { name: /Re-import/i }).count()) > 0, '');
 
 // ---- reload → the persistent "N … personalizing your feed" line (countHnImport) ----
@@ -87,6 +111,35 @@ const reloaded = await sidebarText();
 // 2 posts (open_link) + 1 discussion (open_comments) = 3 hn_import signals
 check('persistent line shows the import count (3)', /\b3\b of your posts & discussions are personalizing/i.test(reloaded), reloaded.match(/\d+ of your posts/i)?.[0] ?? '');
 check('button still "Re-import…" after reload', (await page.getByRole('button', { name: /Re-import/i }).count()) > 0, '');
+
+// ---------- One failing source must not discard the others ----------
+// The profile and the two searches are INDEPENDENT. Under `Promise.all` a single rejection threw
+// away the results that had already succeeded and the whole lookup returned null — for data that is
+// purely additive, a partial answer beats none. Driven through the real UI: reaching the module by
+// source path does not work against a bundled preview (it returned NO_MODULE and the check passed
+// for the wrong reason).
+{
+  await page.unroute(/hn\.algolia\.com/);
+  await page.route(/hn\.algolia\.com/, (r) => {
+    // ONLY the comment search fails. Profile + story search still succeed.
+    if (/comment/.test(r.request().url())) return r.fulfill({ status: 500, contentType: 'application/json', body: '{}' });
+    return r.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ hits: STORY_HITS, nbHits: 2, page: 0, nbPages: 1, hitsPerPage: STORY_HITS.length }),
+    });
+  });
+  await page.evaluate(() => window.__hnlens.prefs.getState().set({ hnUsername: '' }));
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(() => !!window.__hnlens, null, { timeout: 20000 });
+  await page.waitForTimeout(400);
+  await page.getByPlaceholder('HN username').fill(USER);
+  await page.getByRole('button', { name: 'Connect' }).click();
+  await page.waitForTimeout(2500);
+  const degraded = await sidebarText();
+  check('a failing comment search still shows the profile (karma)', /4,200/.test(degraded), degraded.replace(/\s+/g, ' ').slice(0, 100));
+  check('...and still shows the stories that DID load', /rust-lang\.org/.test(degraded) || /Rust internals/.test(degraded), degraded.replace(/\s+/g, ' ').slice(0, 100));
+}
 
 await b.close();
 console.log(`\n${fails.length === 0 ? 'RESULT: HN ACCOUNT DISPLAYS PASS \u2713' : `RESULT: ${fails.length} FAILED`}`);

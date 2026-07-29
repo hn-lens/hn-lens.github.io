@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../lib/db';
 import { track } from '../lib/interactions';
+import { unmarkHiddenInSession, clearHiddenStubs } from '../lib/feedSession';
 import { domainOf } from '../lib/time';
 import type { HnItem } from '../types';
 
@@ -57,10 +58,16 @@ export async function hideItem(item: HnItem): Promise<void> {
 
 // Pass the item (when the caller has it) so the `unhide` event carries the SAME domain/author as the
 // `hide` it reverses — that's what lets its +2.5 weight cancel the hide's −2.5 in computeAffinities
-// and restore the story's original rank. (Callers without the item still un-hide; the affinity just
-// isn't cancelled — acceptable for the deliberate HiddenDialog path vs. the quick Undo toast.)
+// and restore the story's original rank. Every caller passes it today, including HiddenDialog (an
+// earlier version of this note cited that as the exception; it is not one). The residual case is a
+// story missing from `db.items`, where the item cannot be recovered to pass: it still un-hides, and
+// only the affinity cancellation is lost.
 export async function unhideItem(id: number, item?: { url?: string; by?: string }): Promise<void> {
   await db.hidden.delete(id);
+  // Clear the in-session "Hidden — Restore" placeholder too, so EVERY un-hide path (feed Restore,
+  // the Hidden dialog, Settings bulk) agrees. Without this, un-hiding from the dialog left the feed
+  // still rendering the stub while search showed the story normally.
+  unmarkHiddenInSession(id);
   track({ type: 'unhide', itemId: id, domain: item ? domainOf(item.url) : undefined, author: item?.by });
 }
 
@@ -77,14 +84,27 @@ export function useHiddenCount(): number {
  * siblings and were missed. Domain/author are recovered from the item cache where possible so the
  * +2.5 actually cancels the -2.5 it reverses.
  */
+/** Clear every saved story, emitting the `unsave` events that reverse each save's affinity. */
+export async function unsaveAll(): Promise<void> {
+  const rows = await db.saved.toArray();
+  await db.saved.clear();
+  // ONE bulk read, not one round-trip per row (same reason as getCachedItems).
+  const cached = await db.items.bulkGet(rows.map((r) => r.id));
+  rows.forEach((r, i) => {
+    const item = cached[i]?.item;
+    track({ type: 'unsave', itemId: r.id, domain: domainOf(item?.url), author: item?.by });
+  });
+}
+
 export async function unhideAll(): Promise<void> {
   const rows = await db.hidden.toArray();
   await db.hidden.clear();
-  for (const r of rows) {
-    const cached = await db.items.get(r.id);
-    const item = cached?.item;
+  clearHiddenStubs(); // un-hiding everything leaves no placeholders on any feed
+  const cached = await db.items.bulkGet(rows.map((r) => r.id));
+  rows.forEach((r, i) => {
+    const item = cached[i]?.item;
     track({ type: 'unhide', itemId: r.id, domain: domainOf(item?.url), author: item?.by });
-  }
+  });
 }
 
 // ---------- Interaction signals count ----------

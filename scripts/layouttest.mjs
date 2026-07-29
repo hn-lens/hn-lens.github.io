@@ -123,6 +123,32 @@ check('compact: body is a single flex row', s.bodyDisplay === 'flex', s.bodyDisp
 check('compact: action buttons hidden', s.actionsDisplay === 'none', s.actionsDisplay);
 check('compact: meta line hidden', s.metaDisplay === 'none', s.metaDisplay);
 
+// M10: the revealed "Why #N?" overlay must stay WITHIN its own card. It used to float ABOVE the card
+// (`bottom: calc(100% + 2px)`), painting this card's number over the PREVIOUS row. Needs For You
+// (the "why" overlay is For-You-only) and a real hover (the reveal is under @media (hover:hover)).
+await page.evaluate(() => { window.location.hash = '#/?feed=foryou'; });
+await page.waitForSelector('article.story-card', { timeout: 15000 }).catch(() => {});
+await page.waitForTimeout(700);
+const cardWithReasons = page.locator('article.story-card').filter({ has: page.locator('.sc-reasons') }).nth(2);
+if (await cardWithReasons.count()) {
+  await cardWithReasons.hover().catch(() => {});
+  await page.waitForTimeout(150);
+  const m10 = await cardWithReasons.evaluate((c) => {
+    const reasons = c.querySelector('.sc-reasons');
+    const disp = reasons ? getComputedStyle(reasons).display : 'none';
+    const cr = c.getBoundingClientRect();
+    const rr = reasons?.getBoundingClientRect();
+    return { disp, within: !!rr && rr.top >= cr.top - 2 && rr.bottom <= cr.bottom + 2, cardTop: Math.round(cr.top), cardBottom: Math.round(cr.bottom), rTop: rr ? Math.round(rr.top) : null };
+  });
+  // Only assert containment when the overlay actually revealed (headless may report hover:none, in
+  // which case the reveal — and the defect — cannot occur here; verified separately in real Chrome).
+  if (m10.disp !== 'none') check('M10: compact Why-overlay stays within its own card (not over the neighbour)', m10.within, JSON.stringify(m10));
+  else console.log('  · M10 overlay reveal not active headless (hover:none) — verified in real Chrome; skipping');
+}
+await setLayout('compact'); // restore for any following assertions that assume compact
+await page.evaluate(() => { window.location.hash = '#/?feed=top'; });
+await page.waitForSelector('article.story-card', { timeout: 15000 }).catch(() => {});
+
 // ── magazine ──
 await setLayout('magazine');
 s = await probe();

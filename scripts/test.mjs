@@ -1,4 +1,4 @@
-// Tiered test runner for HN Lens. One orchestrator, three modes:
+// Tiered test runner for Hacker Lens. One orchestrator, three modes:
 //
 //   quick    — fast hermetic inner loop: static checks + the mocked-HN behavioural
 //              / a11y / robustness harnesses (chromium only, no network, no models).
@@ -62,9 +62,27 @@ const TIERS = {
       // THIRD_PARTY_NOTICES.md is generated from package.json's runtime deps and carries a real
       // Apache-2.0 section 4(d) obligation, so a dependency bump must not be able to leave it stale.
       { name: 'third-party notices up to date', cmd: 'node', args: ['scripts/gen-notices.mjs', '--check'] },
+      // A comment is an unverified assertion, and a false one in the ranking code has now cost two
+      // review rounds — c3r24 rated intended behaviour a HIGH because a comment said it was
+      // impossible, and c3r25 found the same claim surviving in a sibling file. This checks the
+      // claim families proven false here, plus numbers stated in prose that must match the code.
+      { name: 'no false claims in source comments', cmd: 'node', args: ['scripts/claimcheck.mjs'] },
       // This repo is developed privately and published publicly, so an internal hostname/tool name
-      // in a tracked file is a release blocker. Skips loudly where the local pattern list is absent.
-      { name: 'no internal references in tracked files', cmd: 'node', args: ['scripts/leakcheck.mjs'] },
+      // in a tracked file is a release blocker. `--require-notes` turns "the pattern list is
+      // missing" from a warning into a failure — the only thing standing between a renamed or lost
+      // notes file and a silent green publish on the maintainer machine. It is withheld where the
+      // file is legitimately absent: CI, and public clones that opt out explicitly.
+      {
+        name: 'no internal references in tracked files',
+        cmd: 'node',
+        args:
+          process.env.CI || process.env.LEAKCHECK_OPTIONAL
+            ? ['scripts/leakcheck.mjs']
+            : ['scripts/leakcheck.mjs', '--require-notes'],
+      },
+      // leakcheck itself must catch a leaky path name whether it exists now or only in history —
+      // the summary claims it scans "all path names", so history has to actually be scanned.
+      { name: 'leakcheck self-test (path names in history)', cmd: 'node', args: ['scripts/leakcheckselftest.mjs'] },
       { name: 'build (vite)', cmd: 'npx', args: ['vite', 'build'], build: true },
     ],
   },
@@ -78,19 +96,38 @@ const TIERS = {
       { name: 'personalizeliveupdatetest (mid-session personalize + explainer copy)', script: 'personalizeliveupdatetest' },
       { name: 'readstatetest (read transitions + monotonic)', script: 'readstatetest' },
       { name: 'feedstabilitytest (no wrong vanish)', script: 'feedstabilitytest' },
+      { name: 'sessionsweeptest (read-sweep triggers on load/refresh, never nav)', script: 'sessionsweeptest' },
       { name: 'filtertest (global mute/min-points)', script: 'filtertest' },
       { name: 'feederrortest (outage → error state, not empty)', script: 'feederrortest' },
+      { name: 'offlinetest (offline → outage, not not-found/no-results)', script: 'offlinetest' },
       { name: 'toasttest (toast de-dupe + cap)', script: 'toasttest' },
       { name: 'edgetest (security/edge)', script: 'edgetest' },
       { name: 'extremetest (malformed input)', script: 'extremetest' },
       { name: 'a11ytest (axe-core)', script: 'a11ytest' },
+      { name: 'dialogreachtest (modals reachable by keyboard, not just wheel)', script: 'dialogreachtest' },
       { name: 'layouttest (structural layouts)', script: 'layouttest' },
       { name: 'commenttest (comment org + ranking)', script: 'commenttest' },
+      { name: 'pluraltest (comment-count singular/plural)', script: 'pluraltest' },
+      { name: 'hiddenstubtest (un-hide clears the session stub)', script: 'hiddenstubtest' },
+      { name: 'searchscrolltest (search lands at top; feed tab kept)', script: 'searchscrolltest' },
       { name: 'discussionviewtest (summary gate + feed-open new-badge)', script: 'discussionviewtest' },
       { name: 'topcommenttest (inline top comment + header toggle)', script: 'topcommenttest' },
+      { name: 'previewburst (top-comment previews bounded across cards)', script: 'previewburst' },
       { name: 'llmcachetest (summary sources + cache)', script: 'llmcachetest' },
       { name: 'cloudllmtest (BYO cloud LLM provider + key)', script: 'cloudllmtest' },
+      { name: 'refusalattrtest (no false Llama attribution over a refusal)', script: 'refusalattrtest' },
       { name: 'askthreadtest (grounded ask-the-thread Q&A)', script: 'askthreadtest' },
+      // The app vouches for what it SENDS, not for what the model emits: thin input refused,
+      // untrusted text fenced, and provenance counted from the request. Structural, so a new
+      // surface that calls the raw primitive fails the build.
+      { name: 'aiguardtest (every AI path is wired to input hygiene)', script: 'aiguardtest' },
+      // The list you come back to is the list you left, and you come back to the TOP of it. Covers
+      // list identity and order across every excursion, and the session definition itself — a
+      // reload continues a session; a new tab or Refresh starts one.
+      { name: 'feedcontinuitytest (aim, leave, come back, act)', script: 'feedcontinuitytest' },
+      // Page overflow is 0 for a control row that wraps while a line sits half empty, so no
+      // overflow guard can see it. This measures the SHAPE of the row instead.
+      { name: 'wrapqualitytest (control rows do not wrap raggedly)', script: 'wrapqualitytest' },
       { name: 'articleproxytest (reader-proxy attribution + prefetch)', script: 'articleproxytest' },
       { name: 'articlerankingtest (article body in ranking)', script: 'articlerankingtest' },
       { name: 'articlelinktest (full-text link on click)', script: 'articlelinktest' },
@@ -101,6 +138,7 @@ const TIERS = {
       { name: 'weighthintstest (inactive-signal hints)', script: 'weighthintstest' },
       { name: 'reasonstest (why-chip wording thresholds)', script: 'reasonstest' },
       { name: 'rankergatetest (learned min-sample gate)', script: 'rankergatetest' },
+      { name: 'autotraingatetest (retrain only when hidden + enough new data)', script: 'autotraingatetest' },
       { name: 'trainlabeltest (glance vs stay training labels)', script: 'trainlabeltest' },
       { name: 'diversitytest (per-domain cap in For You)', script: 'diversitytest' },
       { name: 'themecontrasttest (WCAG contrast, all designs \u00d7 modes)', script: 'themecontrasttest' },
@@ -109,6 +147,7 @@ const TIERS = {
       { name: 'mobiletest (mobile tune + read access)', script: 'mobiletest' },
       { name: 'onboardingtest (first-run interests)', script: 'onboardingtest' },
       { name: 'gisttest (non-AI thread digest)', script: 'gisttest' },
+      { name: 'searchindextest (search cost is paid by searchers, not readers)', script: 'searchindextest' },
       { name: 'focustest (discussion|article dual-view)', script: 'focustest' },
       { name: 'usertest (profile: stories + comments + AI persona summary)', script: 'usertest' },
       { name: 'settingstoctest (settings table-of-contents nav)', script: 'settingstoctest' },
