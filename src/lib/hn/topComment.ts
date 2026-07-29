@@ -13,8 +13,12 @@ const MAX_CANDIDATES = 3;
 const MAX_LEN = 320; // the card clamps to ~2 lines; bound the stored text to keep the cache small
 const MAX_KIDS = 5; // only fetch the first few top-level comments — enough to pick a standout.
 // (5, not 8: this feature is default-ON and fetches per card, so it's the biggest default-on
-// network cost; HN orders kids best-first, so the standout is ~always in the first few — cutting
-// 8→5 trims ~35% of the fetches with negligible pick-quality loss.)
+// network cost.) NOTE on ORDER: firebase item.kids (Top/Best/discussion) is HN-RANKED (best-first),
+// so the standout is in the first few. For-You cards come from Algolia, whose `children` is
+// CHRONOLOGICAL (oldest-first, mapped to kids in algolia.ts) — so on For-You this picks the standout
+// among the OLDEST few, not the top-ranked few. Accepted preview-quality tradeoff: fetching the
+// ranked order would need a per-card firebase story fetch (the N+1 the Algolia pool removed). The
+// discussion view itself always shows comments in the chosen sort order, unaffected.
 
 // Substance heuristic for a TOP-LEVEL comment. A one-line preview should surface the comment
 // others actually ENGAGED with, not merely the longest wall of text — so length is capped low

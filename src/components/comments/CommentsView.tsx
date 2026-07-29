@@ -658,9 +658,20 @@ export default function CommentsView({ id }: { id: number }) {
             </div>
           ) : (
             <>
-              {!commentsQ.isLoading && topLevel.length === 0 && (
-                <div className="text-sm text-muted">No comments yet.</div>
-              )}
+              {!commentsQ.isLoading &&
+                topLevel.length === 0 &&
+                (commentsQ.isError ? (
+                  // Outage, not emptiness: the tree fetch failed (offline / server error). Don't
+                  // claim "No comments yet." over an outage (the outage-vs-empty rule, SPEC §6).
+                  <div className="text-sm text-muted">
+                    Couldn&rsquo;t load the discussion.{' '}
+                    <button type="button" onClick={() => commentsQ.refetch()} className="font-medium text-accent hover:underline">
+                      Retry
+                    </button>
+                  </div>
+                ) : (
+                  <div className="text-sm text-muted">No comments yet.</div>
+                ))}
 
               {/* thread-root: stable hook for tests / tooling (decoupled from the
                   cosmetic spacing class, which is a readability knob). */}

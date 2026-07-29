@@ -109,6 +109,7 @@ const TIERS = {
       { name: 'dialogreachtest (modals reachable by keyboard, not just wheel)', script: 'dialogreachtest' },
       { name: 'layouttest (structural layouts)', script: 'layouttest' },
       { name: 'commenttest (comment org + ranking)', script: 'commenttest' },
+      { name: 'commentsoutagetest (failed tree fetch → outage/Retry, not "No comments yet")', script: 'commentsoutagetest' },
       { name: 'pluraltest (comment-count singular/plural)', script: 'pluraltest' },
       { name: 'hiddenstubtest (un-hide clears the session stub)', script: 'hiddenstubtest' },
       { name: 'searchscrolltest (search lands at top; feed tab kept)', script: 'searchscrolltest' },

@@ -5,6 +5,11 @@ everything runs in your browser, and all data (reading history, settings, cached
 model weights) is stored locally in IndexedDB and localStorage. This keeps the security
 surface small — there is no server to compromise and no shared user data.
 
+For offline use, the app also registers a **service worker** that caches its own code (the app
+shell, scripts and styles) locally, so it loads even when the hosting origin is unreachable. The
+service worker caches only the app's own same-origin files and passes every other request straight
+to the network — it adds no new network destination and never stores your reading data.
+
 ## What data leaves your browser
 
 Your reading activity, ranking, personalization, and models all run and stay on your device.

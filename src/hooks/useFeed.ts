@@ -193,10 +193,11 @@ export function useFeed(kind: FeedKind) {
   });
 
   // ----- For You (re-ranked) -----
-  // ONE request for the whole candidate pool. Algolia's front_page search returns the front-page
-  // stories fully materialised (title/url/points/comments/author/time), so For You needs neither the
-  // three-list firebase merge nor the per-item N+1 — the two dominant cold-start costs. 90 keeps
-  // ample headroom for the diversity caps (domain 3 / author 2) + Load-more. On an Algolia failure
+  // ONE request for the whole candidate pool. Algolia's recent-stories search (tags=story + a recency
+  // filter, see getForYouCandidates) returns fully-materialised stories (title/url/points/comments/
+  // author/time), so For You needs neither the three-list firebase merge nor the per-item N+1 — the
+  // two dominant cold-start costs. 90 keeps ample headroom for the diversity caps (domain 3 /
+  // author 2) + Load-more. On an Algolia failure
   // `getForYouCandidates` falls back to the firebase path (see client.ts), so this stays resilient.
   const poolQ = useQuery({
     queryKey: ['pool', 'foryou'],

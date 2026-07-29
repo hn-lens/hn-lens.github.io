@@ -3046,3 +3046,39 @@ survives. Confirmed no interference with reload-based (readtest) or request-coun
 tests. SPEC §8, AGENTS.md (Hard constraints) updated.
 
 Gate: standard tier green. Not yet committed.
+
+## c3r33 — 7-lens review of the offline/PWA + c3r32 work; a real SW bug fixed (2026-07-29)
+
+Ran all seven lenses (+ verifier) on the offline SW + the c3r32 feed change. The headline lesson: on
+the offline blank-page symptom, FOUR lenses (bug/usability/design) called it a "harness artifact",
+and only the UIUX-STRESS lens correctly root-caused a REAL bug — the verifier independently
+reproduced it against `vite preview` and confirmed the four were wrong. A reminder that a
+comfortable "it's the test harness" explanation needs the same scrutiny as a defect.
+
+**Fixed (verified, guarded):**
+- **HIGH (offline blank page under `Vary: Origin`).** `vite preview` (and any host answering
+  `Vary: Origin`) serves the crossorigin module scripts with a Vary that made the SW's
+  `caches.match(req)` MISS offline → blank page. Fixed with `{ ignoreVary: true }` on all SW cache
+  lookups (safe — assets are URL-keyed/content-hashed). `offlinepwatest` was upgraded to send
+  `Vary: Origin` and proven to FAIL without the fix (blank, 19 hits to the down server) and pass with
+  it. NOTE: GitHub Pages sends `Vary: Accept-Encoding`, not `Vary: Origin`, so production was NOT
+  affected — but the dev/verify env (where the feature is tested) was, and the guard couldn't see it.
+- **MEDIUM (precache shipped 6.5 MB of lazy AI JS).** The precache filter kept the WebLLM lib
+  (5.9 MB) + Transformers.js (0.5 MB), downloading them for every first-time AI-off visitor —
+  violating the "0 AI requests on landing" principle. Now excluded by a 500 KB size cap (runtime-
+  cached on first AI use, like the wasm); precache dropped 30→28 assets, ~7.5 MB→~1 MB.
+- **MEDIUM (comments outage-vs-empty).** A failed comment-tree fetch showed "No comments yet." over
+  an outage (the SPEC §6 class the feed/search already handle). `fetchItemTree` gained a `strict`
+  option; `useComments` uses it so `isError` fires; `CommentsView` shows an outage + Retry. Guarded
+  by the new `commentsoutagetest`.
+- **LOW (stale comments).** `useFeed.ts` still said "front_page" (c3r32 leftover; code uses
+  `tags=story`); `types.ts` had the design-#3 sweep comment. Both corrected. `topComment.ts`'s
+  "kids are best-first" comment now notes the Algolia feed's `children` are chronological.
+
+**Accepted / reported as remaining (see the ranked list):** For-You top-comment previews sample the
+oldest comments (Algolia `children` are chronological, not HN-ranked) — accepted preview-quality
+tradeoff (ranking them would need a per-card firebase N+1); the offline UX could add an offline
+indicator / reconnect-refetch / install prompt (SPEC-GAP enhancements); the RUNTIME cache isn't
+pruned (bounded by browser quota / hashed names).
+
+Gate: standard tier green (68/68 with the new guard). Committed after the gate.

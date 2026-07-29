@@ -75,19 +75,25 @@ check(
   searchText.replace(/\s+/g, ' ').slice(0, 120)
 );
 
-// --- M-A: navigating to an UN-warmed lazy route while offline shows a GRACEFUL message, not the raw
-// "Failed to fetch dynamically imported module" jargon. (/settings was not pre-warmed above.) ---
+// --- M-A: with the offline service worker precaching route chunks, navigating to an UN-warmed lazy
+// route while OFFLINE now LOADS it from the SW cache — a strict improvement over the old graceful
+// chunk-fail. /settings was not pre-warmed online, yet it renders offline. (ErrorBoundary's graceful
+// chunk-fail message still exists for a genuine failure — a chunk absent from the SW cache — but the
+// SW makes that path unreachable for precached routes; it must NOT appear here, and neither must the
+// raw "dynamically imported module" jargon.) ---
 await page.evaluate(() => { window.location.hash = '#/settings'; });
 await page.waitForFunction(
-  () => /Couldn.t load this part of the app|dynamically imported module|Something went wrong/i.test(document.body.innerText),
+  () => /Settings & models|Appearance & feed/i.test(document.body.innerText),
   null,
   { timeout: 12000 }
 ).catch(() => {});
 await page.waitForTimeout(400);
 const settingsText = await page.evaluate(() => document.body.innerText || '');
 check(
-  'offline lazy-route chunk failure shows a graceful message, not raw jargon (M-A)',
-  /Couldn.t load this part of the app/i.test(settingsText) && !/dynamically imported module/i.test(settingsText),
+  'offline navigation to an un-warmed lazy route LOADS from the SW precache (M-A)',
+  /Settings & models|Appearance & feed/i.test(settingsText) &&
+    !/dynamically imported module/i.test(settingsText) &&
+    !/Couldn.t load this part of the app/i.test(settingsText),
   settingsText.replace(/\s+/g, ' ').slice(0, 140)
 );
 

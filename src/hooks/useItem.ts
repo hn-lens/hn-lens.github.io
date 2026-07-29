@@ -13,8 +13,10 @@ export function useStory(id: number) {
 
 export function useComments(id: number) {
   return useQuery({
+    // strict: a network failure throws (isError) so the discussion view can show an outage/Retry
+    // instead of a misleading "No comments yet." (the outage-vs-empty rule).
     queryKey: ['comments', id],
-    queryFn: () => fetchItemTree(id),
+    queryFn: () => fetchItemTree(id, { strict: true }),
     enabled: Number.isFinite(id) && id > 0,
     staleTime: 120000,
   });

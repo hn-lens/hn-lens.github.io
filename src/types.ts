@@ -176,9 +176,9 @@ export interface Prefs {
   fetchArticleText: boolean;
   // Whether the first-run onboarding (pick interests) has been shown/dismissed.
   hasOnboarded: boolean;
-  // Hide already-read stories from For You. The hidden set starts EMPTY and changes only when
-  // the reader presses Refresh (lib/readSweep). Reading, navigating and reloading never alter it,
-  // so nothing is yanked out from under the reader. Default on.
+  // Hide already-read stories from For You (lib/readSweep, design #4). The hidden set is recomputed
+  // on every fresh load (reload / new tab) and by Refresh, never on in-app navigation, and is fixed
+  // within a page load so nothing is yanked mid-session. Default on. See SPEC.md section 4.
   hideReadInFeed: boolean;
   // Load story favicons from Google's public favicon service (default on). Turn OFF for
   // strict privacy — favicons then render as letter monograms only, so no story domains

@@ -21,7 +21,10 @@ const server = createServer(async (req, res) => {
   if (p === '/' || p === '') p = '/index.html';
   try {
     const buf = await readFile(join(DIST, p));
-    res.writeHead(200, { 'content-type': MIME[extname(p)] || 'application/octet-stream' });
+    // Mimic `vite preview` / a realistic host: crossorigin module scripts get an Origin header and
+    // the host answers `Vary: Origin`. Without `ignoreVary` in the SW, the precache would MISS these
+    // offline and blank the page — this header is what makes this guard able to catch that class.
+    res.writeHead(200, { 'content-type': MIME[extname(p)] || 'application/octet-stream', vary: 'Origin', 'access-control-allow-origin': '*' });
     res.end(buf);
   } catch {
     try { const html = await readFile(join(DIST, 'index.html')); res.writeHead(200, { 'content-type': 'text/html' }); res.end(html); } catch { res.writeHead(404); res.end(); }

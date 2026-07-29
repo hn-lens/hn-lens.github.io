@@ -26,15 +26,24 @@ export function hitToItem(h: AlgoliaHit): HnItem {
   };
 }
 
-/** Full nested comment tree for a story in a single request. */
-export async function fetchItemTree(id: number): Promise<AlgoliaItem | null> {
-  // A hung/failed tree fetch returns null (callers tolerate a missing tree) so it can't
-  // stall a background retrain's term-profile enrichment or a discussion open indefinitely.
+/**
+ * Full nested comment tree for a story in a single request.
+ *
+ * By default a hung/failed fetch returns null so BACKGROUND callers (a retrain's term-profile
+ * enrichment) tolerate a missing tree and never stall. Pass `{ strict: true }` from the DISCUSSION
+ * view so a network failure THROWS instead — otherwise the view can't tell "fetch failed" from "no
+ * comments" and shows a misleading "No comments yet." over an outage (the outage-vs-empty rule).
+ */
+export async function fetchItemTree(id: number, opts?: { strict?: boolean }): Promise<AlgoliaItem | null> {
   try {
     const res = await fetchWithTimeout(`${BASE}/items/${id}`);
-    if (!res.ok) return null;
+    if (!res.ok) {
+      if (opts?.strict) throw new Error(`Comment tree failed: ${res.status}`);
+      return null;
+    }
     return (await res.json()) as AlgoliaItem;
-  } catch {
+  } catch (err) {
+    if (opts?.strict) throw err;
     return null;
   }
 }
