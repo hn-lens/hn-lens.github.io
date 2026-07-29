@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { getFeedIds, getForYouCandidateIds, getItems } from '../lib/hn/client';
+import { getFeedIds, getForYouCandidates, getItems } from '../lib/hn/client';
 import { computeAffinities, getReadItemIds } from '../lib/interactions';
 import type { Affinities } from '../lib/interactions';
 import { computeForYou, diversifyByAuthor, diversifyByDomain, explainItem, makeContext, withPoolCenter } from '../lib/ranking/strategies';
@@ -193,43 +193,18 @@ export function useFeed(kind: FeedKind) {
   });
 
   // ----- For You (re-ranked) -----
-  // Candidate IDS first (cheap: a few list fetches, merged). 90 (was 150) keeps ample headroom for
-  // the diversity caps (domain 3 / author 2) + Load-more while cutting the cold-start item fetches.
-  const candIdsQ = useQuery({
-    queryKey: ['pool-ids', 'foryou'],
-    enabled: isForYou,
-    queryFn: () => getForYouCandidateIds(90, forceRef.current ? 0 : undefined),
-    staleTime: 120000,
-  });
-  const candIds = useMemo(() => candIdsQ.data ?? [], [candIdsQ.data]);
-
-  // PROGRESSIVE materialization. Each candidate is fetched via a firebase N+1 (ids-only API), so
-  // materializing the WHOLE pool before painting cost 6s (unthrottled) to 15s (Fast 4G) to first
-  // card. Instead: a fast FIRST batch paints in ~1-2s, and the rest fills in for ranking depth +
-  // Load-more. The first batch's items are cached, so `poolQ` only NETWORK-fetches the remainder.
-  // The pinned order keeps the first paint stable when the fuller pool lands (no reorder under the
-  // reader). Concurrency 6 = the browser's per-origin HTTP/1.1 cap (a higher number just stacks a
-  // queue in front of each request's already-ticking deadline; at 32, a third of the pool used to
-  // abort unsent and For You silently ranked ~60 candidates instead of 90).
-  const FIRST_BATCH = 24;
-  const poolFirstQ = useQuery({
-    queryKey: ['pool', 'foryou', 'first', candIds.slice(0, FIRST_BATCH)],
-    enabled: isForYou && candIds.length > 0,
-    queryFn: () => getItems(candIds.slice(0, FIRST_BATCH), 6, forceRef.current ? 0 : undefined),
-    staleTime: 120000,
-  });
+  // ONE request for the whole candidate pool. Algolia's front_page search returns the front-page
+  // stories fully materialised (title/url/points/comments/author/time), so For You needs neither the
+  // three-list firebase merge nor the per-item N+1 — the two dominant cold-start costs. 90 keeps
+  // ample headroom for the diversity caps (domain 3 / author 2) + Load-more. On an Algolia failure
+  // `getForYouCandidates` falls back to the firebase path (see client.ts), so this stays resilient.
   const poolQ = useQuery({
-    queryKey: ['pool', 'foryou', 'all', candIds],
-    // Start the full pool only AFTER the first batch has landed. If both ran at once they would
-    // compete for the origin's 6 connections and the first batch would NOT paint any sooner (that was
-    // measured: 14.5s to first card). Deferring the rest gives the first 24 the connections
-    // exclusively (~1-2s to first card); the first batch is then cached, so this only fetches the rest.
-    enabled: isForYou && candIds.length > 0 && !!poolFirstQ.data,
-    queryFn: () => getItems(candIds, 6, forceRef.current ? 0 : undefined),
+    queryKey: ['pool', 'foryou'],
+    enabled: isForYou,
+    queryFn: () => getForYouCandidates(90, forceRef.current ? 0 : undefined),
     staleTime: 120000,
   });
-  // Rank + paint the full pool once it lands; until then, the fast first batch.
-  const pool = useMemo(() => poolQ.data ?? poolFirstQ.data ?? [], [poolQ.data, poolFirstQ.data]);
+  const pool = useMemo(() => poolQ.data ?? [], [poolQ.data]);
 
   // The read SWEEP: ids hidden from For You. Seeded once per document load (reload / new tab) in
   // main.tsx, updated by Refresh, and read here; the queryFn is the same pure read, so a cache
@@ -563,17 +538,16 @@ export function useFeed(kind: FeedKind) {
   const loadMore = useCallback(() => setVisible((v) => (v >= total ? v : v + PAGE)), [total]);
 
   const isLoading = isForYou
-    // Paint as soon as the FIRST batch is ready (poolFirstQ), not the whole pool — that is the
-    // progressive-render win. Still gate on the candidate ids and on the read-sweep seed (main.tsx
-    // primes ['readSnapshot'] once per page load): For You must not paint before the sweep is applied,
-    // or already-read stories flash in and then vanish.
-    ? candIdsQ.isLoading || poolFirstQ.isLoading || affQ.isLoading || readSnapshotQ.isLoading
+    // Gate first paint on the pool query AND the read-sweep seed (main.tsx primes ['readSnapshot']
+    // once per page load): For You must not paint before the sweep is applied, or already-read
+    // stories flash in and then vanish. The pool is one Algolia request (with a firebase fallback),
+    // so there is no progressive-batch gate any more.
+    ? poolQ.isLoading || affQ.isLoading || readSnapshotQ.isLoading
     : isRead
       ? readIdsQ.isLoading || (itemsQ.isLoading && sliceCount > 0)
       : idsQ.isLoading || (itemsQ.isLoading && sliceCount > 0);
-  // For You errors only if the ids fail, or BOTH pool batches fail (a first-batch-only failure still
-  // paints from the full pool, and vice-versa).
-  const isError = candIdsQ.isError || (poolFirstQ.isError && poolQ.isError) || idsQ.isError || itemsQ.isError;
+  // For You errors only when the pool query fails (its own firebase fallback has already been tried).
+  const isError = poolQ.isError || idsQ.isError || itemsQ.isError;
 
   // PAGE PAST A FULLY-FILTERED LEADING RUN.
   //
@@ -632,10 +606,10 @@ export function useFeed(kind: FeedKind) {
     // For You Refresh also re-pulls the event-derived signals (affinities + content),
     // not just the candidate pool — so an explicit Refresh incorporates reading you did
     // this session, matching the on-engagement invalidation.
-    if (isForYou) void Promise.all([candIdsQ.refetch(), poolFirstQ.refetch(), poolQ.refetch(), affQ.refetch(), contentQ.refetch()]).finally(reset);
+    if (isForYou) void Promise.all([poolQ.refetch(), affQ.refetch(), contentQ.refetch()]).finally(reset);
     else if (isRead) void readIdsQ.refetch().finally(reset);
     else void Promise.all([idsQ.refetch(), itemsQ.refetch()]).finally(reset);
-  }, [kind, isForYou, isRead, candIdsQ, poolFirstQ, poolQ, idsQ, readIdsQ, itemsQ, affQ, contentQ, qc, prefs.hideReadInFeed]);
+  }, [kind, isForYou, isRead, poolQ, idsQ, readIdsQ, itemsQ, affQ, contentQ, qc, prefs.hideReadInFeed]);
 
   // Put back exactly what the last sweep removed, and re-show it immediately.
   const undoSweep = useCallback(() => {
@@ -648,11 +622,11 @@ export function useFeed(kind: FeedKind) {
   // When THIS feed's source data was last fetched (each tab is cached & refreshed
   // independently — they do NOT update together). Drives the "updated Xm ago" hint.
   const updatedAt = isForYou
-    ? poolQ.dataUpdatedAt || poolFirstQ.dataUpdatedAt
+    ? poolQ.dataUpdatedAt
     : isRead
       ? readIdsQ.dataUpdatedAt
       : idsQ.dataUpdatedAt;
-  const isFetching = isForYou ? poolFirstQ.isFetching || poolQ.isFetching : isRead ? readIdsQ.isFetching : idsQ.isFetching;
+  const isFetching = isForYou ? poolQ.isFetching : isRead ? readIdsQ.isFetching : idsQ.isFetching;
 
   return {
     cards,

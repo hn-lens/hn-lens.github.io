@@ -2964,3 +2964,60 @@ the other four lenses cover surfaces untouched this round). 0 BLOCKER, 0 HIGH, 0
   heaviest repeated friction but is SPEC §4-intended.
 
 Gate: standard tier green (65/65) before the comment batch and re-run green after. Nothing committed.
+
+## For-You cold-start: Algolia front_page rewrite (2026-07-29)
+
+Acted on the two perf items from the c3r31 ranking (#1 concurrent-switch contention, #2 the
+candidate-list N+1). Both had the same root: For You fetched three firebase lists (top/best/new) then
+materialised ~90 candidates via a per-item N+1 — the list fetch dominated cold start and the
+background pool fetch saturated the origin's connections (starving a concurrent tab switch).
+
+**Change.** `getForYouCandidates` (client.ts) now fetches the pool from Algolia `search?tags=front_page`
+in ONE request that returns fully-formed stories (mapped via the shared `hitToItem`, moved to
+algolia.ts and reused by SearchResults). On any Algolia error OR empty result it falls back to the old
+firebase blended pool, so resilience is unchanged and a total firebase outage still surfaces as Retry.
+`useFeed` collapsed its three For-You pool queries (the c3r31 B1 progressive split) into one — a single
+fast request needs no batching. Measured **~0.9 s to a fully-rendered feed / 1 request** vs the prior
+~90 requests (0 firebase list fetches, 0 item N+1 on the fast path). Both #1 and #2 resolved; SPEC §9
+updated (the N+1 accepted-cost and the concurrent-switch MEDIUM are gone).
+
+**Why it was deferred, and how the test implication was handled.** The hermetic tests mock firebase;
+switching For You to Algolia would starve them. The fallback-on-empty made this cheap: a test whose
+Algolia `search` stub returns empty for `front_page` keeps exercising the firebase path unchanged, so
+most For-You tests needed no edit. Only the two that return NON-empty `search` hits for a search
+sub-test (`audit`, `themecontrasttest`) had to branch their mock to return empty for `front_page` (else
+For You rendered the search hits). New guard `foryousourcetest` covers BOTH halves: the fast Algolia
+path makes zero firebase list fetches; the fallback loads from firebase when Algolia is down.
+
+Gate: standard tier green. The pre-rewrite checkpoint was committed locally (54c2adc); the rewrite
+itself is not yet committed.
+
+## c3r32 — full 7-lens review of the rewrite caught a `front_page` regression (2026-07-29)
+
+Ran all seven read-only lenses (+ verifier) on the Algolia rewrite above. No BLOCKER, but the bug, AI,
+usability, and design lenses INDEPENDENTLY caught a real regression the first cut introduced — and the
+verifier confirmed it against source. `search?tags=front_page` is **~50% pinned "YC is hiring" job
+posts** (verified live: 50/100, all `points:null`). Because `hitToItem` hardcoded `type:'story'` and a
+job's `points` is `null`, they (a) flooded ~half the pool and (b) **bypassed the min-points filter**
+(`typeof null !== 'number'` at features.ts) — so raising min-points stripped real stories and KEPT the
+ads. Plus `front_page`'s relevance sort resurfaced months-old items (a stale tail), and `hitToItem`
+dropped `children` (top-comment previews vanished from For You) and `story_text` (Ask/text bodies).
+
+**Fix (one root cause: the query + the mapper).** Switched the pool query from `tags=front_page` to
+**`tags=story` + a 3-day `created_at_i` recency filter** — verified live to return 90 fresh (≤3d),
+points-ranked, **job-free** stories (jobs=0, nullPoints=0). Extended `hitToItem` to map
+`children`→`kids` (restores previews), `story_text`→`text`, and derive `type` from `_tags` (+ a
+defensive `type!=='job'` drop in `getForYouCandidates`). Re-measured: ~0.74 s to first card, 1 Algolia
+pool request, 0 firebase lists, 0 job cards. `foryousourcetest` was hardened to assert the query shape,
+job exclusion, kids/text mapping, and the min-points non-bypass — and in doing so exposed that its
+OWN broad `page.route` catch-all had been shadowing the specific `/search/` mock (Playwright runs
+matching routes last-registered-first), so the original guard was silently testing the fallback, not
+the Algolia path; fixed the route order. `audit`/`themecontrasttest` mocks now discriminate the pool
+query (no `query=`) from a user search (`query=`).
+
+Other lens findings, dispositioned: the search surface now also gets top-comment previews (shared
+`hitToItem` maps `kids`) — bounded by `previewburst`, accepted as a minor consistency improvement. The
+perf lens's payload-trim (`attributesToHighlight=`) and the recency-max-user "no raw new-firehose"
+nuance are documented follow-ups (LOW). OSS/UI-UX/design lenses were otherwise clean.
+
+Gate: standard tier green (66/66) after the fix. Not yet committed.

@@ -1,6 +1,7 @@
 import { db } from '../db';
 import type { CachedItem } from '../db';
 import { fetchItem, fetchList } from './firebase';
+import { hitToItem, search } from './algolia';
 import type { FeedKind, HnItem } from '../../types';
 
 const ITEM_TTL = 15 * 60 * 1000;
@@ -152,4 +153,34 @@ export async function getForYouCandidateIds(limit = 170, ttl?: number): Promise<
     }
   }
   return merged.slice(0, limit);
+}
+
+/** Candidate pool freshness window — stories from the last N days are eligible for For You. */
+const FORYOU_WINDOW_DAYS = 3;
+
+/**
+ * Fully-materialised candidate pool for the "For You" re-ranker.
+ *
+ * FAST path: ONE Algolia CORS request for recent, points-ranked STORIES —
+ * `tags=story` (excludes the pinned "YC is hiring" job posts, which are ~half of `front_page` and
+ * both un-rankable and un-filterable — a null score slips past min-points) with a recency filter
+ * (last few days, so relevance-sort can't resurface months-old front-page items). The hit carries
+ * every field the feed uses (title/url/points/comments/author/time + `children`→kids for the
+ * top-comment preview + `story_text`→text), so For You needs neither the three-list firebase merge
+ * nor the per-item N+1 — the two dominant cold-start costs. FALLBACK: on any Algolia failure OR an
+ * empty result, fall back to the firebase blended pool, so For You still loads (slower) when Algolia
+ * is unreachable, and a total firebase outage still propagates as the feed's Retry state rather than
+ * a wrong "nothing here". Ordering does not matter here — the ranker re-sorts the pool.
+ */
+export async function getForYouCandidates(limit = 90, ttl?: number): Promise<HnItem[]> {
+  try {
+    const cutoff = Math.floor(Date.now() / 1000) - FORYOU_WINDOW_DAYS * 86400;
+    const res = await search({ tags: 'story', numericFilters: `created_at_i>${cutoff}`, hitsPerPage: limit });
+    const items = (res.hits ?? []).map(hitToItem).filter((it) => !!it.title && it.type !== 'job');
+    if (items.length) return items;
+  } catch {
+    // Algolia unreachable / rate-limited / timed out — fall through to firebase.
+  }
+  const ids = await getForYouCandidateIds(limit, ttl);
+  return getItems(ids, 6, ttl);
 }

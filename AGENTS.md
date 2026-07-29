@@ -190,8 +190,10 @@ in the browser; deploys to GitHub Pages.
 - `src/lib/hn/article.ts` — opt-in linked-article text via a **free CORS-proxy chain** (the ONE
   non-local feature; off by default — see the reader-proxy note below).
 - `src/lib/hn/` — `firebase.ts` (official API: lists return **ids only** → N+1), `algolia.ts`
-  (search + **whole nested comment tree in one request** via `/items/:id`), `client.ts` (IndexedDB
-  cache + bounded-concurrency fetch pool; use it, don't fetch raw in components).
+  (search + **whole nested comment tree in one request** via `/items/:id` + **recent fully-formed
+  stories in one request** via `tags=story`+recency, the For-You candidate pool via `hitToItem`),
+  `client.ts` (IndexedDB cache + bounded-concurrency fetch pool; `getForYouCandidates` = Algolia
+  recent-stories with a firebase fallback; use it, don't fetch raw in components).
 - `src/lib/db.ts` — Dexie schema: `events, items, lists, embeddings, kv, seen, saved, hidden` +
   `pruneCaches()` (called on startup).
 - `src/lib/prefs.ts` — Zustand `persist` store → `localStorage['hn:prefs']`. **Every persisted setting.**
@@ -1089,6 +1091,31 @@ in the browser; deploys to GitHub Pages.
   short-lived design #3 (Refresh-only), which readers found unintuitive because read items sat in the feed
   until a manual Refresh. Guarded by `readtest.mjs` (sweep behaviour) and `sessionsweeptest.mjs` (the
   trigger matrix: load/new-tab/Refresh sweep; icon/tab/discussion never). See SPEC.md section 4.
+- **For-You candidates come from ONE Algolia RECENT-STORIES request, with a firebase fallback
+  (2026-07-29; supersedes the "deferred Algolia rewrite" notes in earlier round batches).** Algolia's
+  `search?tags=story&numericFilters=created_at_i>{now-3d}` returns fully-formed recent stories
+  (title/url/points/comments/author/time + `children`→kids + `story_text`→text) in a single CORS
+  request, so For You needs neither the three-list firebase merge nor the per-item N+1 — the two
+  dominant cold-start costs. **`tags=story` NOT `tags=front_page`, deliberately** (an independent
+  7-lens review caught this): `front_page` is ~half pinned "YC is hiring" JOB posts that flood the pool
+  AND bypass the min-points filter (a job's `points:null` is not a number), and its relevance sort
+  resurfaces months-old items — `tags=story`+recency is job-free, fresh, and points-ranked.
+  `getForYouCandidates` (client.ts) maps hits via the shared `hitToItem` (algolia.ts, which derives
+  `type` from `_tags` and drops any `type==='job'` defensively) and, on any Algolia error OR empty
+  result, falls back to the firebase blended top/best/new pool (`getForYouCandidateIds` + `getItems`)
+  so For You stays resilient; a total firebase outage still propagates as the feed's Retry state.
+  Measured ~0.7–0.9 s to first card (1 pool request) vs the prior ~90. This REPLACED the
+  progressive-render split (candidate-ids → first-batch → full-pool) — one fast request needs no
+  batching. **Test implication:** the hermetic tests mock firebase; the fallback-on-empty means a test
+  whose Algolia `search` stub returns empty for the pool query keeps exercising the firebase path
+  unchanged, so most For-You tests needed no edit. A test that ALSO runs a user SEARCH (non-empty
+  `search` hits — `audit`/`themecontrasttest`) must return those hits ONLY for a URL with a `query=`
+  param and empty otherwise (the pool query has no `query=`), or For You renders the search hits. The
+  fast path is guarded by `foryousourcetest` (uses `tags=story`+recency, excludes a job hit, maps
+  kids/text, no min-points bypass; fallback loads from firebase). **Route-order gotcha it exposed:**
+  Playwright runs matching `page.route` handlers in REVERSE registration order, so a broad
+  `hn.algolia.com` catch-all registered AFTER a specific `/search/` route SHADOWS it — register the
+  specific route LAST. See SPEC.md section 9.
 - **A tier CI never runs will rot silently, and its rot LOOKS like app bugs (2026-07-25).** The
   `webgpu` tier (`modeltest`/`evaltest`) only runs where a real GPU adapter exists, so nothing
   exercised it for a long time. When finally run it reported 2 failures — **neither was an app

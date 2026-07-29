@@ -1,7 +1,30 @@
 import { fetchWithTimeout } from './http';
-import type { AlgoliaItem, AlgoliaSearchResult } from '../../types';
+import type { AlgoliaHit, AlgoliaItem, AlgoliaSearchResult, HnItem } from '../../types';
 
 const BASE = 'https://hn.algolia.com/api/v1';
+
+/**
+ * Map an Algolia hit to the app's HnItem shape. Shared by search results AND the For-You candidate
+ * pool. Maps EVERY field the feed uses: `children` → `kids` (so the top-comment preview, which keys
+ * off `kids`, works on the Algolia-sourced feed) and `story_text` → `text` (so an Ask/text post keeps
+ * its body). `type` is derived from `_tags` rather than hardcoded — a job hit typed 'story' with a
+ * null score slips past the min-points filter, so mistyping matters.
+ */
+export function hitToItem(h: AlgoliaHit): HnItem {
+  const type = h._tags?.includes('job') ? 'job' : h._tags?.includes('poll') ? 'poll' : 'story';
+  return {
+    id: Number(h.objectID),
+    title: h.title,
+    url: h.url,
+    by: h.author,
+    score: h.points,
+    descendants: h.num_comments,
+    time: h.created_at_i,
+    kids: h.children,
+    text: h.story_text,
+    type,
+  };
+}
 
 /** Full nested comment tree for a story in a single request. */
 export async function fetchItemTree(id: number): Promise<AlgoliaItem | null> {

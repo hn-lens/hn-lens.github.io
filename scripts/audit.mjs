@@ -51,12 +51,19 @@ await page.route(/hacker-news\.firebaseio\.com/, (r) => {
   if (u.includes('maxitem')) return j(9999);
   return j(null);
 });
-await page.route(/hn\.algolia\.com\/api\/v1\/search/, (r) =>
-  r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ nbHits: 2, hits: [
-    { objectID: '701', title: 'Search Result Alpha', url: 'https://s701.example', points: 55, num_comments: 9, author: 'sa', created_at_i: now - 100 },
-    { objectID: '702', title: 'Search Result Beta', url: 'https://s702.example', points: 33, num_comments: 4, author: 'sb', created_at_i: now - 200 },
-  ] }) })
-);
+await page.route(/hn\.algolia\.com\/api\/v1\/search/, (r) => {
+  const u = r.request().url();
+  // Only a real user SEARCH carries a `query=` param; the For-You candidate pool query does not
+  // (it's tags=story + a recency filter). Return the two search hits for an actual query, and EMPTY
+  // for the For-You pool so For You falls back to the firebase blended pool this test asserts on.
+  if (/[?&]query=/.test(u)) {
+    return r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ nbHits: 2, hits: [
+      { objectID: '701', title: 'Search Result Alpha', url: 'https://s701.example', points: 55, num_comments: 9, author: 'sa', created_at_i: now - 100 },
+      { objectID: '702', title: 'Search Result Beta', url: 'https://s702.example', points: 33, num_comments: 4, author: 'sb', created_at_i: now - 200 },
+    ] }) });
+  }
+  return r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ nbHits: 0, hits: [] }) });
+});
 await page.route(/hn\.algolia\.com\/api\/v1\/items\/(\d+)/, (r) => {
   const id = Number(r.request().url().match(/items\/(\d+)/)[1]);
   r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({

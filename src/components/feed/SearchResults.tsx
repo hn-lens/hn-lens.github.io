@@ -1,7 +1,7 @@
 import { useMemo, useState, useSyncExternalStore } from 'react';
 import { Link } from 'react-router-dom';
 import { useInfiniteQuery } from '@tanstack/react-query';
-import { search } from '../../lib/hn/algolia';
+import { hitToItem, search } from '../../lib/hn/algolia';
 import { useHiddenIds, useSavedIds, useSeenMap } from '../../hooks/useLocalData';
 import { usePrefs } from '../../lib/prefs';
 import { makeContext } from '../../lib/ranking/strategies';
@@ -9,20 +9,6 @@ import { isFiltered } from '../../lib/ranking/features';
 import { hiddenStubsSnapshot, subscribeHiddenStubs } from '../../lib/feedSession';
 import StoryCard from './StoryCard';
 import StorySkeleton from './StorySkeleton';
-import type { AlgoliaHit, HnItem } from '../../types';
-
-function hitToItem(h: AlgoliaHit): HnItem {
-  return {
-    id: Number(h.objectID),
-    title: h.title,
-    url: h.url,
-    by: h.author,
-    score: h.points,
-    descendants: h.num_comments,
-    time: h.created_at_i,
-    type: 'story',
-  };
-}
 
 export default function SearchResults({ query }: { query: string }) {
   const saved = useSavedIds();

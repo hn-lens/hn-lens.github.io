@@ -97,6 +97,7 @@ const TIERS = {
       { name: 'readstatetest (read transitions + monotonic)', script: 'readstatetest' },
       { name: 'feedstabilitytest (no wrong vanish)', script: 'feedstabilitytest' },
       { name: 'sessionsweeptest (read-sweep triggers on load/refresh, never nav)', script: 'sessionsweeptest' },
+      { name: 'foryousourcetest (For-You from Algolia recent-stories + firebase fallback; jobs excluded)', script: 'foryousourcetest' },
       { name: 'filtertest (global mute/min-points)', script: 'filtertest' },
       { name: 'feederrortest (outage → error state, not empty)', script: 'feederrortest' },
       { name: 'offlinetest (offline → outage, not not-found/no-results)', script: 'offlinetest' },

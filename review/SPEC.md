@@ -238,22 +238,17 @@ No telemetry, no analytics, no accounts.
 These are known, measured and accepted. Re-measuring is fine; re-reporting them as defects is not.
 New information (a different trigger, a wider blast radius, a wrong root cause) is welcome.
 
-- **For-You cold start**: first card typically ~1.6 s (network-dependent; ~2.5–3.2 s measured on a
-  throttled Fast-4G + 4× CPU profile). The ids-only HN API forces an N+1 over the candidate pool. The
-  feed renders PROGRESSIVELY — candidate ids → a fast first batch (~24 items, which paints) → the full
-  ~90-item pool (for ranking depth + Load-more) — so first content appears before the full pool lands
-  (verified). The dominant phase is the candidate-LIST fetch (three merged lists, ~0.7–1.5 s), not the
-  item fetch. The firebase request count is layout/viewport-dependent (~90 on a laptop default up to
-  ~168 when a taller layout pulls more top-comment previews into view). The Algolia `front_page`
-  alternative is understood and deferred.
-- **A concurrent tab switch DURING the cold-start pool fill**: while the background full-pool fetch is
-  in flight it uses the origin's connection budget, so switching to an as-yet-UNVISITED tab in that
-  first-few-seconds window can take ~2–6 s on a throttled profile (vs <1 s once the pool has landed, or
-  for a previously-visited tab whose ids are cached). This is a facet of the same For-You N+1 (the pool
-  fetch is the cost) and is accepted for now; a mitigation — lowering the background pool's fetch
-  concurrency so it yields connections to a foreground fetch — is understood and deferred because it
-  slows the common-case (no concurrent switch) full-pool fill. For-You's own first paint is unaffected
-  (the first batch paints early).
+- **For-You cold start**: the candidate pool is fetched in ONE Algolia request for RECENT STORIES
+  (`tags=story` + a few-days `created_at_i` recency filter) that returns fully-formed stories, so there
+  is no three-list firebase merge and no per-item N+1 — measured ~0.7–0.9 s to first card (1 pool
+  request) vs the old ~90 requests. `tags=story` is used deliberately instead of `tags=front_page`:
+  the front_page tag is ~half pinned "YC is hiring" job posts (un-rankable, and a null score slips
+  past min-points), and its relevance sort resurfaces months-old items — `tags=story` + recency is
+  job-free, fresh, and points-ranked. On an Algolia failure or empty result For You falls back to the
+  firebase blended top/best/new pool (the old, slower path), so it stays resilient; a total firebase
+  outage then still surfaces as the feed's Retry state. (Guarded by `foryousourcetest`.) The default-on
+  top-comment previews (a separate, bounded, lazy feature) fetch per visible card as before; the
+  comment-tree fetch on opening a discussion is unchanged.
 - **Return from a discussion**: ~100 ms at 1× to re-render a full-depth feed.
 - **Infinite scroll auto-fills** until the page exceeds the viewport or the id list is exhausted.
   Under a very restrictive filter this materialises much of the list (measured 429 requests at

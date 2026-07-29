@@ -70,6 +70,7 @@ export interface AlgoliaHit {
   story_title?: string;
   story_url?: string;
   _tags?: string[];
+  children?: number[]; // top-level comment ids on a story hit (drives top-comment previews)
 }
 
 export interface AlgoliaSearchResult {

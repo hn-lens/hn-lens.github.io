@@ -125,7 +125,11 @@ await page.route(/hacker-news\.firebaseio\.com|hn\.algolia\.com|google\.com\/s2/
       children: Array.from({ length: 10 }, (_, k) => comment(id * 10 + 3 + k, k % 3)),
     });
   }
-  if (/algolia/.test(u)) return json({ hits: STORY_IDS.slice(0, 5).map((id) => ({ objectID: String(id), ...story(id) })) });
+  // Only a real user search carries query=; the For-You pool query (tags=story + recency) does not —
+  // return empty for it so For You falls back to the firebase blended pool mocked above (full items),
+  // keeping the graded feed content stable.
+  if (/algolia.*[?&]query=/.test(u)) return json({ hits: STORY_IDS.slice(0, 5).map((id) => ({ objectID: String(id), ...story(id) })) });
+  if (/algolia/.test(u)) return json({ hits: [] });
   return json({});
 });
 await page.goto(BASE, { waitUntil: 'domcontentloaded' });
