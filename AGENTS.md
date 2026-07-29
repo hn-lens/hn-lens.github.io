@@ -243,6 +243,14 @@ in the browser; deploys to GitHub Pages.
   embeddings fall back to WASM when WebGPU is absent. `file://` can't run the AI (WASM/workers are
   blocked) — the single-file build stubs it.
 - **Deploy:** `base: './'` + HashRouter → works on any Pages path with no config.
+- **Offline:** the `offlineServiceWorker` vite plugin (`vite.config.ts`) generates `dist/sw.js` on
+  every non-single-file `vite build` — it precaches the app shell + code (skips `.map`/`.wasm`) so the
+  built/hosted app loads **with the serving port down** (a reload/new tab is served from the SW
+  cache); `index.html` registers it over http(s) only (no-op on `file://` and the dev server). The SW
+  passes ALL cross-origin requests straight to the network (no new destination) and only ever deletes
+  its OWN stale `hnlens-precache-*` caches, so the model-weight Cache-API stores survive. Guarded by
+  `offlinepwatest` (serves `dist/`, loads, kills the server, asserts the app still boots). The
+  single-file build (`file://`) has no SW — it is itself the no-server option.
 
 ---
 

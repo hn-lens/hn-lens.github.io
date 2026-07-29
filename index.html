@@ -110,5 +110,16 @@
       </main>
     </noscript>
     <script type="module" src="/src/main.tsx"></script>
+    <script>
+      // Offline service worker (generated into the build by vite.config.ts). Registered only over
+      // http/https, so it is skipped on file:// (the single-file build) and is a harmless no-op on
+      // the dev server, where sw.js does not exist. Once registered, the built app loads even if the
+      // serving port is down — the SW serves the cached app shell + assets.
+      if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+        addEventListener('load', () => {
+          navigator.serviceWorker.register(new URL('sw.js', document.baseURI)).catch(() => {});
+        });
+      }
+    </script>
   </body>
 </html>

@@ -3021,3 +3021,28 @@ perf lens's payload-trim (`attributesToHighlight=`) and the recency-max-user "no
 nuance are documented follow-ups (LOW). OSS/UI-UX/design lenses were otherwise clean.
 
 Gate: standard tier green (66/66) after the fix. Not yet committed.
+
+## Offline / PWA — the app loads with the serving port down (2026-07-29)
+
+Developer request: "even if the serving port is down, I can still run the app in my browser." The app
+already had a manifest + icons but NO service worker, so a reload with the server down failed.
+
+**Approach.** Hand-rolled a service worker via a small inline vite plugin (`offlineServiceWorker` in
+`vite.config.ts`) rather than `vite-plugin-pwa` — the build is rolldown-vite v8 (plugin-compat risk),
+and the codebase already hand-rolls build steps (inline.mjs, gen-notices.mjs). On every non-single-file
+`vite build` the plugin scans the output and writes `dist/sw.js` precaching the shell + all JS/CSS/
+icons/manifest (skipping `.map` and `.wasm` — the heavy opt-in AI wasm is runtime-cached). `index.html`
+registers it over http(s) only, so it's a no-op on `file://` (the single-file build) and on the dev
+server (no sw.js there). The SW: navigations → cached shell; same-origin assets → cache-first (+
+runtime-cache lazy chunks/wasm); cross-origin (HN API, Algolia, favicons, model CDN) → straight to
+network (no new destination, no caching of reader data). Critically, on activate it deletes ONLY its
+own stale `hnlens-precache-*` caches, so the model-weight Cache-API stores (managed by storage.ts)
+survive a redeploy.
+
+**Verified** by `offlinepwatest`: serves `dist/` from a throwaway server, loads the app (SW installs +
+controls + precaches), then STOPS the server and reloads — the app shell boots and the feed chrome
+renders entirely from the SW cache (0 hits to the down server), and a seeded foreign model-weight cache
+survives. Confirmed no interference with reload-based (readtest) or request-counting (favicontest)
+tests. SPEC §8, AGENTS.md (Hard constraints) updated.
+
+Gate: standard tier green. Not yet committed.
