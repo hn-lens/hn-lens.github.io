@@ -3335,3 +3335,42 @@ re-raises it.
 "the guard covers 2 of the 4 places" — and the cleanest close of a test-gap is often a root-cause code
 change that makes the gap moot, not another assertion. C + §E#1 were two faces of the same missing
 3-state model.*
+
+## c3r37 — full 7-lens round on the c3r36b build (b427189): CONVERGED (2026-07-30)
+First full 7-lens round since the two AI-summary batches. Gate green (72). Tally across all seven
+read-only lenses: **BLOCKER 0 · HIGH 0 · MEDIUM 1 · LOW 10**, and — the signal that matters —
+**0 self-inflicted** (nothing traceable to the c3r36 / c3r36b batches; the bug/correctness lens came
+back fully CLEAN, and the performance lens measured that `memo(StoryCard)` still holds — 0 ms
+Save-toggle at 75 cards — so the controls-row rework added no re-render regression).
+
+This meets the **TERMINATION** criteria (see Convergence above): 0 BLOCKER/HIGH, 0 self-inflicted, the
+one MEDIUM accepted in writing, LOWs triaged. The round CONVERGES.
+
+**The 1 MEDIUM — ACCEPTED IN WRITING (architectural, pre-existing, not a convergence blocker):**
+opening a mid/large discussion misses the 2.5 s budget (82-comment thread ≈ 2650 ms, 436-comment ≈
+4052 ms to first comment) because the whole comment tree is fetched as one payload and rendered
+all-at-once (each comment a DOMPurify parse on first paint); there is NO N+1 (firebase = 1 request).
+The fix is progressive / virtualized comment rendering — a dedicated, sizeable change, not a contained
+batch item. Accepted for a future dedicated effort; small/medium threads (the common case) are within
+budget.
+
+**The 10 LOWs — triaged backlog (validated against source where actionable):**
+- *Contained + worth a small future batch:* (a) `computeAffinities` counts a read-then-**hidden**
+  story in `domainCounts`/`authorCounts`, so an "often" habit chip can cite a story marked "Not
+  interested" (AI lens; `interactions.ts` — gate the tally on the current `hidden` set, carefully vs
+  the leave-one-out `rec.counted` subtraction). (b) `HnAccount` **hover** states use
+  `text-accent`-on-`bg-accent/10` which is sub-AA in ~32/62 theme×mode cells (design lens;
+  `HnAccount.tsx:163,198` — use `text-fg` like every other tint sibling + extend `themecontrasttest`).
+- *Nits / niche / accepted:* onboarding "Get started" is a no-op when 0 interests selected
+  (usability); `SignalsDialog` metadata truncates at 320px+Large with no `title` tooltip (uiux); the
+  16px brand icon collapses toward its accent bar (design, SPEC §7 caps logos at LOW); first-ever cold
+  start 2873 ms + `article.ts` on the critical path + first-engagement 40–170 ms re-score (perf, all
+  documented/architectural); the shipped meta-docs disclose the private dev process + `leakcheck` has
+  no secret-SHAPE detection (OSS — a maintainer ship/scrub decision + a guard-hardening idea, no live
+  leak; tree + all 15 commits verified secret-free).
+- *Re-confirmed accepted (not re-fixed):* the card "TL;DR" accent prefix over a refusal/error
+  (streaming-vs-settled distinction).
+
+*Lesson: convergence is measurable and was reached — the round's own numbers (0 self-inflicted, the
+only MEDIUM pre-existing + architectural) are what certify it, not "0 findings". The remaining backlog
+is a deliberate, written triage, not an open wound.*
