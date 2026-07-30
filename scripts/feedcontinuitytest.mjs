@@ -71,7 +71,23 @@ try {
     page.evaluate(
       ([px, py]) => {
         const el = document.elementFromPoint(px, py);
-        return Number(el?.closest('.story-card[data-id]')?.dataset.id) || null;
+        const hit = el?.closest('.story-card[data-id]');
+        if (hit) return Number(hit.dataset.id) || null;
+        // The point landed in a GAP between cards (card heights vary with content — e.g. a card with
+        // no reason chips is shorter). Fall back to the NEAREST on-screen card so the aim is robust to
+        // layout-height changes rather than returning null on a stray pixel.
+        let best = null;
+        let bestDist = Infinity;
+        for (const card of document.querySelectorAll('.story-card[data-id]')) {
+          const r = card.getBoundingClientRect();
+          if (r.bottom < 0 || r.top > window.innerHeight) continue;
+          const d = py < r.top ? r.top - py : py > r.bottom ? py - r.bottom : 0;
+          if (d < bestDist) {
+            bestDist = d;
+            best = card;
+          }
+        }
+        return best ? Number(best.dataset.id) || null : null;
       },
       [x, y]
     );
@@ -469,7 +485,7 @@ try {
       const r0 = card.getBoundingClientRect();
       if (r0.top < 60 || r0.top > 400) continue;
       const btn = [...card.querySelectorAll('button')].find((b) =>
-        /Personalize/.test(b.getAttribute('aria-label') || b.getAttribute('title') || '')
+        /More actions/.test(b.getAttribute('aria-label') || b.getAttribute('title') || '')
       );
       if (!btn) continue;
       const r = btn.getBoundingClientRect();

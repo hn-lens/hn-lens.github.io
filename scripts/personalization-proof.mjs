@@ -607,7 +607,7 @@ check('For-You UI shows a personalized "why" chip', firstCard.chips.length > 0, 
 await page.screenshot({ path: join(OUT_DIR, 'foryou.png'), fullPage: false });
 
 // Rank explainer: open the "Why #1?" trace on the top card and check the drill-down
-await page.locator('article').first().locator('button', { hasText: 'Why #' }).first().click().catch(() => {});
+await page.locator('article').locator('.sc-actions button[aria-label^="Why #"]').first().click().catch(() => {});
 await page.waitForSelector('[role="dialog"]', { timeout: 8000 }).catch(() => {});
 await page.waitForTimeout(300);
 const dlg = await page.evaluate(() => {
@@ -633,7 +633,7 @@ await page.screenshot({ path: join(OUT_DIR, 'explain.png'), fullPage: false });
 await page.keyboard.press('Escape').catch(() => {});
 await page.waitForTimeout(150);
 await page.evaluate(() => window.__hnlens.prefs.getState().set({ fetchArticleText: true }));
-await page.locator('article').first().locator('button', { hasText: 'Why #' }).first().click().catch(() => {});
+await page.locator('article').locator('.sc-actions button[aria-label^="Why #"]').first().click().catch(() => {});
 await page.waitForTimeout(300);
 const dlg2 = await page.evaluate(() => {
   const d = [...document.querySelectorAll('[role="dialog"]')].find((el) => /How the score adds up/.test(el.textContent || ''));

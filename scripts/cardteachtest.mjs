@@ -47,7 +47,7 @@ const pref = (k) => page.evaluate((key) => window.__hnlens.prefs.getState()[key]
 const shows = async (t) => (await page.evaluate(() => [...document.querySelectorAll('article h3')].map((h) => h.textContent.trim()))).some((x) => x.includes(t));
 const cardOf = (t) => page.locator('article').filter({ hasText: t });
 const openMenu = async (t) => {
-  await cardOf(t).getByRole('button', { name: /Personalize/ }).click();
+  await cardOf(t).getByRole('button', { name: /More actions/ }).click();
   await page.waitForTimeout(150);
 };
 const clickItem = async (name) => {

@@ -286,6 +286,9 @@ for (const lay of ['media', 'feature']) {
 // hover fallback and no alternative path. Reveal-on-hover is fine on a pointer device; on touch
 // (no hover) they must simply be present.
 {
+  // For You so the rank explainer (the "Why #N?" action, For-You-only) is present to test.
+  await page.evaluate(() => { window.location.hash = '#/?feed=foryou'; });
+  await page.waitForSelector('article.story-card', { timeout: 15000 }).catch(() => {});
   await page.evaluate(() => window.__hnlens.prefs.getState().setLayout('compact'));
   await page.waitForTimeout(350);
   const reachable = await page.evaluate(() => {
@@ -296,10 +299,12 @@ for (const lay of ['media', 'feature']) {
       if (!el) return 'missing';
       return getComputedStyle(el).display;
     };
-    return { actions: vis('.sc-actions'), reasons: vis('.sc-reasons') };
+    // The "Why #N?" explainer is now an action-row icon (moved off its own reasons line), so the
+    // amputation regression is guarded by its presence INSIDE the action row, not a separate row.
+    return { actions: vis('.sc-actions'), why: vis('.sc-actions button[aria-label^="Why #"]') };
   });
   check('compact still RENDERS the action row (hidden only until hover)', reachable && reachable.actions !== 'missing', JSON.stringify(reachable));
-  check('compact still RENDERS the rank explainer', reachable && reachable.reasons !== 'missing', JSON.stringify(reachable));
+  check('compact still RENDERS the rank explainer (Why#N in the action row)', reachable && reachable.why !== 'missing', JSON.stringify(reachable));
 }
 // On a touch device (no hover) the controls must be visible outright — "reveal on hover" is
 // unreachable there.

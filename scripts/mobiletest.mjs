@@ -56,10 +56,15 @@ check('desktop sidebar is hidden on mobile', !sidebarVisible);
 // (not just <button>) is deliberate: an earlier version scoped the bump to `button` and
 // silently left the <a> + comments control at 36/20px.
 const targets = await page.evaluate(() =>
-  [...document.querySelectorAll('.sc-actions button, .sc-actions a, .sc-comments')].map((el) => {
-    const r = el.getBoundingClientRect();
-    return { label: (el.getAttribute('aria-label') || el.getAttribute('title') || '').slice(0, 20), min: Math.round(Math.min(r.width, r.height)) };
-  })
+  // VISIBLE inline controls only: the narrow-width overflow moves some actions into the "..." menu
+  // (display:none in the row), and a hidden 0x0 element is not an inline touch target — the menu
+  // items have their own hit area when opened. Measure what the reader can actually tap in the row.
+  [...document.querySelectorAll('.sc-actions button, .sc-actions a, .sc-comments')]
+    .filter((el) => el.offsetParent !== null && !el.closest('[role="menu"]'))
+    .map((el) => {
+      const r = el.getBoundingClientRect();
+      return { label: (el.getAttribute('aria-label') || el.getAttribute('title') || '').slice(0, 20), min: Math.round(Math.min(r.width, r.height)) };
+    })
 );
 const tooSmall = targets.filter((t) => t.min < 44);
 check(
@@ -119,7 +124,7 @@ check('newspaper layout multi-columns on a phone', npOverflow.layout === 'newspa
 check('newspaper layout: no horizontal PAGE overflow on a 360px phone', npOverflow.over <= 2, JSON.stringify(npOverflow));
 // The story-card Personalize (⋯) menu must clamp fully on-screen even in the narrow newspaper
 // left column (it's right-anchored, so without a viewport clamp it spills off the LEFT edge).
-const npMenuBtn = page.getByRole('button', { name: /Personalize/i }).first();
+const npMenuBtn = page.getByRole('button', { name: /More actions/i }).first();
 await npMenuBtn.click();
 await page.waitForTimeout(200);
 const npMenu = await page.evaluate(() => {
@@ -246,7 +251,18 @@ await page.evaluate(() => {
 await page.goto(`${BASE}#/?feed=foryou`, { waitUntil: 'domcontentloaded' });
 await page.waitForSelector('article', { timeout: 15000 });
 await page.waitForTimeout(300);
-await page.locator('.sc-reasons button:has-text("Why #")').first().click();
+// At 320px the "Why #N?" action overflows into the "..." menu (only the menu trigger stays inline at
+// this width). Click the inline icon if it's shown, else open the menu and use the menu item.
+{
+  const inlineWhy = page.locator('.sc-actions button[aria-label^="Why #"]').first();
+  if (await inlineWhy.isVisible().catch(() => false)) {
+    await inlineWhy.click();
+  } else {
+    await page.locator('.sc-actions button[aria-label="More actions"]').first().click();
+    await page.waitForTimeout(200);
+    await page.getByRole('menuitem', { name: /Why #/ }).first().click();
+  }
+}
 await page.waitForSelector('[role="dialog"][aria-label^="Why this story is ranked"]', { timeout: 8000 });
 await page.waitForTimeout(200);
 const whyDlg = await page.evaluate(() => {

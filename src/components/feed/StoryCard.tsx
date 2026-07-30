@@ -7,7 +7,6 @@ import {
   ArrowBigUp,
   ArrowUpRight,
   Ban,
-  BarChart3,
   Bookmark,
   BookmarkCheck,
   EyeOff,
@@ -38,6 +37,7 @@ import { stripHtml } from '../../lib/html';
 import { cn } from '../../lib/cn';
 import { effectiveLayout } from '../../lib/themes';
 import { IconButton, Spinner } from '../ui/primitives';
+import Logo from '../ui/Logo';
 import Favicon from '../ui/Favicon';
 import type { HnItem } from '../../types';
 
@@ -100,6 +100,7 @@ function StoryCard({
   const llmState = useModelStore((s) => s.llm);
   const webgpu = useModelStore((s) => s.webgpu);
   const cloudLlm = hasCloudKey({ llmProvider, apiKeys }); // cloud key set → no WebGPU needed
+  const aiAvailable = cloudLlm || (llmEnabled && webgpu !== 'unavailable'); // TL;DR reachable at all
 
   // Card-level teaching: follow/mute this story's domain + author without leaving the feed.
   const followedDomains = usePrefs((s) => s.followedDomains);
@@ -534,7 +535,7 @@ function StoryCard({
           </span>
         </div>
 
-        <div className="sc-body min-w-0 flex-1">
+        <div className="sc-body @container/sc min-w-0 flex-1">
           <div className="sc-meta flex items-center gap-1.5 text-xs text-muted">
             {domain ? (
               // Display only — NOT a tap target. It sits 2px above the title and had no rest
@@ -605,7 +606,10 @@ function StoryCard({
             )}
           </h3>
 
-          {(reasons.length > 0 || (explainable && typeof rank === 'number')) && (
+          {/* Reasons chips only. The "Why #N?" explainer moved to the action row as an icon (below),
+              so this row no longer renders for the explainer alone — saving a line on the many cards
+              that have no reason chips. */}
+          {reasons.length > 0 && (
             <div className="sc-reasons mt-1.5 flex flex-wrap items-center gap-1.5">
               {reasons.map((r) => (
                 // Label in --fg for AA: text-accent on the accent/10 tint is a different (lower)
@@ -619,19 +623,6 @@ function StoryCard({
                   {r}
                 </span>
               ))}
-              {explainable && typeof rank === 'number' && (
-                <button
-                  type="button"
-                  onClick={() => setShowExplain(true)}
-                  // WCAG 2.5.3 (Label in Name): the accessible name must CONTAIN the visible label,
-                  // so speech control works when someone says what they can see. "Why is this ranked
-                  // number 3" does not contain "Why #3?" — the visible text leads, explanation after.
-                  aria-label={`Why #${rank}? See how this story was ranked`}
-                  className="relative z-10 inline-flex items-center gap-1 rounded-full border border-edge px-2 py-0.5 text-xs text-muted hover:bg-surface-2 hover:text-fg"
-                >
-                  <BarChart3 className="size-3" /> Why #{rank}?
-                </button>
-              )}
             </div>
           )}
 
@@ -753,80 +744,140 @@ function StoryCard({
             )}
 
             <span className="sc-actions relative z-10 ml-auto flex items-center gap-0.5">
-              {(cloudLlm || (llmEnabled && webgpu !== 'unavailable')) && (
-                <IconButton
-                  label={
-                    // With article text off, an article story's TL;DR is built from the HN
-                    // discussion (CORS blocks reading the article body) — say so up front.
-                    (!fetchArticleText && href ? 'TL;DR (discussion)' : 'TL;DR') + (cloudLlm ? '' : ' · local LLM')
-                  }
-                  active={tldrText !== null}
-                  onClick={() => doTldr()}
-                >
-                  <Sparkles className={cn('size-4', tldrLoading && 'animate-pulse text-accent')} />
-                </IconButton>
-              )}
-              <IconButton label={saved ? 'Saved' : 'Save'} active={saved} onClick={onSave}>
-                {saved ? <BookmarkCheck className="size-4" /> : <Bookmark className="size-4" />}
-              </IconButton>
-              {allowHide && (
-                <IconButton label="Not interested" onClick={onHide}>
-                  <ThumbsDown className="size-4" />
-                </IconButton>
-              )}
-              {(domain || item.by) && (
-                <span ref={menuRef} className="relative">
-                  <IconButton
-                    label="Personalize (follow / mute)"
-                    active={menuOpen}
-                    onClick={() => setMenuOpen((v) => !v)}
-                  >
-                    <MoreHorizontal className="size-4" />
+              {/* RESPONSIVE OVERFLOW (container queries on .sc-body). Each action is an inline icon
+                  ABOVE its card-width threshold and moves into the "..." menu below it, so a narrow
+                  card never wraps the row onto its own line. Drop order as the card narrows:
+                  open-on-HN (@xl) → AI summary (@lg) → save (@md) → thumbs-down (@sm) → Why #N? (@xs);
+                  only "..." is always inline. Each wrapper is `hidden` then `contents` at its
+                  breakpoint, so the button flexes directly (no extra box) when shown. */}
+              {explainable && typeof rank === 'number' && (
+                <span className="hidden @3xs/sc:contents">
+                  {/* Icon-only, so WCAG 2.5.3 (label-in-name) does not apply; the accessible name +
+                      tooltip carry the number. The app's ranked-list mark reads as "why ranked here". */}
+                  <IconButton label={`Why #${rank}? See how this story was ranked`} onClick={() => setShowExplain(true)}>
+                    <Logo className="size-4" />
                   </IconButton>
-                  {menuOpen && (
-                    <div
-                      ref={menuContentRef}
-                      role="menu"
-                      className="absolute right-0 top-full z-20 mt-1 w-56 overflow-hidden rounded-lg border border-border bg-surface py-1 shadow-xl"
-                    >
-                      {domain && (
-                        <>
-                          <MenuItem onClick={followDomain}>
-                            <Star className={cn('size-3.5', domFollowed && 'fill-accent text-accent')} />
-                            {domFollowed ? `Unfollow ${domain}` : `Follow ${domain}`}
-                          </MenuItem>
-                          <MenuItem onClick={muteDomain}>
-                            <Ban className="size-3.5" />
-                            {domMuted ? `Unmute ${domain}` : `Mute ${domain}`}
-                          </MenuItem>
-                        </>
-                      )}
-                      {item.by && (
-                        <>
-                          <MenuItem onClick={followUser}>
-                            <Star className={cn('size-3.5', userFollowed && 'fill-accent text-accent')} />
-                            {userFollowed ? `Unfollow ${item.by}` : `Follow ${item.by}`}
-                          </MenuItem>
-                          <MenuItem onClick={muteUser}>
-                            <Ban className="size-3.5" />
-                            {userMuted ? `Unmute ${item.by}` : `Mute ${item.by}`}
-                          </MenuItem>
-                        </>
-                      )}
-                    </div>
-                  )}
                 </span>
               )}
-              <a
-                href={HN_ITEM(item.id)}
-                target="_blank"
-                rel="noreferrer"
-                title="Open on Hacker News"
-                onClick={() => trackForItem('upvote_out', item)}
-                className="inline-flex min-h-9 min-w-9 items-center justify-center rounded-lg px-2 py-1.5 text-muted hover:bg-surface-2 hover:text-fg"
-              >
-                <ArrowUpRight className="size-4" />
-              </a>
+              {aiAvailable && (
+                <span className="hidden @md/sc:contents">
+                  <IconButton
+                    label={
+                      // With article text off, an article story's TL;DR is built from the HN
+                      // discussion (CORS blocks reading the article body) — say so up front.
+                      (!fetchArticleText && href ? 'TL;DR (discussion)' : 'TL;DR') + (cloudLlm ? '' : ' · local LLM')
+                    }
+                    active={tldrText !== null}
+                    onClick={() => doTldr()}
+                  >
+                    <Sparkles className={cn('size-4', tldrLoading && 'animate-pulse text-accent')} />
+                  </IconButton>
+                </span>
+              )}
+              <span className="hidden @sm/sc:contents">
+                <IconButton label={saved ? 'Saved' : 'Save'} active={saved} onClick={onSave}>
+                  {saved ? <BookmarkCheck className="size-4" /> : <Bookmark className="size-4" />}
+                </IconButton>
+              </span>
+              {allowHide && (
+                <span className="hidden @xs/sc:contents">
+                  <IconButton label="Not interested" onClick={onHide}>
+                    <ThumbsDown className="size-4" />
+                  </IconButton>
+                </span>
+              )}
+              <span className="hidden @lg/sc:contents">
+                <a
+                  href={HN_ITEM(item.id)}
+                  target="_blank"
+                  rel="noreferrer"
+                  title="Open on Hacker News"
+                  onClick={() => trackForItem('upvote_out', item)}
+                  className="inline-flex min-h-9 min-w-9 items-center justify-center rounded-lg px-2 py-1.5 text-muted hover:bg-surface-2 hover:text-fg"
+                >
+                  <ArrowUpRight className="size-4" />
+                </a>
+              </span>
+              {/* Always-present "..." — the overflow menu (actions that dropped) + follow/mute. Hidden
+                  only when it would be EMPTY: no follow/mute AND wide enough that every action is inline. */}
+              <span ref={menuRef} className={cn('relative', !(domain || item.by) && '@lg/sc:hidden')}>
+                <IconButton label="More actions" active={menuOpen} onClick={() => setMenuOpen((v) => !v)}>
+                  <MoreHorizontal className="size-4" />
+                </IconButton>
+                {menuOpen && (
+                  <div
+                    ref={menuContentRef}
+                    role="menu"
+                    className="absolute right-0 top-full z-20 mt-1 w-56 overflow-hidden rounded-lg border border-border bg-surface py-1 shadow-xl"
+                  >
+                    {/* Overflowed actions — each shown ONLY below the width where its inline icon appears. */}
+                    <div className="@lg/sc:hidden">
+                      <MenuItem
+                        onClick={() => {
+                          trackForItem('upvote_out', item);
+                          window.open(HN_ITEM(item.id), '_blank', 'noopener,noreferrer');
+                          setMenuOpen(false);
+                        }}
+                      >
+                        <ArrowUpRight className="size-3.5" /> Open on Hacker News
+                      </MenuItem>
+                    </div>
+                    {aiAvailable && (
+                      <div className="@md/sc:hidden">
+                        <MenuItem onClick={() => { void doTldr(); setMenuOpen(false); }}>
+                          <Sparkles className="size-3.5" /> {tldrText !== null ? 'Hide TL;DR' : 'AI summary (TL;DR)'}
+                        </MenuItem>
+                      </div>
+                    )}
+                    <div className="@sm/sc:hidden">
+                      <MenuItem onClick={() => { onSave(); setMenuOpen(false); }}>
+                        {saved ? <BookmarkCheck className="size-3.5" /> : <Bookmark className="size-3.5" />} {saved ? 'Saved' : 'Save'}
+                      </MenuItem>
+                    </div>
+                    {allowHide && (
+                      <div className="@xs/sc:hidden">
+                        <MenuItem onClick={() => { onHide(); setMenuOpen(false); }}>
+                          <ThumbsDown className="size-3.5" /> Not interested
+                        </MenuItem>
+                      </div>
+                    )}
+                    {explainable && typeof rank === 'number' && (
+                      <div className="@3xs/sc:hidden">
+                        <MenuItem onClick={() => { setShowExplain(true); setMenuOpen(false); }}>
+                          <Logo className="size-3.5" /> Why #{rank}?
+                        </MenuItem>
+                      </div>
+                    )}
+                    {/* Divider before follow/mute — only below @xl (there is always at least the
+                        "Open on Hacker News" overflow item there) AND when follow/mute exists. */}
+                    {(domain || item.by) && <div className="@lg/sc:hidden my-1 border-t border-border" />}
+                    {domain && (
+                      <>
+                        <MenuItem onClick={followDomain}>
+                          <Star className={cn('size-3.5', domFollowed && 'fill-accent text-accent')} />
+                          {domFollowed ? `Unfollow ${domain}` : `Follow ${domain}`}
+                        </MenuItem>
+                        <MenuItem onClick={muteDomain}>
+                          <Ban className="size-3.5" />
+                          {domMuted ? `Unmute ${domain}` : `Mute ${domain}`}
+                        </MenuItem>
+                      </>
+                    )}
+                    {item.by && (
+                      <>
+                        <MenuItem onClick={followUser}>
+                          <Star className={cn('size-3.5', userFollowed && 'fill-accent text-accent')} />
+                          {userFollowed ? `Unfollow ${item.by}` : `Follow ${item.by}`}
+                        </MenuItem>
+                        <MenuItem onClick={muteUser}>
+                          <Ban className="size-3.5" />
+                          {userMuted ? `Unmute ${item.by}` : `Mute ${item.by}`}
+                        </MenuItem>
+                      </>
+                    )}
+                  </div>
+                )}
+              </span>
             </span>
           </div>
         </div>

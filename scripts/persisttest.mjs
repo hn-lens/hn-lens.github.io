@@ -95,10 +95,23 @@ if (!themeAfterReload) ok = false;
 // ---- 3. save + hide (IndexedDB local data) ----
 await page.getByRole('button', { name: 'Top', exact: true }).first().click().catch(() => {});
 await page.waitForSelector('article', { timeout: 40000 });
+// A card action is INLINE when the card is wide enough, else it overflows into the "..." menu — and
+// the persisted `magazine` layout renders non-hero cards as NARROW grid columns, so their actions
+// overflow. Click the inline control if visible, else open the menu and use the menu item.
+const clickCardAction = async (cardLoc, label) => {
+  const inline = cardLoc.getByRole('button', { name: label, exact: true });
+  if (await inline.isVisible().catch(() => false)) {
+    await inline.click();
+    return;
+  }
+  await cardLoc.getByRole('button', { name: 'More actions' }).click();
+  await page.waitForTimeout(200);
+  await page.getByRole('menuitem', { name: label }).first().click();
+};
 const firstTitle = (await page.locator('article h3').first().innerText()).trim();
-await page.locator('article').first().getByRole('button', { name: 'Save', exact: true }).click();
+await clickCardAction(page.locator('article').first(), 'Save');
 const secondTitle = (await page.locator('article h3').nth(1).innerText()).trim();
-await page.locator('article').nth(1).getByRole('button', { name: 'Not interested' }).click();
+await clickCardAction(page.locator('article').nth(1), 'Not interested');
 await page.waitForTimeout(500);
 
 // ---- 4. close & reopen ----

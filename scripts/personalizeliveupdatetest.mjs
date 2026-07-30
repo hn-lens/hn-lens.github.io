@@ -67,7 +67,7 @@ const sidebarText = () => page.evaluate(() => document.querySelector('.app-sideb
 // [role="dialog"] selector would grab the wrong one.
 const WHY_DIALOG = '[role="dialog"][aria-label^="Why this story is ranked"]';
 async function openWhyDialog() {
-  await page.locator('.sc-reasons button:has-text("Why #")').first().click();
+  await page.locator('.sc-actions button[aria-label^="Why #"]').first().click();
   await page.waitForSelector(WHY_DIALOG, { timeout: 8000 });
   await page.waitForTimeout(150);
   return page.evaluate((s) => document.querySelector(s)?.innerText ?? '', WHY_DIALOG);
@@ -336,7 +336,7 @@ for (const lw of [0.8, 1.0, 2.5]) {
     st.set({ weights: { ...st.weights, learned: w } });
   }, lw);
   await page.waitForTimeout(250);
-  await page.locator('.sc-reasons button:has-text("Why #")').first().click();
+  await page.locator('.sc-actions button[aria-label^="Why #"]').first().click();
   await page.waitForSelector('[role="dialog"][aria-label^="Why this story is ranked"]', { timeout: 8000 });
   await page.waitForTimeout(250);
   const txt = await page.locator('[role="dialog"][aria-label^="Why this story is ranked"]').innerText();
