@@ -15,12 +15,18 @@ const USER = { id: 'testuser', created: now - 5 * 365 * 86400, karma: 4242, abou
 // A user with too little activity to summarize (1 tiny comment) — the persona MUST refuse, and a
 // refusal must show NO "Based on …" provenance (nothing was sent to the model).
 const THIN_USER = { id: 'thinuser', created: now - 100000, karma: 3, submitted: [95] };
+// A user summarizable but NEVER summarized elsewhere in this test — so the cross-profile RACE check
+// gets a genuine cache MISS (a real in-flight generation), not the instant IndexedDB-cache return
+// that testuser would give after its earlier summary.
+const RACE_USER = { id: 'raceuser', created: now - 300 * 86400, karma: 55, submitted: [96, 97] };
 const ITEMS = {
   91: { id: 91, type: 'story', by: 'testuser', title: 'My first story about widgets', url: 'https://ex.com/91', score: 120, descendants: 8, time: now - 86400 },
   92: { id: 92, type: 'story', by: 'testuser', title: 'A second story about gadgets', url: 'https://ex.com/92', score: 90, descendants: 3, time: now - 172800 },
   93: { id: 93, type: 'comment', by: 'testuser', text: '<p>just a comment, not a story</p>', time: now - 200000 },
   94: { id: 94, type: 'story', by: 'testuser', title: 'A third story about doohickeys', url: 'https://ex.com/94', score: 60, descendants: 1, time: now - 259200 },
   95: { id: 95, type: 'comment', by: 'thinuser', text: '<p>ok</p>', time: now - 1000 },
+  96: { id: 96, type: 'story', by: 'raceuser', title: 'Distributed systems war stories from production', url: 'https://ex.com/96', score: 80, descendants: 4, time: now - 400000 },
+  97: { id: 97, type: 'story', by: 'raceuser', title: 'Why we rewrote our scheduler in Rust', url: 'https://ex.com/97', score: 70, descendants: 2, time: now - 500000 },
 };
 // A feed story by testuser, to test author-link navigation from a card.
 const FEED = { 501: { id: 501, type: 'story', by: 'testuser', title: 'Feed story by testuser', url: 'https://ex.com/501', score: 200, descendants: 10, time: now - 3600 } };
@@ -40,7 +46,7 @@ await page.route(/hacker-news\.firebaseio\.com/, (r) => {
   const mu = u.match(/user\/([^.]+)\.json/);
   // A backend outage must be distinguishable from a genuinely-absent user.
   if (mu && mu[1] === 'outageuser') return r.fulfill({ status: 503, contentType: 'text/plain', body: 'upstream error' });
-  if (mu) return json(r, mu[1] === 'testuser' ? USER : mu[1] === 'thinuser' ? THIN_USER : null); // unknown users → null (200)
+  if (mu) return json(r, mu[1] === 'testuser' ? USER : mu[1] === 'thinuser' ? THIN_USER : mu[1] === 'raceuser' ? RACE_USER : null); // unknown users → null (200)
   const mi = u.match(/item\/(\d+)\.json/);
   if (mi) return json(r, ITEMS[mi[1]] ?? FEED[mi[1]] ?? null);
   if (/topstories/.test(u)) return json(r, [501]);
@@ -49,9 +55,14 @@ await page.route(/hacker-news\.firebaseio\.com/, (r) => {
 });
 await page.route(/hn\.algolia\.com|google\.com\/s2/, (r) => r.fulfill({ status: 200, body: '{}' }));
 // Mock the Gemini API so the on-demand persona summary can be tested without WebGPU.
-await page.route(/generativelanguage\.googleapis\.com/, (r) => {
+await page.route(/generativelanguage\.googleapis\.com/, async (r) => {
   const u = r.request().url();
-  if (/:generateContent/.test(u)) return json(r, { candidates: [{ content: { parts: [{ text: 'PERSONA_SUMMARY: builds web things and comments on widgets and gadgets.' }] } }] });
+  // A deliberate delay so a test can navigate to another profile while a generation is IN FLIGHT
+  // (the cross-profile race). Harmless to the success tests (they wait up to 15s).
+  if (/:generateContent/.test(u)) {
+    await new Promise((res) => setTimeout(res, 700));
+    return json(r, { candidates: [{ content: { parts: [{ text: 'PERSONA_SUMMARY: builds web things and comments on widgets and gadgets.' }] } }] });
+  }
   if (/\/models/.test(u)) return json(r, { models: [{ name: 'models/gemini-2.0-flash', displayName: 'Gemini 2.0 Flash', supportedGenerationMethods: ['generateContent'] }] });
   return json(r, {});
 });
@@ -137,6 +148,25 @@ await page.waitForTimeout(500);
     const main = await page.locator('main').innerText();
     check('thin-user persona REFUSES (no fabricated bio)', /Not enough recent activity/i.test(main), main.slice(0, 100));
     check('a refusal shows NO "Based on" provenance line (nothing was sent)', !/Based on \d+ recent/i.test(main), main.match(/Based on[^\n]*/i)?.[0] ?? '(none)');
+  }
+  // ---- CROSS-PROFILE RACE: an in-flight generation must not land on the NEXT profile ----
+  // Start a summary on raceuser (a genuine cache MISS → real in-flight fetch), then navigate
+  // in-app (no reload) to thinuser while the mocked generation is still running (700ms delay). The
+  // superseded result must be discarded — thinuser is a refuse-only profile, so if PERSONA_SUMMARY
+  // appears there, raceuser's run wrote its result onto the wrong profile.
+  {
+    await page.goto(`${BASE}#/user/raceuser`, { waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => /About this user/i.test(document.body.innerText), null, { timeout: 15000 }).catch(() => {});
+    // Wait for the generation request to actually be ISSUED before navigating, so the fetch is
+    // provably in flight (deterministic — not a fixed sleep).
+    const genIssued = page.waitForRequest(/:generateContent/, { timeout: 8000 }).catch(() => null);
+    await page.getByRole('button', { name: /Summarize their activity/i }).click();
+    await genIssued;
+    await page.evaluate(() => { window.location.hash = '#/user/thinuser'; }); // in-app nav, no reload
+    await page.waitForFunction(() => /3 karma/.test(document.querySelector('main')?.innerText ?? ''), null, { timeout: 15000 }).catch(() => {});
+    await page.waitForTimeout(1500); // the superseded raceuser generation resolves within this window
+    const raceMain = await page.locator('main').innerText();
+    check('an in-flight persona summary does NOT land on the next profile (cross-profile race)', !/PERSONA_SUMMARY/.test(raceMain), raceMain.match(/PERSONA_SUMMARY[^\n]*/)?.[0] ?? '(clean)');
   }
   // Reset provider so later sections use the default local state.
   await page.evaluate(() => window.__hnlens.prefs.getState().set({ llmProvider: 'local', apiKeys: { gemini: '', openai: '', anthropic: '' } }));

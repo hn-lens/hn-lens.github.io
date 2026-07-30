@@ -470,8 +470,26 @@ in the browser; deploys to GitHub Pages.
   descriptor. The UI shows **exactly what it used** ("Based on article text (~N words) + M comments"),
   offers a **title-level "Article text" link** (in the card meta row, not buried in the summary) that
   opens the extracted text in a **formatted overlay** (paragraphs preserved via `htmlToText`), and —
-  when a URL exists but the proxy is off — prompts to enable it. Both go through `summarizeItem`.
-  `summarizeThread`/`tldr` still exist (article optional) for the eval harnesses.
+   when a URL exists but the proxy is off — prompts to enable it. Both go through `summarizeItem`.
+   `summarizeThread`/`tldr` still exist (article optional) for the eval harnesses.
+- **Provenance is EARNED — a refusal claims NO basis, on ALL 4 summary surfaces (2026-07-30):** on a
+  too-thin story `summarizeItem`/`summarizeUser` REFUSE before any model call, returning `request: []`
+  plus a ZEROED-but-truthy `sources`. The "Based on …" line must be gated on a real request
+  (`request.length > 0`), NOT on `sources` truthiness — else `describeSources` renders "Based on no
+  readable content" beneath a refusal (a basis for a call never made). The class is 4 surfaces — card
+  TL;DR (`StoryCard`), thread (`ThreadSummary`), Ask (`AskThread`), persona (`User`); all four now share
+  the one rule. Guarded by `cloudllmtest` (card + thread refusal → no "Based on"), `usertest` (persona),
+  and `refusalattrtest` (no "Built with Llama"/AI caveat over a refusal). *Lesson: fixing this on ONE
+  surface (persona) left the tldr+thread siblings — enumerate every `describeSources` render site and fix
+  the CLASS, with a guard per surface.*
+- **A persona summary belongs to ONE profile — discard a superseded generation (2026-07-30):**
+  `/user/:id` reuses the `User` component, so an in-flight persona generation for profile A could write
+  onto profile B if you navigate mid-flight. `doSummary` carries a monotonic `summarySeq` (bumped on each
+  run AND on `id` change); every state write is guarded by `live()` and the id-effect clears
+  `summaryLoading`. Guarded by `usertest`'s cross-profile race (a real cache-miss generation, navigate
+  once the request is issued, assert it does not land on the next profile). *Lesson: the earlier
+  reset-on-nav effect cleared a COMPLETED lingering summary but not an IN-FLIGHT one — a component reused
+  across ids needs a run-id, not just a reset.*
 - **Summaries are CACHED in IndexedDB (`kv`) and a HIT must be CHEAP.** `summarizeItem` checks the
   cache **first** and returns the stored `{text, sources, articleText}` object with **no network** —
   crucially it does **NOT fetch the comment tree** on a hit. (Bug fixed 2026-07: the key used to include

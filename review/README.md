@@ -3210,3 +3210,88 @@ line the function-level `aiguardtest` never exercised).
 **Deferred (higher regression risk / less contained):** `<mark>` search-highlight contrast (62-theme
 matrix), "Why #N?" cross-section reconciliation, `article.ts` eager-import bundle cost, and the
 marginal perf/cosmetic LOWs.
+
+## c3r36 — re-review of the c3r35 batch + an A/B class-completion fix (2026-07-30)
+Re-ran the 5 code-facing lenses against the published c3r35 build (e73393c). Zero BLOCKER/HIGH, but
+**3 MEDIUM + ~7 LOW** — and *two of the three MEDIUMs were created by the c3r35 batch itself*, the
+incomplete-fix signature this loop keeps hitting:
+- **A — provenance-over-refusal was fixed on ONE surface, not the CLASS** (AI MEDIUM + bug LOW).
+  c3r35 gated the *persona* summary's "Based on …" line on a real request, but the identical bug
+  remained on the **card TL;DR** (`StoryCard.tsx`) and the **discussion thread** (`ThreadSummary.tsx`):
+  `summarizeItem` returns `request:[]` on a too-thin refusal but a truthy *zeroed* `sources`, so
+  `describeSources` rendered "Based on no readable content" beneath a refusal — a provenance claim for
+  a request never made. The provenance-honesty CLASS is 4 surfaces (tldr / thread / ask / persona);
+  Ask + persona were correct, tldr + thread were not.
+- **B — a cross-profile persona RACE** (bug MEDIUM). `User.tsx doSummary` wrote its result
+  unconditionally on resolve; navigating from profile A to profile B while A's generation was still in
+  flight landed A's summary on B. (The c3r35 reset-on-nav effect cleared a *completed* lingering
+  summary but not an *in-flight* one.)
+- **C — Retry stripped on a failed cloud summary** (usability MEDIUM) — DEFERRED (pre-existing, not
+  from the batch; larger surface, taken next round per the ≤5-per-batch cap).
+
+### The fix (A + B, class-complete)
+- **A:** gated the provenance line on the real request on BOTH remaining surfaces — `StoryCard.tsx`
+  (`tldrRequest.length > 0`) and `ThreadSummary.tsx` (`request.length > 0`). All 4 provenance surfaces
+  now share one rule: show "Based on …" only when a model actually ran. Enumerated the class
+  (`describeSources` render sites) → 4 surfaces, 2 already correct, 2 fixed, 0 remaining.
+- **B:** a monotonic run-id in `User.tsx` — `summarySeq` is bumped on each `doSummary` AND on `id`
+  navigation; every state write (onToken / result / catch / finally) is guarded by `live()` (seq
+  unchanged), and the id-change effect also clears `summaryLoading`. A superseded generation is
+  discarded, not written onto the new profile.
+
+### Guards (fail-first: pre-fix FAIL → post-fix PASS, demonstrated on a scratch build)
+- `usertest`: a new `raceuser` fixture (never summarized elsewhere → a genuine cache MISS, so the
+  click starts a REAL in-flight generation) begins a summary, then navigates in-app to `thinuser`
+  once the `generateContent` request is provably issued (`waitForRequest`, not a fixed sleep); asserts
+  PERSONA_SUMMARY does NOT land on thinuser. Pre-fix FAIL (it landed) → post-fix PASS.
+- `cloudllmtest` §12: a thin story (ONE short comment → the discussion toolbar + Summary tool render,
+  but still below the summarize threshold) drives a refusal on BOTH the card TL;DR and the thread;
+  asserts NO "Based on" line on either surface. Pre-fix 2-FAIL ("Based on no readable content" on
+  both) → post-fix PASS. *Two test-only collisions fixed en route (each masqueraded as an app bug):*
+  `THIN_ID` must avoid §9's `STORY_ID+1` item id (or §9's non-thin item wrongly got the empty tree
+  and refused), and the Top feed is served from the **Dexie list cache** (`db.lists`) — cleared before
+  the reload or the new `feedIds` never fetch.
+
+*Lesson (the recurring one, now with a mechanism): a fix that touches ONE surface of a shared display
+helper (`describeSources`) is an INCOMPLETE fix — enumerate every render site and fix the CLASS in one
+change, with a guard that covers every surface. Two of three MEDIUMs this round were self-inflicted by
+doing exactly the opposite; the self-inflicted rate is the convergence signal (see "Convergence" below).*
+
+## Convergence — how this loop terminates (and why it hasn't yet)
+**Literal "zero findings" is unreachable, by the project's own rule** — any thorough lens always
+finds *something*, so a clean-of-everything round will never certify the app. Chasing it is why
+rounds 16–20 all "failed". The correct target is **CONVERGED / SHIPPABLE**, defined precisely and
+measurably:
+1. **zero BLOCKER/HIGH**, and
+2. **zero SELF-INFLICTED regressions** in the round (no finding traceable to the previous batch), and
+3. **every MEDIUM either fixed or accepted in writing** with a rationale, and
+4. **LOWs triaged** to a written accepted-backlog (not chased).
+
+**Why we haven't converged is not the review side — it's the FIX side.** Measured: c3r36 found 3
+MEDIUM, and **2 of the 3 were created by the c3r35 batch** (persona-only provenance fix left the tldr
++ thread siblings; the reset-on-nav effect left the in-flight race). A loop that produces ~1 new
+finding per fix *cannot* terminate. So the single number that matters is the **self-inflicted rate**,
+and the whole discipline exists to drive it to 0:
+- **Fix by CLASS, not instance.** Before any fix, grep the shared helper's every call/render site,
+  state how many you found, fix them all in one change, and write ONE guard that covers every surface.
+  (A-fix this round: `describeSources` → 4 surfaces; 2 were already right, 2 fixed, 0 left.)
+- **Prefer DELETION over addition.** New capability spawns new findings (the `departed` notice became
+  a HIGH the next round). Removing the wrong thing (a false comment, a dead export, a broken notice)
+  is usually the correct minimal fix.
+- **Write the failing guard FIRST, from the lens's words** — pre-fix-must-FAIL, post-fix-must-PASS,
+  demonstrated on a scratch build. A guard written after the fix encodes the patch, not the invariant.
+- **Cap the batch (~5), gate, then a diff-scoped read-only pass over ONLY the changed surfaces**,
+  before taking the next batch. Fixing fifteen things and gating once is how regressions slip in.
+- **No narrative comments in source** — they were the single largest defect category (12 false
+  claims in one round). Reasoning goes here, in this audited file.
+
+**Termination test:** the same developer report, made again later, is caught by a lens first (golden
+rule #8); and a full round returns **0 BLOCKER/HIGH + 0 self-inflicted + every MEDIUM resolved**.
+That round — not "0 findings" — is what certifies the ship.
+
+**Path from here (c3r36 → converged):** after this A/B batch, the remaining verified backlog is
+pre-existing (NOT self-inflicted): **C** (Retry stripped on a failed cloud summary, MEDIUM) plus a
+handful of LOWs (`<mark>` 62-theme contrast, "Why #N?" reconciliation, `article.ts` eager import,
+cosmetic near-misses). Next batch: fix **C by class** + ≤4 LOWs, gate, diff-scoped pass, re-review.
+When a round comes back with only accepted-LOWs and **zero self-inflicted findings**, it has
+converged → ship.

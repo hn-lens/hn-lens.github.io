@@ -14,6 +14,23 @@ const tree = {
   id: STORY_ID, story_id: STORY_ID, title: story.title, url: story.url, author: 'op', created_at_i: now - 100000, type: 'story', text: null, points: 150,
   children: Array.from({ length: 6 }, (_, i) => ({ id: STORY_ID * 10 + i, author: `u${i}`, text: `<p>A substantive comment number ${i} about the consensus protocol tradeoffs and why they matter in practice here.</p>`, created_at_i: now - 9000 + i * 100, parent_id: STORY_ID, story_id: STORY_ID, points: null, type: 'comment', children: [] })),
 };
+// A too-thin story (zero comments, no article/self-text) → summarizeItem REFUSES before any model
+// call (tooThinToAnswer), returning request:[] plus a ZEROED-but-truthy sources object. The refusal
+// must therefore show NO "Based on …" provenance line on EITHER surface (card TL;DR + thread) —
+// that would describe a request that was never made. (A-class guard; pre-fix these lines rendered
+// "Based on no readable content".)
+const THIN_ID = 7050; // NOT STORY_ID+1 (7001) — section 9 uses that id and needs the non-thin tree
+// One SHORT comment: enough for the discussion toolbar (hence the Summary tool) to render, but still
+// far below the summarize threshold (tooThinToAnswer: <2 comments / <200 comment chars, <600 body),
+// so BOTH the card TL;DR and the thread summary REFUSE.
+const thinStory = { id: THIN_ID, type: 'story', by: 'op', title: 'A brand-new link, barely any discussion', url: 'https://ex.com/new', score: 50, descendants: 1, time: now - 300 };
+const thinTree = {
+  id: THIN_ID, story_id: THIN_ID, title: thinStory.title, url: thinStory.url, author: 'op', created_at_i: now - 300, type: 'story', text: null, points: 50,
+  children: [{ id: THIN_ID * 10, author: 'x', text: '<p>ok</p>', created_at_i: now - 200, parent_id: THIN_ID, story_id: THIN_ID, points: null, type: 'comment', children: [] }],
+};
+// The Top feed id list is mutable so a late section can add the thin story without perturbing the
+// earlier sections (which assume a single story in the feed).
+let feedIds = [STORY_ID];
 
 const fails = [];
 const check = (name, pass, detail = '') => {
@@ -82,16 +99,22 @@ await page.route(/api\.anthropic\.com\/v1\/models/, (r) =>
 await page.route(/hacker-news\.firebaseio\.com/, (r) => {
   const u = r.request().url();
   const j = (x) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(x) });
-  if (/topstories/.test(u)) return j([STORY_ID]);
+  if (/topstories/.test(u)) return j(feedIds);
   if (/(best|new|ask|show|job)stories/.test(u)) return j([]);
   const m = u.match(/item\/(\d+)/);
-  if (m) return j(Number(m[1]) === STORY_ID ? story : null);
+  if (m) {
+    const id = Number(m[1]);
+    return j(id === STORY_ID ? story : id === THIN_ID ? thinStory : null);
+  }
   return j(null);
 });
 // Generic route FIRST so the specific /items/ route (registered next) WINS — Playwright
 // uses the last-registered matching route, so the comment tree isn't shadowed by '{}'.
 await page.route(/hn\.algolia\.com|google\.com\/s2/, (r) => r.fulfill({ status: 200, body: '{}' }));
-await page.route(/hn\.algolia\.com\/api\/v1\/items\/(\d+)/, (r) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(tree) }));
+await page.route(/hn\.algolia\.com\/api\/v1\/items\/(\d+)/, (r) => {
+  const id = Number(r.request().url().match(/items\/(\d+)/)?.[1]);
+  return r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(id === THIN_ID ? thinTree : tree) });
+});
 
 await page.goto(BASE, { waitUntil: 'domcontentloaded' });
 await page.waitForFunction(() => window.__hnlens && window.__hnlens.prefs && window.__hnlens.llm, null, { timeout: 20000 });
@@ -366,6 +389,50 @@ check('a "Your interests" chip is a clickable control', await chip.isVisible().c
 await chip.click().catch(() => {});
 await page.waitForTimeout(150);
 check('clicking an interest chip unfollows it', !(await page.evaluate(() => window.__hnlens.prefs.getState().followedDomains.includes('chip.example'))));
+
+// ---- (12) PROVENANCE HONESTY on a REFUSAL (A class): a too-thin story the model refuses to
+// summarize must NOT show a "Based on …" line — nothing was sent to a model. Both surfaces:
+// the card TL;DR (StoryCard) AND the discussion thread (ThreadSummary). Gemini key still set. ----
+feedIds = [STORY_ID, THIN_ID]; // add the zero-comment story to the Top feed
+await page.evaluate(async () => {
+  // Bust the Dexie list/item caches — section 10 cached top=[STORY_ID], which would otherwise be
+  // served on reload and the fresh feedIds never fetched.
+  const { db } = await window.__hnlens.db();
+  await db.lists.clear();
+  await db.items.clear();
+  window.__hnlens.prefs.getState().set({ llmProvider: 'gemini', apiKeys: { gemini: 'g-key', openai: '', anthropic: '' }, showAiSummaries: true });
+  location.hash = '#/';
+});
+await page.reload({ waitUntil: 'domcontentloaded' }); // full reload → fresh topstories fetch
+await page.waitForFunction(() => window.__hnlens, null, { timeout: 20000 });
+await page.getByRole('button', { name: 'Top', exact: true }).click();
+// Wait for the thin card itself to render (fail loudly here rather than at a downstream click).
+await page.waitForFunction(() => [...document.querySelectorAll('article')].some((a) => /barely any discussion/.test(a.textContent || '')), null, { timeout: 15000 });
+{
+  const thinCard = page.locator('article').filter({ hasText: 'barely any discussion' }).first();
+  await thinCard.getByRole('button', { name: /^TL;DR/ }).first().click();
+  await page.waitForFunction(() => /Not enough to summarize/i.test(document.body.innerText), null, { timeout: 15000 }).catch(() => {});
+  await page.waitForTimeout(300);
+  const tldrBlock = await thinCard.locator('.sc-tldr').innerText().catch(() => '');
+  check('card TL;DR refusal shows the honest "not enough" text', /Not enough to summarize/i.test(tldrBlock), tldrBlock.replace(/\s+/g, ' ').slice(0, 80));
+  check('card TL;DR refusal shows NO "Based on" provenance (nothing was sent)', !/Based on/i.test(tldrBlock), tldrBlock.match(/Based on[^\n]*/i)?.[0] ?? '(clean)');
+}
+{
+  await page.goto(`${BASE}#/item/${THIN_ID}`, { waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(() => /barely any discussion/i.test(document.body.innerText), null, { timeout: 15000 }).catch(() => {});
+  await page.getByRole('button', { name: /^Summary$/ }).first().click().catch(() => {}); // open the toolbar tray
+  await page.waitForTimeout(300);
+  await page.getByRole('button', { name: 'Summarize', exact: true }).click().catch(() => {});
+  await page.waitForFunction(() => /Not enough to summarize/i.test(document.body.innerText), null, { timeout: 15000 }).catch(() => {});
+  await page.waitForTimeout(300);
+  // Scope to the summary block: the element that carries the refusal text AND a rendered .hn-html body.
+  const threadBlock = await page.evaluate(() => {
+    const host = [...document.querySelectorAll('div')].find((d) => /Not enough to summarize/i.test(d.textContent || '') && d.querySelector('.hn-html'));
+    return (host ?? document.querySelector('main'))?.innerText ?? '';
+  });
+  check('thread summary refusal shows the honest "not enough" text', /Not enough to summarize/i.test(threadBlock), threadBlock.replace(/\s+/g, ' ').slice(0, 80));
+  check('thread summary refusal shows NO "Based on" provenance (nothing was sent)', !/Based on/i.test(threadBlock), threadBlock.match(/Based on[^\n]*/i)?.[0] ?? '(clean)');
+}
 
 await page.evaluate(() => window.__hnlens.prefs.getState().set({ llmProvider: 'openai', apiKeys: { gemini: '', openai: 'persist-key', anthropic: '' } }));
 await page.reload({ waitUntil: 'domcontentloaded' });

@@ -130,7 +130,7 @@ export default function ThreadSummary({ story, tree }: { story: HnItem; tree: Al
         <div className="hn-html text-sm text-fg/90" dangerouslySetInnerHTML={{ __html: mdLite(text || (loading ? '…' : '')) }} />
       )}
 
-      {sources && !loading && (
+      {sources && !loading && request.length > 0 && (
         <div className="mt-2 border-t border-accent/20 pt-2 text-xs text-muted">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <span>

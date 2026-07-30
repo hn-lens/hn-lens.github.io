@@ -91,8 +91,14 @@ export default function User() {
   // must reflect what reached the model.
   const [summaryCounts, setSummaryCounts] = useState<{ stories: number; comments: number }>({ stories: 0, comments: 0 });
   const llmState = useModelStore((s) => s.llm);
+  // Monotonic run id: incremented on each doSummary AND on profile navigation, so a generation that
+  // resolves AFTER the user navigated away (or started another) cannot write its result onto the new
+  // profile (the cross-profile persona race).
+  const summarySeq = useRef(0);
   const doSummary = async (force = false) => {
     if (summaryLoading || !user) return;
+    const seq = ++summarySeq.current;
+    const live = () => seq === summarySeq.current;
     setSummaryLoading(true);
     setSummary('');
     setSummaryReq([]); // no model has run yet this attempt
@@ -104,24 +110,29 @@ export default function User() {
         stories: stories.map((s) => stripHtml(s.title ?? '')),
         comments: comments.map((c) => stripHtml(c.text ?? '')),
         force,
-        onToken: (full) => setSummary(full),
+        onToken: (full) => { if (live()) setSummary(full); },
       });
+      if (!live()) return; // superseded by a navigation / newer run
       setSummary(res.text);
       setSummaryReq(res.request);
       setSummaryCounts(res.counts);
     } catch (err) {
-      setSummary(`Could not summarize: ${err instanceof Error ? err.message : String(err)}`);
+      if (live()) setSummary(`Could not summarize: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
-      setSummaryLoading(false);
+      if (live()) setSummaryLoading(false);
     }
   };
 
   // This route (/user/:id) re-uses the component across users, so clear the persona summary when the
-  // id changes — otherwise the previous user's summary + provenance linger on the new profile.
+  // id changes — otherwise the previous user's summary + provenance linger on the new profile. Bump
+  // the run id too, so an in-flight generation for the previous user can't write onto this one, and
+  // clear the loading flag so the new profile's Summarize button is usable.
   useEffect(() => {
+    summarySeq.current++;
     setSummary(null);
     setSummaryReq([]);
     setSummaryCounts({ stories: 0, comments: 0 });
+    setSummaryLoading(false);
   }, [id]);
 
   return (

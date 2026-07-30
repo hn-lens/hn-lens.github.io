@@ -659,7 +659,7 @@ function StoryCard({
                   {tldrText}
                 </p>
               )}
-              {tldrNote && !tldrLoading && <p className="mt-1 text-[11px] text-muted">{tldrNote}</p>}
+              {tldrNote && !tldrLoading && tldrRequest.length > 0 && <p className="mt-1 text-[11px] text-muted">{tldrNote}</p>}
               {!tldrLoading && tldrText && !/^Could not/i.test(tldrText) && (
                 <div className="mt-1.5">
                   <SummaryActions request={tldrRequest} onRefresh={() => void doTldr(true)} refreshing={tldrLoading} kind="tldr" />
