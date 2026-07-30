@@ -239,7 +239,11 @@ export default function User() {
                   ) : (
                     <p className="whitespace-pre-wrap leading-relaxed">{summary}</p>
                   )}
-                  {!summaryLoading && summary && !/^Could not/i.test(summary) && (
+                  {/* Three states, one row (mirrors card/thread/ask). SUCCESS (request sent) → basis +
+                      full controls. ERROR ("Could not…") → keep a retry (Refresh); no request, so the
+                      basis line + caveat + attribution stay off. REFUSAL (thin input, no request, not
+                      an error) → hide the row (Refresh re-refuses, "Edit prompt" is inoperative). */}
+                  {!summaryLoading && summary && (summaryReq.length > 0 || /^Could not/i.test(summary)) && (
                     <>
                       {/* Provenance is EARNED by real model output: only when a request was actually
                           sent (summaryReq non-empty), and counting what REACHED the model
@@ -247,8 +251,15 @@ export default function User() {
                           nothing, so it shows no "Based on" line. */}
                       {summaryReq.length > 0 && (
                         <p className="mt-1.5 text-[11px] text-muted">
-                          Based on {summaryCounts.stories} recent {summaryCounts.stories === 1 ? 'story' : 'stories'} +{' '}
-                          {summaryCounts.comments} {summaryCounts.comments === 1 ? 'comment' : 'comments'}
+                          {/* Omit a zero part: a pure commenter shows "Based on 12 comments", not
+                              "Based on 0 recent stories + 12 comments". Still the SENT counts. */}
+                          Based on{' '}
+                          {[
+                            summaryCounts.stories > 0 && `${summaryCounts.stories} recent ${summaryCounts.stories === 1 ? 'story' : 'stories'}`,
+                            summaryCounts.comments > 0 && `${summaryCounts.comments} ${summaryCounts.comments === 1 ? 'comment' : 'comments'}`,
+                          ]
+                            .filter(Boolean)
+                            .join(' + ')}
                         </p>
                       )}
                       <div className="mt-1.5">

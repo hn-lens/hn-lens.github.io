@@ -490,6 +490,21 @@ in the browser; deploys to GitHub Pages.
   once the request is issued, assert it does not land on the next profile). *Lesson: the earlier
   reset-on-nav effect cleared a COMPLETED lingering summary but not an IN-FLIGHT one — a component reused
   across ids needs a run-id, not just a reset.*
+- **The summary controls row is ONE 3-state model on every surface (2026-07-30):** card TL;DR
+  (`StoryCard`), thread (`ThreadSummary`), persona (`User`) — and Ask, via its persistent input —
+  render exactly three states. **SUCCESS** (`request` non-empty): the "Based on…" basis line + full
+  `SummaryActions` (Refresh / View request / Edit prompt / "AI-generated" caveat / Llama). **ERROR**
+  (text starts "Could not…"): keep a **retry** (Refresh) reachable — the error copy invites one — but
+  request is empty so View-request/caveat/attribution and the basis line all stay OFF (nothing ran).
+  **REFUSAL** (thin input, empty request, not an error): hide the controls row entirely (Refresh would
+  re-refuse; "Edit prompt" is inoperative — a refusal short-circuits before any prompt is used) — only
+  the honest text shows. Gate the row on `request.length > 0 || /^Could not/i.test(text)`, and reset
+  `request` (and thread `sources`) at the START of each generation so a prior success can't leak a
+  stale request into an error render. Guarded by `cloudllmtest` (§12 refusal hides the row; §13 card +
+  thread error keep Refresh, no basis/caveat) + `usertest` (persona refusal hides; persona error keeps
+  Refresh). *Lesson: three states collapsed into a `!/^Could not/` boolean produced BOTH a
+  dead-end-on-error (retry stripped) AND a noisy-refusal (useless controls); one explicit 3-state gate,
+  identical on every surface, fixes the class.*
 - **Summaries are CACHED in IndexedDB (`kv`) and a HIT must be CHEAP.** `summarizeItem` checks the
   cache **first** and returns the stored `{text, sources, articleText}` object with **no network** —
   crucially it does **NOT fetch the comment tree** on a hit. (Bug fixed 2026-07: the key used to include

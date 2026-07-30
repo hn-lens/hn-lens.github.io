@@ -441,6 +441,7 @@ function StoryCard({
     setTldrText('');
     setTldrNote('');
     setTldrArticle('');
+    setTldrRequest([]); // no model has run yet this attempt — so an error/refusal shows no stale request
     try {
       const { summarizeItem, describeSources, describeProvenance } = await import('../../lib/models/llm');
       trackForItem('summarize', item);
@@ -660,7 +661,11 @@ function StoryCard({
                 </p>
               )}
               {tldrNote && !tldrLoading && tldrRequest.length > 0 && <p className="mt-1 text-[11px] text-muted">{tldrNote}</p>}
-              {!tldrLoading && tldrText && !/^Could not/i.test(tldrText) && (
+              {/* Three states, one row. SUCCESS (request sent) → full controls + attribution. ERROR
+                  ("Could not…") → keep a retry (Refresh); request is empty so View-request/caveat/Llama
+                  stay off. REFUSAL (thin input, no request, not an error) → hide the row entirely
+                  (Refresh would re-refuse, "Edit prompt" is inoperative). Matches thread + ask. */}
+              {!tldrLoading && tldrText && (tldrRequest.length > 0 || /^Could not/i.test(tldrText)) && (
                 <div className="mt-1.5">
                   <SummaryActions request={tldrRequest} onRefresh={() => void doTldr(true)} refreshing={tldrLoading} kind="tldr" />
                 </div>

@@ -68,6 +68,8 @@ export default function ThreadSummary({ story, tree }: { story: HnItem; tree: Al
   const run = async (force = false) => {
     setLoading(true);
     setText('');
+    setRequest([]); // no model has run yet this attempt — so an error/refusal shows no stale request
+    setSources(null);
     try {
       const { summarizeItem, describeSources, describeProvenance } = await import('../../lib/models/llm');
       const res: SummaryResult = await summarizeItem(llmModel, 'thread', story, {
@@ -128,6 +130,16 @@ export default function ThreadSummary({ story, tree }: { story: HnItem; tree: Al
 
       {text !== null && (
         <div className="hn-html text-sm text-fg/90" dangerouslySetInnerHTML={{ __html: mdLite(text || (loading ? '…' : '')) }} />
+      )}
+
+      {/* A FAILED generation (transient provider error) keeps a retry within reach — the error copy
+          invites one. Refresh IS the retry. Nothing ran successfully (request is empty), so
+          SummaryActions suppresses View-request / caveat / Llama; no basis line either. A thin-input
+          REFUSAL is deterministic (retrying re-refuses), so it gets no controls — only the honest text. */}
+      {text !== null && !loading && request.length === 0 && /^Could not/i.test(text) && (
+        <div className="mt-2 border-t border-accent/20 pt-2">
+          <SummaryActions request={request} onRefresh={() => run(true)} refreshing={loading} kind="thread" />
+        </div>
       )}
 
       {sources && !loading && request.length > 0 && (

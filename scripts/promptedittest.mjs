@@ -27,7 +27,10 @@ const page = ctx.pages()[0] || (await ctx.newPage());
 
 const json = (r, x) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(x) });
 const story = { id: STORY_ID, type: 'story', by: 'op', title: 'A story about raft consensus', url: 'https://ex.com/raft', score: 150, descendants: 3, time: now - 100000 };
-const tree = { id: STORY_ID, story_id: STORY_ID, title: story.title, url: story.url, author: 'op', created_at_i: now - 100000, type: 'story', text: null, points: 150, children: Array.from({ length: 3 }, (_, i) => ({ id: STORY_ID * 10 + i, author: `u${i}`, text: `<p>A substantive comment ${i} about the consensus tradeoffs.</p>`, created_at_i: now - 9000 + i * 100, parent_id: STORY_ID, story_id: STORY_ID, points: null, type: 'comment', children: [] })) };
+// The comments must clear the summarize-substance floor (tooThinToAnswer: >=2 comments AND >=200
+// chars) so the TL;DR actually SUCCEEDS (GEMINI_SUMMARY) — this test edits the prompt in a real
+// SUCCESS state; a thin story would refuse and (correctly) hide the controls row.
+const tree = { id: STORY_ID, story_id: STORY_ID, title: story.title, url: story.url, author: 'op', created_at_i: now - 100000, type: 'story', text: null, points: 150, children: Array.from({ length: 3 }, (_, i) => ({ id: STORY_ID * 10 + i, author: `u${i}`, text: `<p>A substantive comment number ${i} about the raft consensus protocol tradeoffs and why they matter in practice here.</p>`, created_at_i: now - 9000 + i * 100, parent_id: STORY_ID, story_id: STORY_ID, points: null, type: 'comment', children: [] })) };
 
 await page.route(/hacker-news\.firebaseio\.com/, (r) => {
   const u = r.request().url();
@@ -37,8 +40,11 @@ await page.route(/hacker-news\.firebaseio\.com/, (r) => {
   if (m) return json(r, { ...story, id: Number(m[1]) });
   return json(r, null);
 });
-await page.route(/hn\.algolia\.com\/api\/v1\/items\/(\d+)/, (r) => json(r, tree));
+// Generic route FIRST so the specific /items/ route (registered next) WINS — Playwright runs
+// matching routes in REVERSE registration order, so a catch-all registered LAST would shadow the
+// comment-tree route with '{}', leaving the card with no comments (→ a refusal, not a summary).
 await page.route(/hn\.algolia\.com|google\.com\/s2|gstatic\.com/, (r) => r.fulfill({ status: 200, contentType: 'application/json', body: '{}' }));
+await page.route(/hn\.algolia\.com\/api\/v1\/items\/(\d+)/, (r) => json(r, tree));
 await page.route(/generativelanguage\.googleapis\.com/, (r) => {
   const u = r.request().url();
   if (/:generateContent/.test(u)) return json(r, { candidates: [{ content: { parts: [{ text: 'GEMINI_SUMMARY raft' }] } }] });
@@ -102,6 +108,9 @@ await page.getByRole('button', { name: 'Top', exact: true }).click();
 await page.waitForSelector('article', { timeout: 15000 });
 await page.locator('article').first().getByRole('button', { name: /^TL;DR/ }).first().click();
 await page.waitForFunction(() => /GEMINI_SUMMARY/.test(document.body.innerText), null, { timeout: 15000 }).catch(() => {});
+// The controls row (with "Edit prompt") renders only on a real SUCCESS — assert the precondition
+// explicitly so a thin/refusing fixture fails HERE, not cryptically at the Edit-prompt click below.
+check('PRECONDITION: card TL;DR produced a real summary (controls row present)', /GEMINI_SUMMARY/.test(await page.evaluate(() => document.body.innerText)));
 await page.locator('article .sc-tldr').first().getByRole('button', { name: 'Edit prompt' }).click();
 await page.waitForFunction(() => [...document.querySelectorAll('[role="dialog"]')].some((d) => /Edit the .* prompt/i.test(d.textContent || '')), null, { timeout: 8000 });
 

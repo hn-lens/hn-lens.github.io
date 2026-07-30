@@ -3295,3 +3295,43 @@ handful of LOWs (`<mark>` 62-theme contrast, "Why #N?" reconciliation, `article.
 cosmetic near-misses). Next batch: fix **C by class** + ≤4 LOWs, gate, diff-scoped pass, re-review.
 When a round comes back with only accepted-LOWs and **zero self-inflicted findings**, it has
 converged → ship.
+
+### c3r36 independent verify of the A/B batch + the c3r36b follow-on (2026-07-30)
+An independent, read-only agent (neutral spec, NOT told what changed) re-derived the 4 summary
+surfaces itself and confirmed **rules 1–4 conform on all four** (basis line + attribution appear only
+when a model ran; persona per-profile race guarded) — **0 self-inflicted regressions** from the A/B
+batch. It surfaced two tightly-related items, taken as the **c3r36b** batch (≤5, class-scoped):
+- **C (MEDIUM, pre-existing) — a FAILED generation stripped the retry.** On a transient provider
+  error the surface showed "Could not summarize… try again" but the retry control was gone (`Refresh`
+  lived in `SummaryActions`, which the error branch suppressed). Persona was a true dead-end (the
+  "Summarize" button is also gone once `summary` holds the error). Class = card + persona + thread
+  (Ask was already fine — its input is persistent).
+- **§E#1 (LOW) — a REFUSAL still showed Refresh/Edit** on card + persona (thread/ask already hid them);
+  "Edit prompt" over a thin refusal is inoperative (the refusal short-circuits before any prompt runs).
+- **Test-gap (material)** — the `SummaryActions` `ranModel` attribution gate was untested on the two
+  surfaces that actually render it over a refusal (card, persona).
+
+**Root-cause fix — ONE 3-state model for the controls row on all surfaces** (`StoryCard`, `User`,
+`ThreadSummary`; Ask already conformed): SUCCESS (`request` sent) → basis + full controls; ERROR
+(`/^Could not/`) → keep **Refresh** only (request is empty, so View-request/caveat/Llama stay off, no
+basis); REFUSAL (thin, no request, not an error) → hide the row. This closes **C** and **§E#1** together
+and makes the attribution-over-refusal test-gap **moot by construction** (no `SummaryActions` over a
+refusal). Also reset `request`/`sources` at the start of each generation so a prior success can't leak
+a stale request into an error render. Plus the **zero-part LOW**: the persona basis omits a 0 part
+("Based on 12 comments", not "…0 recent stories + 12 comments"), still the SENT counts.
+
+**Guards (fail-first, demonstrated on the live pre-fix build → post-fix):** `cloudllmtest §12` (card
+refusal hides the row) + new `§13` (card + thread error keep Refresh, no basis/caveat) and `usertest`
+(persona refusal hides the row; persona error keeps Refresh) — 5 new discriminating assertions, all
+FAIL pre-fix → PASS post-fix, via a `geminiFail` 500 toggle + a fresh never-summarized `erroruser`.
+
+**Accepted in writing (LOW/nit, not fixed):** §E#2 — the card prepends the accent "TL;DR" label even
+over a refusal/error ("**TL;DR** Not enough to summarize yet…"). Deferred deliberately: hiding it
+correctly requires distinguishing the streaming phase (where the prefix SHOULD show) from a settled
+refusal, for the lowest value in the set; the refusal text itself is honest. Revisit if a lens
+re-raises it.
+
+*Lesson: an independent verifier that must DISCOVER the surfaces (not be handed them) is what catches
+"the guard covers 2 of the 4 places" — and the cleanest close of a test-gap is often a root-cause code
+change that makes the gap moot, not another assertion. C + §E#1 were two faces of the same missing
+3-state model.*

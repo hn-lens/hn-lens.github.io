@@ -19,6 +19,9 @@ const THIN_USER = { id: 'thinuser', created: now - 100000, karma: 3, submitted: 
 // gets a genuine cache MISS (a real in-flight generation), not the instant IndexedDB-cache return
 // that testuser would give after its earlier summary.
 const RACE_USER = { id: 'raceuser', created: now - 300 * 86400, karma: 55, submitted: [96, 97] };
+// A summarizable user reserved for the FAILURE path (never summarized elsewhere → a real cache-miss
+// generation that the mocked provider 500s), so the error branch is genuinely exercised.
+const ERROR_USER = { id: 'erroruser', created: now - 200 * 86400, karma: 33, submitted: [98, 99] };
 const ITEMS = {
   91: { id: 91, type: 'story', by: 'testuser', title: 'My first story about widgets', url: 'https://ex.com/91', score: 120, descendants: 8, time: now - 86400 },
   92: { id: 92, type: 'story', by: 'testuser', title: 'A second story about gadgets', url: 'https://ex.com/92', score: 90, descendants: 3, time: now - 172800 },
@@ -27,6 +30,8 @@ const ITEMS = {
   95: { id: 95, type: 'comment', by: 'thinuser', text: '<p>ok</p>', time: now - 1000 },
   96: { id: 96, type: 'story', by: 'raceuser', title: 'Distributed systems war stories from production', url: 'https://ex.com/96', score: 80, descendants: 4, time: now - 400000 },
   97: { id: 97, type: 'story', by: 'raceuser', title: 'Why we rewrote our scheduler in Rust', url: 'https://ex.com/97', score: 70, descendants: 2, time: now - 500000 },
+  98: { id: 98, type: 'story', by: 'erroruser', title: 'Notes on building a small compiler', url: 'https://ex.com/98', score: 40, descendants: 3, time: now - 600000 },
+  99: { id: 99, type: 'story', by: 'erroruser', title: 'A deep dive into hash map internals', url: 'https://ex.com/99', score: 35, descendants: 1, time: now - 700000 },
 };
 // A feed story by testuser, to test author-link navigation from a card.
 const FEED = { 501: { id: 501, type: 'story', by: 'testuser', title: 'Feed story by testuser', url: 'https://ex.com/501', score: 200, descendants: 10, time: now - 3600 } };
@@ -46,7 +51,7 @@ await page.route(/hacker-news\.firebaseio\.com/, (r) => {
   const mu = u.match(/user\/([^.]+)\.json/);
   // A backend outage must be distinguishable from a genuinely-absent user.
   if (mu && mu[1] === 'outageuser') return r.fulfill({ status: 503, contentType: 'text/plain', body: 'upstream error' });
-  if (mu) return json(r, mu[1] === 'testuser' ? USER : mu[1] === 'thinuser' ? THIN_USER : mu[1] === 'raceuser' ? RACE_USER : null); // unknown users → null (200)
+  if (mu) return json(r, mu[1] === 'testuser' ? USER : mu[1] === 'thinuser' ? THIN_USER : mu[1] === 'raceuser' ? RACE_USER : mu[1] === 'erroruser' ? ERROR_USER : null); // unknown users → null (200)
   const mi = u.match(/item\/(\d+)\.json/);
   if (mi) return json(r, ITEMS[mi[1]] ?? FEED[mi[1]] ?? null);
   if (/topstories/.test(u)) return json(r, [501]);
@@ -54,12 +59,16 @@ await page.route(/hacker-news\.firebaseio\.com/, (r) => {
   return json(r, null);
 });
 await page.route(/hn\.algolia\.com|google\.com\/s2/, (r) => r.fulfill({ status: 200, body: '{}' }));
+let geminiFail = false; // when true, generateContent 500s → the cloud client throws (a transient failure)
 // Mock the Gemini API so the on-demand persona summary can be tested without WebGPU.
 await page.route(/generativelanguage\.googleapis\.com/, async (r) => {
   const u = r.request().url();
   // A deliberate delay so a test can navigate to another profile while a generation is IN FLIGHT
   // (the cross-profile race). Harmless to the success tests (they wait up to 15s).
   if (/:generateContent/.test(u)) {
+    // A transient provider failure → the surface shows "Could not summarize…", which must keep a
+    // retry control reachable (finding C).
+    if (geminiFail) return r.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: { message: 'rate limited' } }) });
     await new Promise((res) => setTimeout(res, 700));
     return json(r, { candidates: [{ content: { parts: [{ text: 'PERSONA_SUMMARY: builds web things and comments on widgets and gadgets.' }] } }] });
   }
@@ -148,6 +157,9 @@ await page.waitForTimeout(500);
     const main = await page.locator('main').innerText();
     check('thin-user persona REFUSES (no fabricated bio)', /Not enough recent activity/i.test(main), main.slice(0, 100));
     check('a refusal shows NO "Based on" provenance line (nothing was sent)', !/Based on \d+ recent/i.test(main), main.match(/Based on[^\n]*/i)?.[0] ?? '(none)');
+    // A deterministic refusal offers no useful controls — Refresh re-refuses, "Edit prompt" is
+    // inoperative (a thin-input refusal short-circuits before any prompt is used). Row hidden.
+    check('a refusal hides the controls row (no Refresh / Edit prompt)', !/Refresh|Edit prompt/i.test(main), main.match(/Refresh|Edit prompt/i)?.[0] ?? '(clean)');
   }
   // ---- CROSS-PROFILE RACE: an in-flight generation must not land on the NEXT profile ----
   // Start a summary on raceuser (a genuine cache MISS → real in-flight fetch), then navigate
@@ -167,6 +179,22 @@ await page.waitForTimeout(500);
     await page.waitForTimeout(1500); // the superseded raceuser generation resolves within this window
     const raceMain = await page.locator('main').innerText();
     check('an in-flight persona summary does NOT land on the next profile (cross-profile race)', !/PERSONA_SUMMARY/.test(raceMain), raceMain.match(/PERSONA_SUMMARY[^\n]*/)?.[0] ?? '(clean)');
+  }
+  // ---- FAILED persona generation KEEPS a retry reachable (finding C) ----
+  // A transient provider error must not dead-end the profile: the retry control (Refresh) stays,
+  // while the basis line + "AI-generated" caveat stay OFF (nothing ran successfully).
+  {
+    geminiFail = true;
+    await page.goto(`${BASE}#/user/erroruser`, { waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => /About this user/i.test(document.body.innerText), null, { timeout: 15000 }).catch(() => {});
+    await page.getByRole('button', { name: /Summarize their activity/i }).click().catch(() => {});
+    await page.waitForFunction(() => /Could not summarize/i.test(document.querySelector('main')?.innerText ?? ''), null, { timeout: 15000 }).catch(() => {});
+    await page.waitForTimeout(300);
+    const main = await page.locator('main').innerText();
+    check('persona error shows the honest "could not" text', /Could not summarize/i.test(main), main.match(/Could not[^\n]*/i)?.[0] ?? '(none)');
+    check('persona error KEEPS a retry control (Refresh)', /Refresh/i.test(main), main.match(/Refresh/i)?.[0] ?? '(missing)');
+    check('persona error shows NO "Based on"/AI-generated (nothing ran)', !/Based on \d+ recent|AI-generated/i.test(main), (main.match(/Based on \d+ recent[^\n]*|AI-generated[^\n]*/i) || ['(clean)'])[0]);
+    geminiFail = false;
   }
   // Reset provider so later sections use the default local state.
   await page.evaluate(() => window.__hnlens.prefs.getState().set({ llmProvider: 'local', apiKeys: { gemini: '', openai: '', anthropic: '' } }));

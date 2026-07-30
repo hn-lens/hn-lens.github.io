@@ -47,6 +47,7 @@ let lastGeminiModel = '';
 let lastGeminiMaxTokens = 0;
 let lastGeminiSystem = ''; // the systemInstruction text sent on the last generate call
 let geminiEmpty = false; // when true, simulate a "thinking" model that returned no text
+let geminiFail = false; // when true, generateContent 500s → the cloud client throws (a transient failure)
 let geminiListBad = false; // when true, the list-models endpoint returns 401 (bad key)
 let lastOpenaiBody = null; // the last request body sent to OpenAI chat/completions
 const json = (r, x) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(x) });
@@ -63,6 +64,9 @@ await page.route(/generativelanguage\.googleapis\.com/, (r) => {
     } catch {
       lastGeminiMaxTokens = 0;
     }
+    // A transient provider failure (rate limit / 5xx) → the cloud client throws → the surface shows
+    // a "Could not summarize…" error, which must keep a retry control reachable (finding C).
+    if (geminiFail) return r.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: { message: 'rate limited' } }) });
     // A thinking model can burn the token budget on reasoning and return no text part.
     if (geminiEmpty) return json(r, { candidates: [{ finishReason: 'MAX_TOKENS', content: {} }] });
     return json(r, { candidates: [{ content: { parts: [{ text: 'GEMINI_SUMMARY raft' }] } }] });
@@ -416,6 +420,9 @@ await page.waitForFunction(() => [...document.querySelectorAll('article')].some(
   const tldrBlock = await thinCard.locator('.sc-tldr').innerText().catch(() => '');
   check('card TL;DR refusal shows the honest "not enough" text', /Not enough to summarize/i.test(tldrBlock), tldrBlock.replace(/\s+/g, ' ').slice(0, 80));
   check('card TL;DR refusal shows NO "Based on" provenance (nothing was sent)', !/Based on/i.test(tldrBlock), tldrBlock.match(/Based on[^\n]*/i)?.[0] ?? '(clean)');
+  // A deterministic refusal offers no useful controls — Refresh just re-refuses and "Edit prompt" is
+  // inoperative (a thin-input refusal short-circuits before any prompt is used). Row hidden (like thread/ask).
+  check('card TL;DR refusal hides the controls row (no Refresh / Edit prompt)', !/Refresh|Edit prompt/i.test(tldrBlock), tldrBlock.match(/Refresh|Edit prompt/i)?.[0] ?? '(clean)');
 }
 {
   await page.goto(`${BASE}#/item/${THIN_ID}`, { waitUntil: 'domcontentloaded' });
@@ -433,6 +440,48 @@ await page.waitForFunction(() => [...document.querySelectorAll('article')].some(
   check('thread summary refusal shows the honest "not enough" text', /Not enough to summarize/i.test(threadBlock), threadBlock.replace(/\s+/g, ' ').slice(0, 80));
   check('thread summary refusal shows NO "Based on" provenance (nothing was sent)', !/Based on/i.test(threadBlock), threadBlock.match(/Based on[^\n]*/i)?.[0] ?? '(clean)');
 }
+
+// ---- (13) A FAILED generation KEEPS a retry reachable (finding C): a transient provider error
+// (here a 500) must still show a retry control (Refresh) — but NO "Based on"/caveat/attribution,
+// since nothing ran successfully. Distinct from a deterministic refusal, which hides the row (§12). ----
+geminiFail = true;
+await page.evaluate(async () => {
+  const { db } = await window.__hnlens.db();
+  await db.kv.where('key').startsWith('sum:').delete(); // force a cache MISS so the model is actually CALLED (and 500s)
+});
+{
+  // CARD: back to the Top feed (§12 left us on a discussion page), then the non-thin raft card's
+  // TL;DR → the model call 500s → error branch.
+  await page.evaluate(() => { location.hash = '#/'; });
+  await page.getByRole('button', { name: 'Top', exact: true }).click().catch(() => {});
+  await page.waitForFunction(() => [...document.querySelectorAll('article')].some((a) => /raft consensus/.test(a.textContent || '')), null, { timeout: 15000 });
+  const raftCard = page.locator('article').filter({ hasText: 'raft consensus' }).first();
+  await raftCard.getByRole('button', { name: /^TL;DR/ }).first().click();
+  await page.waitForFunction(() => /Could not/i.test(document.querySelector('.sc-tldr')?.innerText || ''), null, { timeout: 15000 }).catch(() => {});
+  await page.waitForTimeout(300);
+  const errBlock = await raftCard.locator('.sc-tldr').innerText().catch(() => '');
+  check('card TL;DR error shows the honest "could not" text', /Could not/i.test(errBlock), errBlock.replace(/\s+/g, ' ').slice(0, 80));
+  check('card TL;DR error KEEPS a retry control (Refresh)', /Refresh/i.test(errBlock), errBlock.match(/Refresh/i)?.[0] ?? '(missing)');
+  check('card TL;DR error shows NO "Based on"/AI-generated (nothing ran)', !/Based on|AI-generated/i.test(errBlock), (errBlock.match(/Based on[^\n]*|AI-generated[^\n]*/i) || ['(clean)'])[0]);
+}
+{
+  // THREAD: a discussion summary whose model call 500s → error branch keeps Refresh reachable.
+  await page.goto(`${BASE}#/item/${STORY_ID}`, { waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(() => /raft consensus/i.test(document.body.innerText), null, { timeout: 15000 }).catch(() => {});
+  await page.getByRole('button', { name: /^Summary$/ }).first().click().catch(() => {}); // open the tray
+  await page.waitForTimeout(300);
+  await page.getByRole('button', { name: 'Summarize', exact: true }).click().catch(() => {});
+  await page.waitForFunction(() => /Could not summarize/i.test(document.body.innerText), null, { timeout: 15000 }).catch(() => {});
+  await page.waitForTimeout(300);
+  const threadErr = await page.evaluate(() => {
+    const host = [...document.querySelectorAll('div')].find((d) => /AI discussion summary/i.test(d.textContent || ''));
+    return (host ?? document.querySelector('main'))?.innerText ?? '';
+  });
+  check('thread summary error shows the honest "could not" text', /Could not summarize/i.test(threadErr), threadErr.match(/Could not[^\n]*/i)?.[0] ?? '(none)');
+  check('thread summary error KEEPS a retry control (Refresh)', /Refresh/i.test(threadErr), threadErr.match(/Refresh/i)?.[0] ?? '(missing)');
+  check('thread summary error shows NO "Based on"/AI-generated (nothing ran)', !/Based on|AI-generated/i.test(threadErr), (threadErr.match(/Based on[^\n]*|AI-generated[^\n]*/i) || ['(clean)'])[0]);
+}
+geminiFail = false;
 
 await page.evaluate(() => window.__hnlens.prefs.getState().set({ llmProvider: 'openai', apiKeys: { gemini: '', openai: 'persist-key', anthropic: '' } }));
 await page.reload({ waitUntil: 'domcontentloaded' });
