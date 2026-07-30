@@ -99,6 +99,14 @@ export default function CommentsView({ id }: { id: number }) {
   // HackerWeb-style dual-view: read the linked Article inline vs. the Discussion.
   const [view, setView] = useState<'discussion' | 'article'>('discussion');
   const navigate = useNavigate();
+  // Scroll-load: a huge thread (400+ comments) rendered all at once is ~4s to first comment. Render a
+  // WINDOW of the top-level threads and grow it as the reader nears the bottom (IntersectionObserver
+  // sentinel); a jump / "new" / search target expands the window to reach a comment past it. Nested
+  // replies keep the existing auto-collapse — this bounds only the TOP-LEVEL count on first paint.
+  const INITIAL_TOP = 30;
+  const TOP_BATCH = 30;
+  const [visibleTop, setVisibleTop] = useState(INITIAL_TOP);
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
   // The non-AI "Quick gist" is a FALLBACK for when the AI summary isn't available.
   // When the AI summary block is actively shown (AI on + summaries on + WebGPU OK),
   // hide the gist so the discussion doesn't stack two competing summary blocks.
@@ -152,6 +160,11 @@ export default function CommentsView({ id }: { id: number }) {
       navigate(`/item/${cid}`);
       return;
     }
+    // Scroll-load: the target's TOP-LEVEL ancestor may be past the rendered window — grow the window
+    // to include it so it (and the revealed reply chain below) can mount and be scrolled to.
+    const topAncestor = chain[0] ?? cid;
+    const topIdx = topLevel.findIndex((c) => c.id === topAncestor);
+    if (topIdx >= 0 && topIdx >= visibleTop) setVisibleTop(topIdx + 1);
     setRevealIds((prev) => {
       const next = new Set(prev);
       for (const id of chain) next.add(id);
@@ -205,6 +218,30 @@ export default function CommentsView({ id }: { id: number }) {
     else if (sort === 'replies') arr.sort((a, b) => countDescendants(b) - countDescendants(a));
     return arr; // 'default' keeps HN's own returned ordering
   }, [tree, sort]);
+
+  // Reset the window on a new discussion or a re-sort (a re-sort should start at the top of the new
+  // order, not keep a deep window from the previous ordering).
+  useEffect(() => {
+    setVisibleTop(INITIAL_TOP);
+  }, [id, sort]);
+
+  // Grow the window as the sentinel (below the rendered comments) nears the viewport. rootMargin
+  // pre-loads the next batch just before it's reached, so scrolling feels continuous; capped at the
+  // real count so it stops once everything is shown.
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          setVisibleTop((v) => (v < topLevel.length ? Math.min(topLevel.length, v + TOP_BATCH) : v));
+        }
+      },
+      { rootMargin: '800px 0px' }
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [topLevel.length, visibleTop]);
 
   // Flatten once per tree; drive search + the "new since last visit" jumper off it. The flatten
   // itself is a cheap pointer walk with no parsing, so it stays eager.
@@ -684,10 +721,23 @@ export default function CommentsView({ id }: { id: number }) {
               {/* thread-root: stable hook for tests / tooling (decoupled from the
                   cosmetic spacing class, which is a readability knob). */}
               <div className="thread-root space-y-4">
-                {topLevel.map((c) => (
+                {topLevel.slice(0, visibleTop).map((c) => (
                   <Comment key={c.id} node={c} depth={0} lastVisit={lastVisit} op={story.by} revealIds={revealIds} />
                 ))}
               </div>
+              {/* Sentinel: when it nears the viewport the window grows (scroll-load). Also a manual
+                  fallback for no-IntersectionObserver / keyboard-only readers, and an honest count. */}
+              {visibleTop < topLevel.length && (
+                <div ref={sentinelRef} className="pt-3">
+                  <button
+                    type="button"
+                    onClick={() => setVisibleTop((v) => Math.min(topLevel.length, v + TOP_BATCH))}
+                    className="mx-auto block rounded-lg border border-edge px-3 py-1.5 text-xs text-muted hover:bg-surface-2 hover:text-fg"
+                  >
+                    Show more comments ({topLevel.length - visibleTop} more)
+                  </button>
+                </div>
+              )}
             </>
           )}
         </>

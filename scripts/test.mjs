@@ -111,6 +111,7 @@ const TIERS = {
       { name: 'layouttest (structural layouts)', script: 'layouttest' },
       { name: 'navchrometest (nav selector widths + closed gap + sticky feed tabs)', script: 'navchrometest' },
       { name: 'commenttest (comment org + ranking)', script: 'commenttest' },
+      { name: 'commentscrolltest (large thread renders a window + grows on scroll)', script: 'commentscrolltest' },
       { name: 'commentsoutagetest (failed tree fetch → outage/Retry, not "No comments yet")', script: 'commentsoutagetest' },
       { name: 'topcommentranktest (For-You preview uses ranked kids, not oldest-first)', script: 'topcommentranktest' },
       { name: 'pluraltest (comment-count singular/plural)', script: 'pluraltest' },
