@@ -226,6 +226,39 @@ try {
   fail(`pattern does not compile as a JavaScript regex: ${e.message}`);
 }
 
+// ── Secret-shape scan (generic vendor prefixes — SAFE to hardcode, unlike the scrub list) ─────────
+// The internal-reference pattern above is read from a gitignored notes file because a hardcoded list
+// would itself identify the employer. Secret SHAPES have no such problem: "AIza…", "sk-…", "ghp_…",
+// "AKIA…" are public, vendor-defined prefixes that identify nobody, so they live in this tracked file.
+// The app takes BYO cloud API keys (Gemini/OpenAI/Anthropic), so a hardcoded key is a plausible slip
+// and there was no guard for it. CASE-SENSITIVE (keys are), and each alternative starts with `[`/`{`
+// after its literal prefix so the pattern text cannot match ITSELF (this file is scanned too, no
+// self-exemption). Every entry is valid in BOTH the JS RegExp and `git grep -E` engines.
+const SECRET_ALTS = [
+  'AIza[0-9A-Za-z_-]{35}', // Google API key
+  'sk-[A-Za-z0-9_-]{24,}', // OpenAI / Anthropic (sk-, sk-proj-, sk-ant-)
+  'gh[posru]_[A-Za-z0-9]{36}', // GitHub token (ghp_/gho_/ghs_/ghr_/ghu_)
+  'github_pat_[A-Za-z0-9_]{22,}', // GitHub fine-grained PAT
+  'AKIA[0-9A-Z]{16}', // AWS access key id
+  'ASIA[0-9A-Z]{16}', // AWS temporary access key id
+  'xox[baprs]-[A-Za-z0-9-]{10,}', // Slack token
+  '[-]{5}BEGIN [A-Z ]*PRIVATE KEY[-]{5}', // PEM private key block (leading class avoids a `-` flag)
+];
+const secretEre = SECRET_ALTS.join('|');
+let secretRe;
+try {
+  secretRe = new RegExp(`(${secretEre})`);
+} catch (e) {
+  fail(`secret-shape pattern does not compile as a JavaScript regex: ${e.message}`);
+}
+// Validate the secret pattern in the git-grep engine too (same both-engines discipline as above).
+{
+  const probe = spawnSync('git', ['grep', '-q', '-E', '-e', secretEre, hasHead ? 'HEAD' : '--cached'], { encoding: 'utf8' });
+  if (probe.status !== 0 && probe.status !== 1) {
+    fail(`secret-shape pattern is not valid POSIX ERE — \`git grep\` exited ${probe.status}:\n${(probe.stderr || '').trim()}`);
+  }
+}
+
 // `git grep -E` must accept the same constructed pattern. The two engines differ in what syntax they
 // accept, so a pattern valid in one can be rejected by the other, which would leave the working tree
 // checked while all of history silently stopped being checked.
@@ -376,12 +409,22 @@ for (const f of stagedDiffers) {
   const binary = isBinary(r.stdout);
   const lines = binary ? printableRuns(r.stdout) : r.stdout.toString('utf8').split('\n');
   lines.forEach((line, i) => {
-    const m = re.exec(scrubDigests(line));
+    const scrubbed = scrubDigests(line);
+    const m = re.exec(scrubbed);
     if (m) {
       hits.push({
         where: `${f} (staged${binary ? ', embedded string' : ''})`,
         line: binary ? 0 : i + 1,
         term: m[1],
+        text: line.trim().slice(0, 100),
+      });
+    }
+    const s = secretRe.exec(scrubbed);
+    if (s) {
+      hits.push({
+        where: `${f} (staged${binary ? ', embedded string' : ''})`,
+        line: binary ? 0 : i + 1,
+        term: 'secret-shape',
         text: line.trim().slice(0, 100),
       });
     }
@@ -443,12 +486,22 @@ for (const f of [...tracked, ...untracked]) {
   if (binary) binaryScanned++;
   const lines = binary ? printableRuns(buf) : buf.toString('utf8').split('\n');
   lines.forEach((line, i) => {
-    const m = re.exec(scrubDigests(line));
+    const scrubbed = scrubDigests(line);
+    const m = re.exec(scrubbed);
     if (m) {
       hits.push({
         where: binary ? `${label} (embedded string)` : label,
         line: binary ? 0 : i + 1,
         term: m[1],
+        text: line.trim().slice(0, 100),
+      });
+    }
+    const s = secretRe.exec(scrubbed);
+    if (s) {
+      hits.push({
+        where: binary ? `${label} (embedded string)` : label,
+        line: binary ? 0 : i + 1,
+        term: 'secret-shape',
         text: line.trim().slice(0, 100),
       });
     }
@@ -514,8 +567,22 @@ function treeHits(rev) {
   );
 }
 
+// The same coverage for SECRET SHAPES across committed trees (case-SENSITIVE, no `-i`). Text lines
+// only: a secret inside a committed BINARY blob is a rare, narrow gap (the content scans above already
+// cover binaries in the working tree + index), not worth the byte-soup false positives here.
+function secretTreeHits(rev) {
+  return git(['grep', '-n', '-E', '-e', secretEre, rev], { noMatchOk: true })
+    .split('\n')
+    .filter(Boolean)
+    .filter((l) => !BINARY_MATCH.test(l))
+    .filter((l) => secretRe.test(scrubDigests(l)));
+}
+
 for (const l of treeHits('HEAD')) {
   hits.push({ where: 'HEAD tree', line: 0, term: 'committed', text: l.slice(0, 120) });
+}
+for (const l of secretTreeHits('HEAD')) {
+  hits.push({ where: 'HEAD tree', line: 0, term: 'secret-shape', text: l.slice(0, 120) });
 }
 
 // Grade ALL history, not just the unpushed part. A leak becomes permanent the moment it is pushed,
@@ -548,18 +615,23 @@ for (const sha of commits) {
     if (inTree.length) {
       hits.push({ where: `commit ${short} tree`, line: 0, term: 'committed', text: `${inTree.length} hit(s), e.g. ${inTree[0].slice(0, 90)}` });
     }
+    const inTreeSecret = secretTreeHits(sha);
+    if (inTreeSecret.length) {
+      hits.push({ where: `commit ${short} tree`, line: 0, term: 'secret-shape', text: `${inTreeSecret.length} hit(s), e.g. ${inTreeSecret[0].slice(0, 90)}` });
+    }
   }
 }
 
 if (hits.length) {
-  console.error(`[leakcheck] ${hits.length} possible internal reference(s) (working tree + all committed history):\n`);
+  console.error(`[leakcheck] ${hits.length} possible internal reference(s) or secret(s) (working tree + all committed history):\n`);
   for (const h of hits.slice(0, 40)) {
     console.error(`  ${h.where}:${h.line}  [${h.term}]  ${h.text}`);
   }
   console.error(
-    '\nIf a hit is an ordinary English word that collides with an internal tool name, reword the' +
-      '\nsentence rather than loosening the pattern — the pattern protects a release, the sentence' +
-      '\ndoes not.'
+    '\nA [secret-shape] hit is an API-key/token/private-key shape — remove it from the code (use a' +
+      '\nruntime-supplied key), and if it was ever committed, rotate it. For an internal-reference hit that' +
+      '\nis an ordinary English word colliding with an internal tool name, reword the sentence rather than' +
+      '\nloosening the pattern — the pattern protects a release, the sentence does not.'
   );
   process.exit(1);
 }
@@ -570,5 +642,6 @@ console.log(
     `(${binaryScanned} binary, scanned for embedded strings), ${stagedDiffers.length} staged-only version(s), ` +
     `all path names (current + ${everAdded.size} ever added in history), HEAD tree, ` +
     `${commits.length} commit(s) across all refs (tree + message + author/committer identity), ` +
-    `${alternatives.length} scrub entries self-tested in both engines.`
+    `${alternatives.length} scrub entries self-tested in both engines, ` +
+    `${SECRET_ALTS.length} secret-shape(s) scanned across content + all trees.`
 );

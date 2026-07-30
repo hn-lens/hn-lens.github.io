@@ -98,6 +98,54 @@ try {
     g(w, 'commit', '-qm', 'clean');
     check('C: a clean repo is not falsely flagged', runLeakcheck(w).caught === false);
   }
+
+  // ── Secret-shape detection (the app takes BYO cloud API keys — a hardcoded key must be caught) ──
+  // The fake secrets are CONSTRUCTED from parts so no matchable full-shape literal appears in THIS
+  // tracked file (leakcheck scans itself with no self-exemption). Each written only to a temp repo.
+  const FAKE_GOOGLE = 'AIza' + 'x'.repeat(35); // matches AIza[0-9A-Za-z_-]{35}
+  const FAKE_OPENAI = 'sk-' + 'x'.repeat(40); // matches sk-[A-Za-z0-9_-]{24,}
+  const FAKE_PEM = '-'.repeat(5) + 'BEGIN RSA PRIVATE KEY' + '-'.repeat(5);
+
+  // CASE D — a hardcoded API key / private key in file CONTENT is caught (committed).
+  {
+    const w = initRepo();
+    writeFileSync(join(w, 'config.ts'), `export const KEY = '${FAKE_GOOGLE}';\nconst o = '${FAKE_OPENAI}';\n`);
+    g(w, 'add', '-A');
+    // --no-verify: a system-wide git-secrets pre-commit hook would itself block a fake key, but this
+    // test is exercising LEAKCHECK's own detection (which runs in CI + pre-push, where git-secrets is
+    // absent), so we must let the key land in the repo first.
+    g(w, 'commit', '--no-verify', '-qm', 'oops, hardcoded keys');
+    check('D: a hardcoded API key shape in content is caught', runLeakcheck(w).caught === true);
+  }
+  // CASE D2 — a PEM private key block is caught.
+  {
+    const w = initRepo();
+    writeFileSync(join(w, 'key.pem'), `${FAKE_PEM}\nMIIEv...\n`);
+    g(w, 'add', '-A');
+    g(w, 'commit', '--no-verify', '-qm', 'oops, private key');
+    check('D2: a PEM private-key block is caught', runLeakcheck(w).caught === true);
+  }
+  // CASE D3 — a key committed then DELETED from the working tree is still caught (it lives in history).
+  {
+    const w = initRepo();
+    writeFileSync(join(w, 'readme.txt'), 'ok\n');
+    g(w, 'add', '-A');
+    g(w, 'commit', '-qm', 'base');
+    writeFileSync(join(w, 'leak.ts'), `const k = '${FAKE_GOOGLE}';\n`);
+    g(w, 'add', '-A');
+    g(w, 'commit', '--no-verify', '-qm', 'commit a key');
+    g(w, 'rm', '-q', 'leak.ts');
+    g(w, 'commit', '--no-verify', '-qm', 'remove it from the tree (but it stays in history)');
+    check('D3: a key removed from the tree but kept in history is caught', runLeakcheck(w).caught === true);
+  }
+  // CASE E — negative control: a too-short keyish string must NOT be flagged (no over-matching).
+  {
+    const w = initRepo();
+    writeFileSync(join(w, 'notes.txt'), 'a short id like sk-abc123 is not a key\n');
+    g(w, 'add', '-A');
+    g(w, 'commit', '-qm', 'short keyish string');
+    check('E: a too-short keyish string is not falsely flagged', runLeakcheck(w).caught === false);
+  }
 } finally {
   rmSync(root, { recursive: true, force: true });
 }
