@@ -440,7 +440,7 @@ export default function CommentsView({ id }: { id: number }) {
             <MessageSquare className="size-3.5" /> {story.descendants ?? 0}
           </span>
           {story.by && (
-            <span>
+            <span className="[overflow-wrap:anywhere]">
               by{' '}
               <Link to={`/user/${encodeURIComponent(story.by)}`} className="hover:text-accent hover:underline">
                 {story.by}
@@ -675,6 +675,7 @@ export default function CommentsView({ id }: { id: number }) {
                     <button type="button" onClick={() => commentsQ.refetch()} className="font-medium text-accent hover:underline">
                       Retry
                     </button>
+                    <OfflineOutageHint />
                   </div>
                 ) : (
                   <div className="text-sm text-muted">No comments yet.</div>

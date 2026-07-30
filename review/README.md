@@ -3184,3 +3184,29 @@ Guarded by `navchrometest` (selector width >=190px at lg+, nav gap <=24px, 0 hor
 1280/1180/1024/768/375, and the feed tabs pinned below the header after a 1200px scroll — the pre-fix
 metrics gap=113/themeW=144/tabsTop=-807 confirm it discriminates). Gate green (72). c3r34g UI/UX-stress
 lens verified both across the device matrix: 0 BLOCKER/HIGH/MEDIUM (2 invisible LOW nitpicks).
+
+## c3r35 — full 7-lens review + a contained fix batch (2026-07-29)
+A full independent 7-lens round on the published state found **12 verified open issues (1 MEDIUM +
+11 LOW)** + 3 accepted (top-comment previews, favicon, review-process docs). No BLOCKER/HIGH runtime
+defect; gate green (72).
+
+Fixed a **contained, low-regression-risk batch of 7** (6 planned + 1 bonus found while guarding):
+- **MEDIUM — persona "About this user" provenance was dishonest** (`User.tsx`): the "Based on N
+  stories + M comments" line rendered over a refusal (no model ran) and counted FETCHED activity, not
+  what was SENT. Now gated on a real request (`summaryReq.length > 0`) and uses `res.counts` (the
+  persona-budget-bounded sent count) — matching the other 3 AI surfaces. Corroborated by the AI + bug
+  lenses (both independently).
+- **BONUS (found while writing the guard) — persona summary lingered across users**: `/user/:id`
+  re-uses the component, so viewing user A then B showed A's summary on B's page. Reset on `id` change.
+- LOW: comment-tree offline outage now renders the shared `OfflineOutageHint` (last sibling gap);
+  deleted dead `baseRateWord` export; `SignalsDialog` "(imported)" `--subtle`→`--muted` (AA);
+  AI-prompt user-template textarea `text-[11px]`→`text-xs` (follows the reading-size axis);
+  discussion-header username link gets `[overflow-wrap:anywhere]` (sibling consistency).
+
+Guarded by `usertest` (persona provenance: pre-fix 2-FAIL → post-fix PASS — provenance earned +
+counts SENT activity; a thin user refuses with NO "Based on" line; guards the rendered `User.tsx`
+line the function-level `aiguardtest` never exercised).
+
+**Deferred (higher regression risk / less contained):** `<mark>` search-highlight contrast (62-theme
+matrix), "Why #N?" cross-section reconciliation, `article.ts` eager-import bundle cost, and the
+marginal perf/cosmetic LOWs.

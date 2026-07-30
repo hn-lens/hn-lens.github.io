@@ -212,7 +212,7 @@ function PromptEditorDialog({ kind, onClose, onSaved }: { kind: PromptKind; onCl
               maxPx={460}
               value={user}
               onChange={(e) => setUser(e.target.value)}
-              className="w-full rounded-lg border border-edge bg-surface-2 px-3 py-2 font-mono text-[11px] leading-relaxed outline-none focus:border-accent"
+              className="w-full rounded-lg border border-edge bg-surface-2 px-3 py-2 font-mono text-xs leading-relaxed outline-none focus:border-accent"
             />
             <span className="block text-[11px] text-muted">
               Placeholders (filled with the story data):{' '}

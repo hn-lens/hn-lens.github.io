@@ -179,14 +179,6 @@ function reasonsFor(fs: FeatureSet, item: HnItem, terms: ScoreTerm[]): string[] 
  * meaning; centering on the base rate keeps a typical story at ~0 (an above-average story reads
  * positive, below-average negative), so the DISPLAYED sign remains meaningful.
  */
-/** Plain-language description of how often this user engages — so the baseline bar's label and the
- * explainer copy stay TRUE at any base rate, not just a low one. */
-export function baseRateWord(baseRate: number): string {
-  if (baseRate < 0.35) return 'you rarely engage';
-  if (baseRate > 0.65) return 'you engage with most stories';
-  return 'your typical story';
-}
-
 export function logitOf(v: number): number {
   const c = Math.min(1 - 1e-6, Math.max(1e-6, v));
   return Math.log(c / (1 - c));

@@ -127,7 +127,7 @@ export default function SignalsDialog({ onClose }: { onClose: () => void }) {
                 {e.type === 'dwell' && typeof e.value === 'number' && (
                   <span className="ml-1.5 text-muted">{Math.round(e.value / 1000)}s</span>
                 )}
-                {e.meta?.source === 'hn_import' ? <span className="ml-1.5 text-subtle">(imported)</span> : null}
+                {e.meta?.source === 'hn_import' ? <span className="ml-1.5 text-muted">(imported)</span> : null}
               </span>
               <span className="shrink-0 text-muted">{timeAgo(Math.floor(e.ts / 1000))}</span>
             </div>

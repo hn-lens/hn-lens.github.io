@@ -12,11 +12,15 @@ const BASE = process.env.BASE || 'http://localhost:4173/';
 const now = Math.floor(Date.now() / 1000);
 
 const USER = { id: 'testuser', created: now - 5 * 365 * 86400, karma: 4242, about: '<p>I build <b>things</b> on the web.</p><p>Blog: https://example.com/blog</p>', submitted: [91, 92, 93, 94] };
+// A user with too little activity to summarize (1 tiny comment) — the persona MUST refuse, and a
+// refusal must show NO "Based on …" provenance (nothing was sent to the model).
+const THIN_USER = { id: 'thinuser', created: now - 100000, karma: 3, submitted: [95] };
 const ITEMS = {
   91: { id: 91, type: 'story', by: 'testuser', title: 'My first story about widgets', url: 'https://ex.com/91', score: 120, descendants: 8, time: now - 86400 },
   92: { id: 92, type: 'story', by: 'testuser', title: 'A second story about gadgets', url: 'https://ex.com/92', score: 90, descendants: 3, time: now - 172800 },
   93: { id: 93, type: 'comment', by: 'testuser', text: '<p>just a comment, not a story</p>', time: now - 200000 },
   94: { id: 94, type: 'story', by: 'testuser', title: 'A third story about doohickeys', url: 'https://ex.com/94', score: 60, descendants: 1, time: now - 259200 },
+  95: { id: 95, type: 'comment', by: 'thinuser', text: '<p>ok</p>', time: now - 1000 },
 };
 // A feed story by testuser, to test author-link navigation from a card.
 const FEED = { 501: { id: 501, type: 'story', by: 'testuser', title: 'Feed story by testuser', url: 'https://ex.com/501', score: 200, descendants: 10, time: now - 3600 } };
@@ -36,7 +40,7 @@ await page.route(/hacker-news\.firebaseio\.com/, (r) => {
   const mu = u.match(/user\/([^.]+)\.json/);
   // A backend outage must be distinguishable from a genuinely-absent user.
   if (mu && mu[1] === 'outageuser') return r.fulfill({ status: 503, contentType: 'text/plain', body: 'upstream error' });
-  if (mu) return json(r, mu[1] === 'testuser' ? USER : null); // unknown users → null (200)
+  if (mu) return json(r, mu[1] === 'testuser' ? USER : mu[1] === 'thinuser' ? THIN_USER : null); // unknown users → null (200)
   const mi = u.match(/item\/(\d+)\.json/);
   if (mi) return json(r, ITEMS[mi[1]] ?? FEED[mi[1]] ?? null);
   if (/topstories/.test(u)) return json(r, [501]);
@@ -115,6 +119,25 @@ await page.waitForTimeout(500);
   await page.waitForFunction(() => /PERSONA_SUMMARY/.test(document.body.innerText), null, { timeout: 15000 }).catch(() => {});
   check('clicking Summarize shows the generated persona summary', /PERSONA_SUMMARY/.test(await page.locator('main').innerText()));
   check('the summary offers a "View request" transparency control', (await page.getByRole('button', { name: /View request/i }).count()) >= 1);
+  // Provenance is EARNED + accurate: a real summary shows "Based on <SENT count>" — testuser sends
+  // 3 stories + 1 comment (all fit the persona budget). (Guards the User.tsx rendered line, which the
+  // function-level aiguardtest never exercised.)
+  {
+    const main = await page.locator('main').innerText();
+    check('persona provenance appears on a real summary', /Based on \d+ recent stor/i.test(main), main.match(/Based on[^\n]*/i)?.[0] ?? '(none)');
+    check('persona provenance counts the SENT activity (3 stories + 1 comment)', /Based on 3 recent stories \+ 1 comment/i.test(main), main.match(/Based on[^\n]*/i)?.[0] ?? '(none)');
+  }
+  // A thin user MUST refuse — and a refusal (no model ran) must show NO "Based on" provenance line.
+  await page.goto(`${BASE}#/user/thinuser`, { waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(() => /About this user/i.test(document.body.innerText), null, { timeout: 15000 }).catch(() => {});
+  await page.getByRole('button', { name: /Summarize their activity/i }).click().catch(() => {});
+  await page.waitForFunction(() => /Not enough recent activity|Based on \d+ recent/i.test(document.querySelector('main')?.innerText ?? ''), null, { timeout: 15000 }).catch(() => {});
+  await page.waitForTimeout(300);
+  {
+    const main = await page.locator('main').innerText();
+    check('thin-user persona REFUSES (no fabricated bio)', /Not enough recent activity/i.test(main), main.slice(0, 100));
+    check('a refusal shows NO "Based on" provenance line (nothing was sent)', !/Based on \d+ recent/i.test(main), main.match(/Based on[^\n]*/i)?.[0] ?? '(none)');
+  }
   // Reset provider so later sections use the default local state.
   await page.evaluate(() => window.__hnlens.prefs.getState().set({ llmProvider: 'local', apiKeys: { gemini: '', openai: '', anthropic: '' } }));
 }

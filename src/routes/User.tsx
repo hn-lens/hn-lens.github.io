@@ -87,11 +87,16 @@ export default function User() {
   const [summary, setSummary] = useState<string | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [summaryReq, setSummaryReq] = useState<ChatMessage[]>([]);
+  // The counts ACTUALLY sent to the model (persona budget), not the fetched activity — provenance
+  // must reflect what reached the model.
+  const [summaryCounts, setSummaryCounts] = useState<{ stories: number; comments: number }>({ stories: 0, comments: 0 });
   const llmState = useModelStore((s) => s.llm);
   const doSummary = async (force = false) => {
     if (summaryLoading || !user) return;
     setSummaryLoading(true);
     setSummary('');
+    setSummaryReq([]); // no model has run yet this attempt
+    setSummaryCounts({ stories: 0, comments: 0 });
     try {
       const { summarizeUser } = await import('../lib/models/llm');
       const res = await summarizeUser(llmModel, {
@@ -103,12 +108,21 @@ export default function User() {
       });
       setSummary(res.text);
       setSummaryReq(res.request);
+      setSummaryCounts(res.counts);
     } catch (err) {
       setSummary(`Could not summarize: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setSummaryLoading(false);
     }
   };
+
+  // This route (/user/:id) re-uses the component across users, so clear the persona summary when the
+  // id changes — otherwise the previous user's summary + provenance linger on the new profile.
+  useEffect(() => {
+    setSummary(null);
+    setSummaryReq([]);
+    setSummaryCounts({ stories: 0, comments: 0 });
+  }, [id]);
 
   return (
     <main className="mx-auto max-w-3xl px-3 py-4 sm:px-4">
@@ -216,10 +230,16 @@ export default function User() {
                   )}
                   {!summaryLoading && summary && !/^Could not/i.test(summary) && (
                     <>
-                      <p className="mt-1.5 text-[11px] text-muted">
-                        Based on {stories.length} recent {stories.length === 1 ? 'story' : 'stories'} +{' '}
-                        {comments.length} {comments.length === 1 ? 'comment' : 'comments'}
-                      </p>
+                      {/* Provenance is EARNED by real model output: only when a request was actually
+                          sent (summaryReq non-empty), and counting what REACHED the model
+                          (summaryCounts), not the fetched activity. A thin-input refusal sends
+                          nothing, so it shows no "Based on" line. */}
+                      {summaryReq.length > 0 && (
+                        <p className="mt-1.5 text-[11px] text-muted">
+                          Based on {summaryCounts.stories} recent {summaryCounts.stories === 1 ? 'story' : 'stories'} +{' '}
+                          {summaryCounts.comments} {summaryCounts.comments === 1 ? 'comment' : 'comments'}
+                        </p>
+                      )}
                       <div className="mt-1.5">
                         <SummaryActions request={summaryReq} onRefresh={() => void doSummary(true)} refreshing={summaryLoading} kind="user" />
                       </div>

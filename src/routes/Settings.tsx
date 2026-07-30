@@ -588,7 +588,7 @@ export default function Settings() {
                 maxPx={460}
                 value={effectivePromptPart(k, 'user', prefs.prompts)}
                 onChange={(e) => prefs.set({ prompts: { ...prefs.prompts, [k]: { ...prefs.prompts[k], user: normalizePromptOverride(k, 'user', e.target.value) } } })}
-                className="w-full rounded-lg border border-edge bg-surface px-3 py-2 font-mono text-[11px] leading-relaxed outline-none focus:border-accent"
+                className="w-full rounded-lg border border-edge bg-surface px-3 py-2 font-mono text-xs leading-relaxed outline-none focus:border-accent"
               />
               <p className="text-[11px] text-muted">
                 Placeholders:{' '}
