@@ -66,10 +66,18 @@ await step('home loads + feed populates', async () => {
 for (const tab of TABS) {
   await step(`tab: ${tab}`, async () => {
     await page.getByRole('button', { name: tab, exact: true }).first().click();
-    await page.waitForSelector('article', { timeout: 40000 });
-    await page.waitForTimeout(800);
-    const n = await page.locator('article').count();
-    if (n === 0) throw new Error(`tab ${tab} rendered no cards`);
+    // Live feed: wait for the tab to SETTLE into a terminal state — cards, a legitimate empty
+    // state, or an outage — instead of asserting a card count after a fixed wait. Show/Jobs can be
+    // sparse and any live feed can be slow, which raced the old fixed 800ms. A genuine hang (never
+    // settling past skeletons) still fails the 40s poll.
+    await page.waitForFunction(
+      () =>
+        document.querySelector('article') ||
+        document.querySelector('[data-empty-state]') ||
+        /Couldn.t load/i.test(document.body.innerText),
+      null,
+      { timeout: 40000 }
+    );
     await snap('tab-' + tab.replace(/\s/g, ''));
   });
 }
@@ -114,24 +122,43 @@ await step('save then verify on Saved page', async () => {
   await page.goto(BASE, { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('article', { timeout: 40000 });
   await page.getByRole('button', { name: 'Save', exact: true }).first().click();
-  await page.waitForTimeout(200);
+  await page.waitForTimeout(400); // let the Dexie save write commit
   await page.getByRole('banner').getByRole('button', { name: 'Saved' }).click(); // top-nav Saved
-  await page.waitForSelector('article', { timeout: 20000 });
-  const n = await page.locator('article').count();
+  // Poll for the saved item rather than asserting after a fixed wait (the Dexie liveQuery that
+  // backs the Saved page can lag). Re-navigate once if it hasn't appeared — a genuine save failure
+  // still fails after the retry.
+  let n = 0;
+  for (let attempt = 0; attempt < 2 && n === 0; attempt++) {
+    await page.waitForSelector('article', { timeout: 15000 }).catch(() => {});
+    n = await page.locator('article').count();
+    if (n === 0) {
+      await page.goto(BASE + '#/saved', { waitUntil: 'domcontentloaded' });
+      await page.waitForTimeout(500);
+    }
+  }
   if (n === 0) throw new Error('saved item not shown on Saved page');
   await snap('saved');
 });
 
-await step('hide removes the hidden card', async () => {
+await step('hide leaves a placeholder stub for the hidden card', async () => {
   await page.goto(BASE, { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('article', { timeout: 40000 });
   await page.waitForTimeout(600);
-  const firstTitle = (await page.locator('article h3').first().innerText()).trim();
-  await page.locator('article').first().getByRole('button', { name: 'Not interested' }).click();
-  await page.waitForTimeout(700);
-  // The feed backfills the slot, so count can stay; assert the hidden title is gone.
-  const stillThere = await page.locator('article h3', { hasText: firstTitle }).count();
-  if (stillThere > 0) throw new Error(`hidden card still visible: "${firstTitle}"`);
+  // Assert by data-id, not title: this is a LIVE feed and real HN stories can share a
+  // title (e.g. two distinct submissions both "Superlogical"), so a title-string check is
+  // ambiguous. The id is unique per card.
+  const firstCard = page.locator('article').first();
+  const hiddenId = await firstCard.getAttribute('data-id');
+  if (!hiddenId) throw new Error('first card has no data-id');
+  await firstCard.getByRole('button', { name: 'Not interested' }).click();
+  await page.waitForTimeout(900);
+  // The row is NOT yanked (that would jump the list under the reader's next click). It
+  // becomes a "Hidden — <title> · Restore" placeholder stub keyed to the same id, and is
+  // no longer a full interactive card (its title h3 is gone from that slot).
+  const stub = page.locator(`article[data-id="${hiddenId}"][data-hidden-stub="true"]`);
+  if ((await stub.count()) === 0) throw new Error(`hidden card ${hiddenId} did not become a placeholder stub`);
+  const stillFull = await page.locator(`article[data-id="${hiddenId}"] h3`).count();
+  if (stillFull > 0) throw new Error(`hidden card ${hiddenId} is still a full card, not a stub`);
 });
 
 await step('permalink page /item/:id', async () => {

@@ -14,6 +14,9 @@ import { loadModel } from './lib/ranking/logistic';
 import { getReadItemIds, onEngagement } from './lib/interactions';
 import { getReadSweep, seedReadSweepForLoad } from './lib/readSweep';
 import { probeWebgpu } from './lib/models/registry';
+// Side-effect import: registers the beforeinstallprompt listener at startup. Settings (lazy) reads
+// the captured prompt, but the event fires early — importing here ensures the listener exists before.
+import './lib/pwaInstall';
 // Ranking/personalization internals — lightweight app modules already in the
 // main bundle. Imported here (statically, no extra chunk) purely so the proof
 // harness can drive the REAL code via window.__hnlens (see below).
@@ -119,6 +122,19 @@ onEngagement(() => {
   queryClient.invalidateQueries({ queryKey: ['eventCount'] });
   queryClient.invalidateQueries({ queryKey: ['affinities'] });
   queryClient.invalidateQueries({ queryKey: ['content'] });
+});
+
+// Reconnect recovery. `networkMode:'always'` (query.ts) means an offline fetch fails into the outage
+// state rather than pausing, so TanStack's reconnect refetch never fires — a feed that errored while
+// offline stays errored after the network returns. Refetch only ERRORED + active (mounted) queries
+// so a settled-error surface reloads itself without a manual Retry; not a full refetch (avoids a
+// thundering herd), debounced to coalesce flapping.
+let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+window.addEventListener('online', () => {
+  clearTimeout(reconnectTimer);
+  reconnectTimer = setTimeout(() => {
+    void queryClient.refetchQueries({ type: 'active', predicate: (q) => q.state.status === 'error' });
+  }, 300);
 });
 
 // The APP owns scroll restoration, so the browser must not also try.

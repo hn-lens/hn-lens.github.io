@@ -74,7 +74,15 @@ mode).
   icon glyph. On-screen + correctly-sized + AA-contrast does NOT imply well-rendered. This is the
   highest-value class you own and the easiest to miss with a metric-only pass.
 - **Horizontal PAGE overflow**: `document.documentElement.scrollWidth - clientWidth`. Report the px
-  delta and the offending element. Try long unbreakable title tokens and long search queries.
+   delta and the offending element. Try long unbreakable title tokens and long search queries.
+ - **Undersized input/textarea clips its OWN content (vertical, folded in c3r34).** A `<textarea>`/
+   `<input>` whose fixed height (`rows=`) is smaller than the value it holds CLIPS that value — the
+   text is cut mid-line by the box's bottom edge, forcing the user to scroll a tiny box to read it.
+   Screenshot every content-bearing field that holds a REAL multi-line value (especially the AI prompt
+   editors — the SummaryActions "Edit prompt" dialog and Settings → "AI prompts (advanced)", both the
+   system instruction AND the user template) and confirm the value is readable without scrolling a
+   2–3-row box; a several-sentence prompt in a `rows={2}`/`rows={3}` textarea is a finding. (Pairs with
+   the usability lens's edit-fidelity sweep, which owns the placeholder-as-current-value half.)
 - **The `min-w-0` overflow class (recurring here — folded in from findings, keeps reappearing):**
   ANY flex/grid child with `w-full` / `flex-1` / `flex-shrink:0` but no `min-w-0` takes its automatic
   min-width = min-content, so on a narrow viewport it can EXCEED the screen and push controls off.

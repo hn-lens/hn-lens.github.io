@@ -9,10 +9,13 @@ import { isFiltered } from '../../lib/ranking/features';
 import { hiddenStubsSnapshot, subscribeHiddenStubs } from '../../lib/feedSession';
 import StoryCard from './StoryCard';
 import StorySkeleton from './StorySkeleton';
+import OfflineOutageHint from '../ui/OfflineOutageHint';
+import { useOnline } from '../../hooks/useOnline';
 
 export default function SearchResults({ query }: { query: string }) {
   const saved = useSavedIds();
   const seen = useSeenMap();
+  const online = useOnline();
   const hidden = useHiddenIds();
   const prefs = usePrefs();
   const [sort, setSort] = useState<'relevance' | 'new'>('relevance');
@@ -87,7 +90,8 @@ export default function SearchResults({ query }: { query: string }) {
           an empty "No results" (parity with the feed's outage state). */}
       {q.isError && !q.isLoading && (
         <div className="rounded-xl border border-border bg-surface p-6 text-center">
-          <p className="text-sm text-muted">Couldn&apos;t load results.</p>
+          <p className="text-sm text-muted">{online ? "Couldn't load results." : "You're offline."}</p>
+          <OfflineOutageHint />
           <button
             type="button"
             onClick={() => void q.refetch()}

@@ -29,6 +29,8 @@ import AskThread from './AskThread';
 import ThreadGist from './ThreadGist';
 import ArticleReader from './ArticleReader';
 import Favicon from '../ui/Favicon';
+import OfflineOutageHint from '../ui/OfflineOutageHint';
+import { useOnline } from '../../hooks/useOnline';
 import type { AlgoliaComment } from '../../types';
 
 type Sort = 'default' | 'new' | 'old' | 'replies';
@@ -77,6 +79,7 @@ const HN_ITEM = (id: number) => `https://news.ycombinator.com/item?id=${id}`;
 export default function CommentsView({ id }: { id: number }) {
   const storyQ = useStory(id);
   const commentsQ = useComments(id);
+  const online = useOnline();
   const [lastVisit, setLastVisit] = useState(0);
   const [sort, setSort] = useState<Sort>('default');
   const [query, setQuery] = useState('');
@@ -362,10 +365,14 @@ export default function CommentsView({ id }: { id: number }) {
   if (!story) {
     return (
       <div className="p-4 text-sm text-muted">
-        Couldn&apos;t load this item.{' '}
+        {online ? "Couldn't load this item." : "You're offline — this item isn't cached."}{' '}
+        <button type="button" onClick={() => void storyQ.refetch()} className="font-medium text-accent hover:underline">
+          Retry
+        </button>{' '}
         <Link to="/" className="text-accent hover:underline">
           Back to feed
         </Link>
+        <OfflineOutageHint />
       </div>
     );
   }
@@ -664,7 +671,7 @@ export default function CommentsView({ id }: { id: number }) {
                   // Outage, not emptiness: the tree fetch failed (offline / server error). Don't
                   // claim "No comments yet." over an outage (the outage-vs-empty rule, SPEC §6).
                   <div className="text-sm text-muted">
-                    Couldn&rsquo;t load the discussion.{' '}
+                    {online ? "Couldn't load the discussion." : "You're offline — this discussion isn't cached."}{' '}
                     <button type="button" onClick={() => commentsQ.refetch()} className="font-medium text-accent hover:underline">
                       Retry
                     </button>

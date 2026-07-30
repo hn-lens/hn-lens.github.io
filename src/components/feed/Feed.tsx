@@ -11,6 +11,8 @@ import { Spinner } from '../ui/primitives';
 import { SwitchVisual } from '../ui/controls';
 import { usePrefs } from '../../lib/prefs';
 import { effectiveLayout } from '../../lib/themes';
+import { useOnline } from '../../hooks/useOnline';
+import OfflineOutageHint from '../ui/OfflineOutageHint';
 import type { FeedKind } from '../../types';
 
 /**
@@ -31,6 +33,7 @@ export default function Feed({ kind, showRank }: { kind: FeedKind; showRank?: bo
   } = useFeed(kind);
   const saved = useSavedIds();
   const seen = useSeenMap();
+  const online = useOnline();
   const hasFilters = usePrefs(
     (s) => s.minPoints > 0 || s.mutedDomains.length > 0 || s.mutedUsers.length > 0 || s.keywordsMute.length > 0
   );
@@ -210,7 +213,8 @@ export default function Feed({ kind, showRank }: { kind: FeedKind; showRank?: bo
   if (isError) {
     return (
       <div className="rounded-xl border border-border bg-surface p-6 text-center text-muted">
-        <p>Couldn&apos;t load stories.</p>
+        <p>{online ? "Couldn't load stories." : "You're offline."}</p>
+        <OfflineOutageHint />
         <button
           type="button"
           onClick={refetch}

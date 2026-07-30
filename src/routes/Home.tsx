@@ -52,7 +52,12 @@ export default function Home() {
               <ArrowLeft className="size-4" /> Back to feed
             </button>
           ) : (
-            <FeedTabs value={feed} onSelect={setFeed} />
+            // Pinned below the sticky TopNav (h-14 = top-14) so the reader can switch feeds without
+            // scrolling back up. z-20 keeps it BELOW the header (z-30); the backdrop lets content
+            // scroll underneath cleanly. Sticky is in-flow, so it does not reflow the page.
+            <div className="sticky top-14 z-20 bg-bg/90 py-2 backdrop-blur">
+              <FeedTabs value={feed} onSelect={setFeed} />
+            </div>
           )}
 
           {/* Mobile-only Tune ranking (desktop has it in the sidebar, which is hidden on

@@ -3075,10 +3075,112 @@ comfortable "it's the test harness" explanation needs the same scrutiny as a def
   `tags=story`); `types.ts` had the design-#3 sweep comment. Both corrected. `topComment.ts`'s
   "kids are best-first" comment now notes the Algolia feed's `children` are chronological.
 
-**Accepted / reported as remaining (see the ranked list):** For-You top-comment previews sample the
-oldest comments (Algolia `children` are chronological, not HN-ranked) — accepted preview-quality
-tradeoff (ranking them would need a per-card firebase N+1); the offline UX could add an offline
-indicator / reconnect-refetch / install prompt (SPEC-GAP enhancements); the RUNTIME cache isn't
-pruned (bounded by browser quota / hashed names).
+**Reported as remaining (see the ranked list):** the offline UX could add an offline indicator /
+reconnect-refetch / install prompt (SPEC-GAP enhancements); the RUNTIME cache isn't pruned (bounded
+by browser quota / hashed names).
 
 Gate: standard tier green (68/68 with the new guard). Committed after the gate.
+
+### Follow-up: #1 (top-comment previews) FIXED (2026-07-29)
+
+The one MEDIUM I had reported as an accepted tradeoff — For-You previews sampling the OLDEST comments
+(Algolia `children` are chronological, not HN-ranked) — is now fixed rather than accepted. `getTopComments`
+ranks the preview from the story's FIREBASE item (`getItem`, whose `kids` are HN-ranked), falling back
+to the item's own kids if that fetch fails. On reflection the cost I'd cited ("the N+1") was overstated:
+it's ONE bounded, cached, per-previewed-card firebase fetch (already the preview's model, throttled by
+`PREVIEW_CARD_CONCURRENCY`), and a cache HIT (no request) for firebase-sourced feeds — not the pool
+N+1. Guarded by `topcommentranktest` (a standout posted last, past the first 5 chronological kids, is
+still surfaced; and a missing firebase story falls back to a preview). Gate green.
+
+## c3r34 — offline UX + a developer-reported prompt-editor defect routed through the lenses (2026-07-29)
+
+Two threads this round.
+
+### Offline UX (the four remaining c3r33 usability MEDIUMs)
+Built on top of the offline SW: (M1) a fixed, non-reflowing, debounced `OfflineNotice` indicator
+driven by a new `useOnline()` hook; (M2) reconnect auto-recovery — a `main.tsx` `online` listener
+refetches ERRORED active queries (debounced, no thundering herd) so a feed that errored offline
+reloads itself on reconnect, `networkMode:'always'` kept; (M3) offline-aware outage copy + a shared
+`OfflineOutageHint` (Saved/Read links) in the Feed/Search/CommentsView outage states; (M4) a
+`beforeinstallprompt` capture (`pwaInstall.ts`) + a Settings "Offline & install" section. Guarded by
+`offlineuxtest` (pre-fix 6-FAIL → post-fix 14-PASS). SPEC §8 + AGENTS updated.
+
+### The `uitest` flake this surfaced (test-only)
+Validating the top-comment fix, `uitest` failed on the hide step — a LIVE-API fragility, not a
+regression: two real HN stories were both titled "Superlogical", so the title-based "hidden card is
+gone" assertion was ambiguous. Rewrote it to assert by `data-id` (and to actually verify the
+placeholder-stub behaviour). Also made the tab-loop + save-verify steps robust to live-API timing
+(settle-poll + retry) — `uitest` is a live end-to-end tour and was flaking on slow/sparse feeds.
+
+### Developer-reported: the "Edit prompt" affordance couldn't edit the current prompt (golden rule #8)
+The developer reported that in the AI prompt editors you can only PARTIALLY see the current prompt
+(box too small) and, once you start typing, it DISAPPEARS. Rather than hand-fix, applied rule #8:
+- **Class:** an "Edit X" affordance that surfaces the current/effective value only as PLACEHOLDER
+  text (real value = empty override), so the first keystroke erases the reference — you can only
+  replace from scratch — compounded by an undersized box that clips the value.
+- **Blind lens:** usability. Its affordance/dead-end/discoverability sweeps checked that a control
+  OPENS, never that you can EDIT THE CURRENT VALUE. Upgraded `review/base/usability.md` with an
+  **edit-fidelity sweep** (pre-fill? legible? incrementally editable without losing the reference?)
+  and folded the undersized-box-clips-content half into `review/base/uiux-stress.md`.
+- **Proved the detector:** ran the upgraded usability lens read-only on the PRE-FIX app; it
+  INDEPENDENTLY rediscovered the defect (HIGH, both editors, `Settings.tsx` + `SummaryActions.tsx`,
+  with the `value=override / placeholder=default` mechanism) without being told it existed.
+- **Fixed both editors:** `prompts.ts` `effectivePromptPart()` (pre-fill the override-or-default as
+  the real value) + `normalizePromptOverride()` (store `''` when equal to default, preserving
+  empty=default); a shared `AutoTextarea` (`controls.tsx`) that grows to fit then scrolls; "Reset"
+  refills the default; corrected the now-true "visible and editable" copy. Guarded by
+  `promptedittest` (pre-fix 9-FAIL → post-fix 12-PASS). A fresh post-fix usability lens confirmed
+  "both editors let a user read and edit the current prompt in place", and flagged the residual
+  long-prompt clipping — which the `AutoTextarea` auto-grow then resolved (verified visually + in the
+  guard's cap+scroll assertion).
+
+### The 3 self-inflicted offline findings — FIXED under tightened discipline (2026-07-29)
+The 6-lens c3r34 round found 3 real issues in this session's own offline work; all fixed with
+invariant-first guards (pre-fix FAIL → post-fix PASS), then re-verified by fresh lenses (c3r34d):
+- **HIGH — offline pill stole taps.** `pointer-events:none` (pure-status pill), guarded by an
+  `elementFromPoint`-over-every-tab interception check. c3r34d confirmed no tap-steal.
+- **HIGH — discussion story-outage didn't recover.** `useStory` made strict (throws on null → error
+  state), so the reconnect refetch catches it and the branch shows Retry (`useItem.ts` +
+  `CommentsView.tsx`). Guarded by an offline→reconnect story-recovery check.
+- **MEDIUM — install listener too late.** `pwaInstall.ts` now imported at startup in `main.tsx`.
+  Guarded by dispatching `beforeinstallprompt` on Home *before* Settings is ever opened.
+
+### Follow-on fixes (c3r34d verification) — pill placement, copy over-claim, sibling gaps
+c3r34d verified the 3 above but surfaced follow-ons (2 mine): **pill VISUAL occlusion** →
+moved the indicator from a floating overlay INTO the TopNav as a compact chip (fixed-height nav → no
+reflow; above the tab strip → no occlusion; guarded by an in-nav + no-reflow + no-intercept check);
+**copy over-claim** — "discussions you've already opened are available offline" was false (the comment
+tree isn't cached), corrected to "Saved and Read stories" in `OfflineOutageHint`/`Settings`/`README`;
+**sibling gap** — the User-profile outage is now offline-aware like the others.
+
+### c3r34e: a real PRE-EXISTING HIGH the copy fix exposed — For-You pool error leaked into every feed
+Re-verifying the copy ("Read available offline"), the usability lens found Read genuinely broken
+offline: `useFeed.ts:551` computed `isError = poolQ.isError || idsQ.isError || itemsQ.isError` for
+ALL feed kinds, and a disabled query keeps its last error — so once For-You's shared pool query
+(`['pool','foryou']`) errored offline, every other feed (Read/Top/…) inherited the outage even though
+its own data was in IndexedDB. Fixed by scoping `isError` by kind, mirroring the `isLoading` branch
+directly above it (For-You → `poolQ`; Read → `readIdsQ`/`itemsQ`; other → `idsQ`/`itemsQ`). Guarded
+by `offlineuxtest`'s feed-isolation check (seed a cached read story, clear the list cache, error
+For-You on a fresh offline reload, switch to Read → Read shows its card, not the pool outage;
+demonstrated pre-fix FAIL → post-fix PASS). *Lesson: a fix's own copy claim ("Read works offline")
+is a spec assertion — verifying it surfaced a latent cross-feed error-state leak; and a guard that
+passes pre-fix is useless — I had to reproduce the true trigger (pool's FIRST run offline, no list
+cache) before the guard could discriminate.*
+
+## Nav chrome — developer-reported polish (2026-07-29)
+Two developer-reported items on the top nav, both fixed + guarded + independently verified:
+- **Theme/layout selectors were chopped + a 113px dead gap sat on the right.** The selects were
+  capped at `max-w-[9rem]`/`max-w-[8rem]` + `truncate`, so labels like "Reader — calm & quiet
+  (default)" showed as "Reader — cal…", and the search's own `max-w-md` cap left ~113px of unused
+  space pooling on the right. Fix (per the developer's steer — widen what needs it, don't balloon the
+  search): `lg:max-w-[13rem]` / `lg:max-w-[11rem]` on the two selects, so they show proper labels AND
+  the freed space is consumed → the action icons reach the content edge. Search untouched.
+- **Feed tabs now stick under the header.** The `TopNav` was already `sticky top-0`; the feed-tabs
+  strip scrolled away. Wrapped `FeedTabs` in a `sticky top-14 z-20 bg-bg/90 backdrop-blur` container
+  (below the header's z-30; Home-only, so no conflict with `/item`'s own sticky toolbar), so tabs stay
+  reachable while scrolling a long feed. Sticky is in-flow → no reflow.
+
+Guarded by `navchrometest` (selector width >=190px at lg+, nav gap <=24px, 0 horizontal overflow at
+1280/1180/1024/768/375, and the feed tabs pinned below the header after a 1200px scroll — the pre-fix
+metrics gap=113/themeW=144/tabsTop=-807 confirm it discriminates). Gate green (72). c3r34g UI/UX-stress
+lens verified both across the device matrix: 0 BLOCKER/HIGH/MEDIUM (2 invisible LOW nitpicks).

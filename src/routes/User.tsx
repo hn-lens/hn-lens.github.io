@@ -12,6 +12,8 @@ import { timeAgo } from '../lib/time';
 import { Spinner } from '../components/ui/primitives';
 import SummaryActions from '../components/SummaryActions';
 import StoryCard from '../components/feed/StoryCard';
+import OfflineOutageHint from '../components/ui/OfflineOutageHint';
+import { useOnline } from '../hooks/useOnline';
 import type { HnItem } from '../types';
 // Type-only (erased at build) so the heavy, lazy llm.ts is NOT pulled into this route bundle.
 import type { ChatMessage } from '../lib/models/llm';
@@ -34,6 +36,7 @@ export default function User() {
   const goBack = () => (cameFromInApp ? navigate(-1) : navigate('/'));
   const userQ = useUser(id);
   const user = userQ.data;
+  const online = useOnline();
   const saved = useSavedIds();
   const seen = useSeenMap();
 
@@ -118,8 +121,11 @@ export default function User() {
         // does not exist (the feed and search error states do the same).
         <div className="rounded-xl border border-border bg-surface p-10 text-center">
           <UserIcon className="mx-auto size-8 text-subtle" />
-          <p className="mt-3 text-sm text-muted">Couldn&apos;t load this profile.</p>
-          <p className="mt-0.5 text-xs text-subtle">Hacker News may be unreachable right now.</p>
+          <p className="mt-3 text-sm text-muted">{online ? "Couldn't load this profile." : "You're offline."}</p>
+          <p className="mt-0.5 text-xs text-subtle">
+            {online ? 'Hacker News may be unreachable right now.' : 'Profiles are fetched live from Hacker News.'}
+          </p>
+          <div className="flex justify-center"><OfflineOutageHint /></div>
           <button
             type="button"
             onClick={() => void userQ.refetch()}

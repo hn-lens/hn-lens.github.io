@@ -1,7 +1,7 @@
 // Settings table-of-contents test — guards the SettingsToc rail added to the Settings
 // page: a sticky vertical rail (lg+) / wrapping pill bar (mobile) that jumps to
 // each section and highlights the one in view. The correctness properties that matter:
-//   1. every one of the 12 sections is listed (no missing entry);
+//   1. every one of the 13 sections is listed (no missing entry);
 //   2. every TOC entry points at a REAL element id on the page (no dead anchors — the bug
 //      class where a section loses/renames its id and the link silently scrolls nowhere);
 //   3. clicking a mid-page entry scrolls that section into view, CLEAR of the sticky top
@@ -16,6 +16,7 @@ const BASE = process.env.BASE || 'http://localhost:4173/';
 const EXPECTED = [
   ['account', 'Account'],
   ['appearance', 'Appearance & feed'],
+  ['offline', 'Offline & install'],
   ['ranking', 'Ranking weights'],
   ['reranker', 'Learned reranker'],
   ['embeddings', 'Embeddings'],
@@ -49,7 +50,7 @@ await page.waitForTimeout(400);
 const labels = await page.$$eval('nav[aria-label="Settings sections"] button', (bs) =>
   bs.map((x) => x.textContent.trim())
 );
-check('TOC lists all 12 sections', labels.length === EXPECTED.length, `got ${labels.length}: ${labels.join(' | ')}`);
+check('TOC lists all 13 sections', labels.length === EXPECTED.length, `got ${labels.length}: ${labels.join(' | ')}`);
 check(
   'TOC labels match, in order',
   labels.join('||') === EXPECTED.map(([, l]) => l).join('||'),
@@ -135,7 +136,7 @@ await mp.route(/hacker-news\.firebaseio\.com|hn\.algolia\.com|google\.com\/s2/, 
 await mp.goto(`${BASE}#/settings`, { waitUntil: 'domcontentloaded' });
 await mp.waitForSelector('nav[aria-label="Settings sections"]', { timeout: 20000 });
 const mLabels = await mp.$$eval('nav[aria-label="Settings sections"] button', (bs) => bs.map((x) => x.textContent.trim()));
-check('mobile TOC still lists all 12 sections', mLabels.length === EXPECTED.length, `${mLabels.length}`);
+check('mobile TOC still lists all 13 sections', mLabels.length === EXPECTED.length, `${mLabels.length}`);
 const mOverflow = await mp.evaluate(() => {
   const ul = document.querySelector('nav[aria-label="Settings sections"] ul');
   return ul ? ul.scrollWidth > ul.clientWidth + 4 : true;

@@ -1,7 +1,25 @@
-import { useState } from 'react';
-import type { ReactNode } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
+import type { ReactNode, TextareaHTMLAttributes } from 'react';
 import { X } from 'lucide-react';
 import { cn } from '../../lib/cn';
+
+// A textarea that grows to fit its content (up to maxPx, then scrolls) so a multi-line value isn't
+// clipped mid-word by a fixed-height box. `rows` is the minimum height.
+export function AutoTextarea({
+  value,
+  maxPx = 460,
+  ...rest
+}: TextareaHTMLAttributes<HTMLTextAreaElement> & { value: string; maxPx?: number }) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, maxPx)}px`;
+    el.style.overflowY = el.scrollHeight > maxPx ? 'auto' : 'hidden';
+  }, [value, maxPx]);
+  return <textarea ref={ref} value={value} {...rest} />;
+}
 
 export function Section({
   title,

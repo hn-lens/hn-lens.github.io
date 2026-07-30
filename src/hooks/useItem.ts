@@ -5,9 +5,18 @@ import { fetchUser } from '../lib/hn/firebase';
 
 export function useStory(id: number) {
   return useQuery({
+    // strict: getItem returns null on a failed/timed-out fetch. As a plain success(null) that would
+    // render the story-outage branch with no Retry AND be skipped by the reconnect refetch (which
+    // only re-runs errored queries). Throwing makes it an error state that shows Retry and
+    // auto-recovers on reconnect — the same contract as useComments.
     queryKey: ['item', id],
-    queryFn: () => getItem(id),
+    queryFn: async () => {
+      const item = await getItem(id);
+      if (!item) throw new Error(`HN item ${id} unavailable`);
+      return item;
+    },
     enabled: Number.isFinite(id) && id > 0,
+    retry: 1,
   });
 }
 

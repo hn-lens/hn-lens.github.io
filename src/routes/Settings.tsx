@@ -1,16 +1,16 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Cpu, GraduationCap, Loader2, RotateCcw, Trash2 } from 'lucide-react';
+import { AlertTriangle, Cpu, Download, GraduationCap, Loader2, RotateCcw, Trash2 } from 'lucide-react';
 import { usePrefs } from '../lib/prefs';
 import { cn } from '../lib/cn';
 import { LAYOUTS, THEMES } from '../lib/themes';
-import { Section, Select, Slider, TagEditor, Toggle } from '../components/ui/controls';
+import { AutoTextarea, Section, Select, Slider, TagEditor, Toggle } from '../components/ui/controls';
 import { useModelStore } from '../lib/models/registry';
 import { EMBEDDING_MODELS, LLM_MODELS } from '../lib/models/catalog';
 import { CLOUD_PROVIDER_INFO, CLOUD_PROVIDERS, cloudModelFor, listModels } from '../lib/models/cloud';
 import type { CloudModel } from '../lib/models/cloud';
-import { DEFAULT_PROMPTS, PROMPT_KINDS, PROMPT_META } from '../lib/models/prompts';
+import { PROMPT_KINDS, PROMPT_META, effectivePromptPart, normalizePromptOverride } from '../lib/models/prompts';
 import { warmupEmbeddings } from '../lib/models/embeddings';
 import { trainFromHistory } from '../lib/ranking/train';
 import { loadModel, MIN_TRAIN_SAMPLES, MIN_TRAIN_POSITIVES } from '../lib/ranking/logistic';
@@ -19,6 +19,8 @@ import { clearAllData, eventCount } from '../lib/interactions';
 import { READER_PROXIES } from '../lib/hn/article';
 import type { ReaderProxy } from '../lib/hn/article';
 import { unhideAll, useHiddenCount } from '../hooks/useLocalData';
+import { useCanInstall } from '../hooks/useCanInstall';
+import { isStandalone, promptInstall } from '../lib/pwaInstall';
 import { timeAgo } from '../lib/time';
 import WeightSliders from '../components/ranking/WeightSliders';
 import CachedModels from '../components/CachedModels';
@@ -101,6 +103,7 @@ export default function Settings() {
   const [showSignals, setShowSignals] = useState(false);
   const [showHidden, setShowHidden] = useState(false);
   const [searchParams] = useSearchParams();
+  const canInstall = useCanInstall();
 
   // Deep-link: other surfaces link here with ?section=<id> (e.g. the AI summary's "Edit
   // system instruction" → ai-prompts, the For You "warming up" banner's "tune ranking" →
@@ -219,6 +222,30 @@ export default function Settings() {
           label="Hide read stories from For You"
           description="Stories you've already read drop out of For You when you reload, open a new tab, or press Refresh (they stay in the Read tab). Within a session the feed stays put — nothing is removed while you're reading."
         />
+      </Section>
+
+      <Section
+        id="offline"
+        title="Offline & install"
+        description="Hacker Lens works offline: your Saved and Read stories stay readable without a connection. New content loads when you reconnect."
+      >
+        {canInstall && !isStandalone() ? (
+          <button
+            type="button"
+            onClick={() => void promptInstall()}
+            data-install-app="true"
+            className="inline-flex items-center gap-2 rounded-lg border border-edge px-3 py-1.5 text-sm hover:bg-surface-2"
+          >
+            <Download className="size-4" /> Install for offline reading
+          </button>
+        ) : isStandalone() ? (
+          <p className="text-sm text-muted">Installed — running as an app.</p>
+        ) : (
+          <p className="text-sm text-subtle">
+            To install for one-tap offline access, use your browser&rsquo;s &ldquo;Install app&rdquo; / &ldquo;Add to
+            Home Screen&rdquo; option.
+          </p>
+        )}
       </Section>
 
       <div id="ranking" className="scroll-mt-20">
@@ -512,7 +539,7 @@ export default function Settings() {
       <div id="ai-prompts" className="scroll-mt-20">
       <Section
         title="AI prompts (advanced)"
-        description="The EXACT instructions sent to the model for each summary type — BOTH the system instruction and the user-message template. The template's {placeholders} are filled with the story data at request time, so the whole prompt is visible and editable. Leave a field blank to use the built-in default; changing either re-summarizes."
+        description="The EXACT instructions sent to the model for each summary type — BOTH the system instruction and the user-message template. Each field is pre-filled with the current prompt (the built-in default until you change it); edit it in place, or use Reset to restore the default. The template's {placeholders} are filled with the story data at request time. Changing either re-summarizes."
       >
         {PROMPT_KINDS.map((k) => (
           <div key={k} className="space-y-2 rounded-lg border border-border bg-surface-2 p-3">
@@ -533,13 +560,13 @@ export default function Settings() {
                   </button>
                 )}
               </div>
-              <textarea
+              <AutoTextarea
                 id={`sys-${k}`}
-                rows={2}
-                value={prefs.prompts[k].system}
-                placeholder={DEFAULT_PROMPTS[k].system}
-                onChange={(e) => prefs.set({ prompts: { ...prefs.prompts, [k]: { ...prefs.prompts[k], system: e.target.value } } })}
-                className="w-full resize-y rounded-lg border border-edge bg-surface px-3 py-2 text-xs outline-none focus:border-accent"
+                rows={4}
+                maxPx={360}
+                value={effectivePromptPart(k, 'system', prefs.prompts)}
+                onChange={(e) => prefs.set({ prompts: { ...prefs.prompts, [k]: { ...prefs.prompts[k], system: normalizePromptOverride(k, 'system', e.target.value) } } })}
+                className="w-full rounded-lg border border-edge bg-surface px-3 py-2 text-xs outline-none focus:border-accent"
               />
             </div>
             <div className="space-y-1">
@@ -555,13 +582,13 @@ export default function Settings() {
                   </button>
                 )}
               </div>
-              <textarea
+              <AutoTextarea
                 id={`usr-${k}`}
                 rows={5}
-                value={prefs.prompts[k].user}
-                placeholder={DEFAULT_PROMPTS[k].user}
-                onChange={(e) => prefs.set({ prompts: { ...prefs.prompts, [k]: { ...prefs.prompts[k], user: e.target.value } } })}
-                className="w-full resize-y rounded-lg border border-edge bg-surface px-3 py-2 font-mono text-[11px] leading-relaxed outline-none focus:border-accent"
+                maxPx={460}
+                value={effectivePromptPart(k, 'user', prefs.prompts)}
+                onChange={(e) => prefs.set({ prompts: { ...prefs.prompts, [k]: { ...prefs.prompts[k], user: normalizePromptOverride(k, 'user', e.target.value) } } })}
+                className="w-full rounded-lg border border-edge bg-surface px-3 py-2 font-mono text-[11px] leading-relaxed outline-none focus:border-accent"
               />
               <p className="text-[11px] text-muted">
                 Placeholders:{' '}
@@ -703,6 +730,7 @@ export default function Settings() {
 const SETTINGS_SECTIONS: { id: string; label: string }[] = [
   { id: 'account', label: 'Account' },
   { id: 'appearance', label: 'Appearance & feed' },
+  { id: 'offline', label: 'Offline & install' },
   { id: 'ranking', label: 'Ranking weights' },
   { id: 'reranker', label: 'Learned reranker' },
   { id: 'embeddings', label: 'Embeddings' },

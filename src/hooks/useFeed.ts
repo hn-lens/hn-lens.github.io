@@ -547,8 +547,15 @@ export function useFeed(kind: FeedKind) {
     : isRead
       ? readIdsQ.isLoading || (itemsQ.isLoading && sliceCount > 0)
       : idsQ.isLoading || (itemsQ.isLoading && sliceCount > 0);
-  // For You errors only when the pool query fails (its own firebase fallback has already been tried).
-  const isError = poolQ.isError || idsQ.isError || itemsQ.isError;
+  // Error state is scoped to the queries THIS feed actually uses (mirror isLoading above). poolQ is
+  // For-You-only, and a disabled query keeps its last error — so an unscoped `poolQ.isError` leaked a
+  // For-You pool failure (e.g. offline) into every other feed's outage, breaking Read/Top/etc. even
+  // though their own data was available.
+  const isError = isForYou
+    ? poolQ.isError
+    : isRead
+      ? readIdsQ.isError || itemsQ.isError
+      : idsQ.isError || itemsQ.isError;
 
   // PAGE PAST A FULLY-FILTERED LEADING RUN.
   //

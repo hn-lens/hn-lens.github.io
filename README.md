@@ -28,6 +28,9 @@ recommendations — with **no backend**. All your activity and models stay in yo
 - **Local-first interactions** — save, mark "not interested" (a downvote that trains the
   ranker), follow/mute domains & users, tunable ranking weights, dark/light themes. Real
   upvote/comment deep-link out to Hacker News.
+- **Works offline** — a service worker precaches the app; your Saved and Read stories stay
+  readable with no connection. The app tells you when you're offline, recovers automatically on
+  reconnect, and can be installed for one-tap offline access.
 
 ## Data sources (both CORS-enabled, no key, browser-only)
 

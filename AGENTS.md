@@ -251,6 +251,24 @@ in the browser; deploys to GitHub Pages.
   its OWN stale `hnlens-precache-*` caches, so the model-weight Cache-API stores survive. Guarded by
   `offlinepwatest` (serves `dist/`, loads, kills the server, asserts the app still boots). The
   single-file build (`file://`) has no SW — it is itself the no-server option.
+- **Offline UX is connection-aware (2026-07-29, c3r34):** four behaviours on top of the SW.
+  (1) `useOnline()` (`hooks/useOnline.ts`, a `useSyncExternalStore` over `online`/`offline`) drives a
+  fixed, non-reflowing `OfflineNotice` indicator (debounced ~600ms against blips; hides on reconnect —
+  it must never push list content down, so it's `position:fixed`). (2) A `main.tsx` `online` listener
+  refetches ERRORED + active queries (`refetchQueries({type:'active', predicate: error})`, debounced
+  300ms — not a full refetch, no thundering herd) so a feed/search/discussion that errored offline
+  auto-recovers on reconnect WITHOUT a manual Retry; `networkMode:'always'` (query.ts) stays, so an
+  outage still reads as an outage (not a fake empty). (3) Outage states (Feed, SearchResults, and
+  CommentsView's story + tree branches) say "You're offline" when `navigator.onLine === false` and
+  render the shared `OfflineOutageHint` (links to Saved + Read, both IndexedDB-served), Retry kept as
+  primary. (4) `lib/pwaInstall.ts` captures `beforeinstallprompt`; Settings → "Offline & install"
+  shows an "Install for offline reading" button once available (hidden when already standalone or no
+  prompt), adding no always-on network destination. Guarded by `offlineuxtest` (pre-fix FAIL →
+  post-fix PASS demonstrated: indicator appears/clears + is fixed; errored feed recovers on reconnect
+  with no Retry; offline outage copy + Saved/Read hint; install button appears on a synthetic
+  `beforeinstallprompt` and triggers it). *Lesson: an app with an offline SW must also be offline-AWARE
+  — tell the reader they're offline, recover automatically on reconnect, and point them at what still
+  works — or "works offline" reads as "app is broken".*
 
 ---
 
@@ -390,6 +408,26 @@ in the browser; deploys to GitHub Pages.
   template). The summary cache key fingerprints system **and** user (`SUMMARY_PROMPT_VER` 7); a rehydrate
   migration folds the legacy `systemPrompts` into `prompts`. Guarded by `cloudllmtest` (a custom user
   template + data substitution flows into the actual provider request) + `llmcachetest`.
+- **The prompt editors must let you EDIT the current prompt, not retype it blind (2026-07-29, c3r34;
+  developer-reported → routed through the lenses per golden rule #8):** both editors bound the textarea
+  `value` to the OVERRIDE pref (empty by default) and showed the effective prompt only as a
+  `placeholder`, in a 2–3 row box — so the current prompt was grayed, clipped, and VANISHED on the
+  first keystroke (an "Edit" affordance that couldn't edit). Fix: `prompts.ts` gained
+  `effectivePromptPart()` (override if set, else the default text) + `normalizePromptOverride()` (store
+  `''` when the text is left exactly equal to the default, preserving the "empty = default" model), and
+  BOTH editors (`SummaryActions` `PromptEditorDialog` + Settings → AI prompts) now pre-fill the
+  EFFECTIVE value as the real value and render in a shared **`AutoTextarea`** (`controls.tsx`) that
+  grows to fit the content up to a cap, then scrolls — no mid-word clipping. "Reset to default" refills
+  the default text. **Process (golden rule #8):** the defect was NOT hand-fixed on report — the
+  usability lens's brief was first upgraded with an **edit-fidelity sweep** (pre-fill? legible?
+  incrementally editable? — `review/base/usability.md`; clipping half folded into
+  `review/base/uiux-stress.md`), which then INDEPENDENTLY rediscovered the defect on the pre-fix app
+  before any code changed. Guarded by `promptedittest` (pre-fill = effective value on both surfaces,
+  editing preserves the reference, `''`-if-default storage, Reset refills, auto-grow shows the full
+  prompt / caps + scrolls; demonstrated pre-fix FAIL → post-fix PASS). *Lesson: an "Edit X" control
+  that surfaces the current X only as placeholder text is a defect — the affordance must let you edit
+  the current value in place; and a developer report is evidence a LENS is blind, so upgrade the lens
+  first and prove it rediscovers the bug before fixing.*
 - **Displayed data must be EXPLORABLE — no dead-end stats (usability, 2026-07-20):** the Settings "N
   interaction signals recorded" text was inert; a user who sees a count of data ABOUT them wants to see
   what it is. It's now a button → `SignalsDialog`, which lists the real `db.events` (type label, item

@@ -1,6 +1,6 @@
 import { kvGet, kvSet } from '../db';
 import { commentToText, isLinkDump } from '../html';
-import { getItems } from './client';
+import { getItem, getItems } from './client';
 import type { HnItem } from '../../types';
 
 export interface TopComment {
@@ -13,12 +13,11 @@ const MAX_CANDIDATES = 3;
 const MAX_LEN = 320; // the card clamps to ~2 lines; bound the stored text to keep the cache small
 const MAX_KIDS = 5; // only fetch the first few top-level comments — enough to pick a standout.
 // (5, not 8: this feature is default-ON and fetches per card, so it's the biggest default-on
-// network cost.) NOTE on ORDER: firebase item.kids (Top/Best/discussion) is HN-RANKED (best-first),
-// so the standout is in the first few. For-You cards come from Algolia, whose `children` is
-// CHRONOLOGICAL (oldest-first, mapped to kids in algolia.ts) — so on For-You this picks the standout
-// among the OLDEST few, not the top-ranked few. Accepted preview-quality tradeoff: fetching the
-// ranked order would need a per-card firebase story fetch (the N+1 the Algolia pool removed). The
-// discussion view itself always shows comments in the chosen sort order, unaffected.
+// network cost.) The first few only contain the standout if kids are HN-RANKED (best-first). firebase
+// item.kids IS ranked; the Algolia For-You pool's `children` is CHRONOLOGICAL — so getTopComments
+// ranks the preview from the story's FIREBASE item (getItem, cached/shared), falling back to the
+// item's own kids only if that fetch fails. For a firebase-sourced feed getItem is a cache hit, so
+// there is no extra request; on For-You it is one bounded, cached per-previewed-card fetch.
 
 // Substance heuristic for a TOP-LEVEL comment. A one-line preview should surface the comment
 // others actually ENGAGED with, not merely the longest wall of text — so length is capped low
@@ -110,14 +109,21 @@ function releasePreviewSlot(): void {
 export async function getTopComments(item: HnItem): Promise<TopComment[]> {
   const cached = await kvGet<TopComment[]>(cacheKey(item.id));
   if (cached) return cached;
-  const kids = (item.kids ?? []).slice(0, MAX_KIDS);
-  if (!kids.length) return []; // genuinely childless — nothing to show
+  // Childless check BEFORE the slot (cheap, both sources carry the top-level ids): a story with no
+  // comments never enters the concurrency-limited slot.
+  if (!(item.kids?.length ?? 0)) return [];
   // 3 per card, not the default 8 — AND gated by a cross-card slot (see above) so a fling of visible
   // cards can't put dozens of requests on the 6-connection origin at once.
   await acquirePreviewSlot();
-  let comments;
+  let comments: HnItem[] = [];
+  let kids: number[] = [];
   try {
-    comments = await getItems(kids, 3);
+    // Rank from the firebase item's kids (best-first); the For-You item's own kids are Algolia's
+    // chronological order. Cache hit (no request) for firebase feeds; a bounded, cached fetch for
+    // For-You. Fall back to the item's own kids if the firebase fetch fails (e.g. offline).
+    const ranked = await getItem(item.id).catch(() => null);
+    kids = ((ranked?.kids ?? item.kids) ?? []).slice(0, MAX_KIDS);
+    comments = kids.length ? await getItems(kids, 3) : [];
   } finally {
     releasePreviewSlot();
   }

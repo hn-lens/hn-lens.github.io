@@ -241,6 +241,17 @@ connectivity; previously-loaded data and previously-downloaded model weights wor
 dev server and the `file://` single-file build have no SW (the single-file build is itself the
 no-server option).
 
+**Offline UX.** The app is connection-aware. (1) A fixed, non-reflowing indicator appears when the
+browser goes offline (debounced against brief blips) and clears on reconnect — it must never push
+list content down. (2) A feed/search/discussion that ERRORED while offline auto-recovers when
+connectivity returns (the browser's `online` event refetches errored active queries) — no manual
+Retry; `networkMode:'always'` stays, so an outage still reads as an outage (SPEC §6), never a fake
+empty state. (3) Offline outage states say "You're offline" and point to content that IS available
+offline (Saved + Read, both from IndexedDB), while keeping Retry as the primary action. (4) Because
+the app is installable (`site.webmanifest`), Settings offers an "Install for offline reading"
+affordance once the browser makes an install prompt available (absent otherwise / when already
+installed); it adds no always-on network destination.
+
 ---
 
 ## 9. Performance — accepted costs

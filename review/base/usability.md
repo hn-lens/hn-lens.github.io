@@ -33,6 +33,25 @@ Run these specific sweeps — they catch the highest-value usability defects:
   UI shows ("N signals recorded", "12 comments", "trained on N interactions", a domain, an author,
   a topic), ask: *would a user want to click this to see or change the thing behind it — and can
   they?* A number a user can't act on, or an obvious drill-in that isn't wired, is a finding.
+- **Edit-fidelity sweep (can you actually EDIT the current value, or only replace it blind?).** For
+  EVERY control that edits an EXISTING / effective value — an "Edit …" button or dialog, a Settings
+  field that OVERRIDES a default, any `<input>`/`<textarea>` meant to modify something that already
+  has a value — do not stop at "it opens": actually try to TWEAK the current value (change one word)
+  and watch what happens. Check three things: **(a) Pre-fill.** Is the field pre-populated with the
+  current EFFECTIVE value (the user's override if set, otherwise the default/current text) so it can
+  be edited incrementally — or is that value shown only as PLACEHOLDER text? Placeholder-as-current-
+  value is a defect: type one character and confirm whether the reference text is still there or
+  VANISHED (a placeholder disappears on the first keystroke, so "Edit" silently becomes "retype from
+  scratch"). **(b) Legibility.** Is the current value fully readable BEFORE you edit — the field tall/
+  wide enough to show it, or obviously scrollable/expandable — or is a multi-line value CLIPPED by an
+  undersized box (e.g. a several-sentence prompt in a 2–3 row textarea)? **(c) Reversibility + state.**
+  Is there a clear, non-destructive way back to the default (a Reset), and does the field visibly
+  signal override-vs-default? Drive this HARD on the AI prompt editors — the SummaryActions
+  **"Edit prompt"** dialog AND Settings → **"AI prompts (advanced)"**, for the system instruction AND
+  the user template of every prompt kind — and on any other override field. A control named "Edit X"
+  that cannot actually edit the current X, or whose description claims the value is "visible and
+  editable" when it is placeholder-only/clipped, is a **HIGH** finding: the affordance does not afford
+  its own name. (Classify CODE-WRONG; note the `file:line` of the `value=`/`placeholder=` pair.)
 - **Copy-vs-behavior sweep.** For EVERY hint, tooltip, empty state, CTA, and description, check that
   it accurately describes what actually happens. Over-promising ("click a topic to see its
   stories" on a view where that does nothing), stale instructions (naming a button that no longer

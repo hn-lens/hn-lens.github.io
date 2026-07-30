@@ -5,7 +5,8 @@ import { Braces, PencilLine, RotateCw, X } from 'lucide-react';
 import type { ChatMessage } from '../lib/models/llm';
 import type { PromptKind } from '../types';
 import { usePrefs, usesLlama } from '../lib/prefs';
-import { DEFAULT_PROMPTS, PROMPT_META } from '../lib/models/prompts';
+import { AutoTextarea } from './ui/controls';
+import { DEFAULT_PROMPTS, PROMPT_META, effectivePromptPart, normalizePromptOverride } from '../lib/models/prompts';
 
 // Transparency + control row shown under every AI summary (card TL;DR, thread summary, user
 // persona), for BOTH local and cloud LLMs: refresh the cached output, view the EXACT request
@@ -146,8 +147,11 @@ function PromptEditorDialog({ kind, onClose, onSaved }: { kind: PromptKind; onCl
   useModalBehavior(dialogRef);
   const prompts = usePrefs((s) => s.prompts);
   const setPrefs = usePrefs((s) => s.set);
-  const [system, setSystem] = useState(prompts[kind].system);
-  const [user, setUser] = useState(prompts[kind].user);
+  // Pre-fill with the EFFECTIVE prompt (override if set, else the default) so the current prompt is
+  // visible and can be edited in place — not shown only as a placeholder that vanishes on the first
+  // keystroke.
+  const [system, setSystem] = useState(() => effectivePromptPart(kind, 'system', prompts));
+  const [user, setUser] = useState(() => effectivePromptPart(kind, 'user', prompts));
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
@@ -156,7 +160,17 @@ function PromptEditorDialog({ kind, onClose, onSaved }: { kind: PromptKind; onCl
   }, [onClose]);
 
   const save = () => {
-    setPrefs({ prompts: { ...prompts, [kind]: { system, user } } });
+    // Store '' when the text is left exactly equal to the default, so the "empty = use default"
+    // model is preserved and future default improvements still propagate.
+    setPrefs({
+      prompts: {
+        ...prompts,
+        [kind]: {
+          system: normalizePromptOverride(kind, 'system', system),
+          user: normalizePromptOverride(kind, 'user', user),
+        },
+      },
+    });
     onSaved();
   };
 
@@ -174,7 +188,7 @@ function PromptEditorDialog({ kind, onClose, onSaved }: { kind: PromptKind; onCl
         <div className="flex items-center justify-between gap-3 border-b border-border p-4">
           <div className="min-w-0">
             <h2 className="text-sm font-semibold">Edit the {PROMPT_META[kind].label} prompt</h2>
-            <p className="mt-0.5 text-xs text-muted">Both parts are sent to the model. Blank = use the built-in default. Save re-runs it.</p>
+            <p className="mt-0.5 text-xs text-muted">Both parts are sent to the model. Edit the current prompt in place; Reset restores the default. Save re-runs it.</p>
           </div>
           <button type="button" aria-label="Close" onClick={onClose} className="shrink-0 rounded-lg p-1 text-muted hover:bg-surface-2 hover:text-fg">
             <X className="size-4" />
@@ -183,22 +197,22 @@ function PromptEditorDialog({ kind, onClose, onSaved }: { kind: PromptKind; onCl
         <div className="space-y-3 overflow-y-auto p-4">
           <label className="block space-y-1">
             <span className="text-xs font-medium text-muted">System instruction</span>
-            <textarea
-              rows={3}
+            <AutoTextarea
+              rows={6}
+              maxPx={320}
               value={system}
-              placeholder={DEFAULT_PROMPTS[kind].system}
               onChange={(e) => setSystem(e.target.value)}
-              className="w-full resize-y rounded-lg border border-edge bg-surface-2 px-3 py-2 text-xs outline-none focus:border-accent"
+              className="w-full rounded-lg border border-edge bg-surface-2 px-3 py-2 text-xs outline-none focus:border-accent"
             />
           </label>
           <label className="block space-y-1">
             <span className="text-xs font-medium text-muted">User-message template</span>
-            <textarea
+            <AutoTextarea
               rows={8}
+              maxPx={460}
               value={user}
-              placeholder={DEFAULT_PROMPTS[kind].user}
               onChange={(e) => setUser(e.target.value)}
-              className="w-full resize-y rounded-lg border border-edge bg-surface-2 px-3 py-2 font-mono text-[11px] leading-relaxed outline-none focus:border-accent"
+              className="w-full rounded-lg border border-edge bg-surface-2 px-3 py-2 font-mono text-[11px] leading-relaxed outline-none focus:border-accent"
             />
             <span className="block text-[11px] text-muted">
               Placeholders (filled with the story data):{' '}
@@ -212,8 +226,8 @@ function PromptEditorDialog({ kind, onClose, onSaved }: { kind: PromptKind; onCl
           <button
             type="button"
             onClick={() => {
-              setSystem('');
-              setUser('');
+              setSystem(DEFAULT_PROMPTS[kind].system);
+              setUser(DEFAULT_PROMPTS[kind].user);
             }}
             className="text-xs text-muted hover:text-fg"
           >

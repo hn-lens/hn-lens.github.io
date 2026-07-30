@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import Logo from '../ui/Logo';
+import OfflineNotice from '../ui/OfflineNotice';
 import { ArrowUp, Bookmark, ExternalLink, Moon, Search, Settings, Sun } from 'lucide-react';
 import { useTheme } from '../../hooks/useTheme';
 import { usePrefs } from '../../lib/prefs';
@@ -44,6 +45,8 @@ export default function TopNav() {
           <span className="hidden sm:inline">Hacker Lens</span>
         </Link>
 
+        <OfflineNotice />
+
         <form onSubmit={onSearch} className="relative ml-1 flex-1 sm:max-w-md">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-subtle" />
           <input
@@ -62,7 +65,7 @@ export default function TopNav() {
             aria-label="Theme design"
             title="Switch theme design"
             onChange={(e) => setThemeName(e.target.value)}
-            className="hidden max-w-[9rem] truncate rounded-lg border border-edge bg-surface py-1.5 pl-2 pr-6 text-xs text-muted outline-none hover:text-fg focus:border-accent md:block"
+            className="hidden max-w-[9rem] truncate rounded-lg border border-edge bg-surface py-1.5 pl-2 pr-6 text-xs text-muted outline-none hover:text-fg focus:border-accent md:block lg:max-w-[13rem]"
           >
             {THEMES.map((t) => (
               <option key={t.id} value={t.id}>
@@ -75,7 +78,7 @@ export default function TopNav() {
             aria-label="Layout"
             title="Switch layout (structure)"
             onChange={(e) => setLayout(e.target.value)}
-            className="hidden max-w-[8rem] truncate rounded-lg border border-edge bg-surface py-1.5 pl-2 pr-6 text-xs text-muted outline-none hover:text-fg focus:border-accent lg:block"
+            className="hidden max-w-[8rem] truncate rounded-lg border border-edge bg-surface py-1.5 pl-2 pr-6 text-xs text-muted outline-none hover:text-fg focus:border-accent lg:block lg:max-w-[11rem]"
           >
             {LAYOUTS.map((l) => (
               <option key={l.id} value={l.id}>

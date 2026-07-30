@@ -61,3 +61,15 @@ export const PROMPT_META: Record<PromptKind, { label: string; description: strin
 };
 
 export const PROMPT_KINDS: PromptKind[] = ['tldr', 'thread', 'ask', 'user'];
+
+// Editing model. An empty override string means "use the default above". Both editors PRE-FILL the
+// EFFECTIVE value (the override if set, otherwise the default text) so the user can read and tweak
+// the real prompt, and store '' back when the text is left exactly equal to the default (so future
+// default improvements still propagate). These two helpers are the single source of truth for that
+// behaviour across the Settings section and the in-place "Edit prompt" dialog.
+export function effectivePromptPart(kind: PromptKind, part: keyof PromptDef, prompts: Record<PromptKind, PromptDef>): string {
+  return prompts[kind][part] || DEFAULT_PROMPTS[kind][part];
+}
+export function normalizePromptOverride(kind: PromptKind, part: keyof PromptDef, text: string): string {
+  return text === DEFAULT_PROMPTS[kind][part] ? '' : text;
+}
