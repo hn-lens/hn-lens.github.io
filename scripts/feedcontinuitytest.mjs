@@ -398,15 +398,17 @@ try {
     `want ${topStory} got ${await idAtPoint(640, 300)}`
   );
 
-  // ---------- 4b. Engaging must not re-render the whole personalized list ----------
+  // ---------- 4b. Engaging must not re-render UNCHANGED cards ----------
   // Saving, hiding or reading invalidates ['affinities'] and ['content'], which recomputes the
-  // ranking. That is fine. What was not fine is that every card then received a fresh `reasons`
-  // array and a fresh explanation OBJECT, so `memo(StoryCard)` bailed out for nobody and the cost
-  // of a single Save grew linearly with how deep the reader had paged — measured on a throttled
-  // phone at 60 / 111 / 197ms for 25 / 50 / 90 cards, against 0ms for the same action on Top, whose
-  // cards share one constant empty array. The bound is deliberately loose (this harness runs
-  // unthrottled, where the fixed cost is a few ms): the property under test is that the cost does
-  // not scale with the list, not any particular millisecond count.
+  // ranking. That RE-RANK is inherent to live personalization and its cost DOES scale with the pool:
+  // computeForYou re-scores every candidate and the cards whose rank/reasons actually change re-render
+  // (measured on a throttled phone at ~60/111/197ms for 25/50/90 cards). What the identity-preserving
+  // fixes (stableReasons + the empty-dep explainFor callback + memo(StoryCard)) remove is the
+  // UNNECESSARY churn ON TOP of that: before them EVERY card got a fresh `reasons` array and a fresh
+  // explanation OBJECT, so memo bailed for nobody and even UNCHANGED cards re-rendered. This guard is a
+  // coarse sanity bound (runs UNTHROTTLED, where the fixed cost is a few ms) — it asserts a single Save
+  // doesn't blow a frame budget, NOT that the re-rank is free (it isn't; that scaling is the price of
+  // live re-ranking, accepted).
   await load('foryou');
   await page.evaluate(() => {
     window.__lt = [];

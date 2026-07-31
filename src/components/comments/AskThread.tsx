@@ -51,8 +51,11 @@ export default function AskThread({ story, tree }: { story: HnItem; tree: Algoli
       const comments = selectKeyComments(tree?.children ?? [], isCloud ? 40 : 16);
       let article = '';
       if (fetchArticleText) {
-        const { getCachedArticle } = await import('../../lib/hn/article');
-        article = (await getCachedArticle(story.id))?.text ?? '';
+        const { getCachedArticle, articleLooksRelevant } = await import('../../lib/hn/article');
+        const text = (await getCachedArticle(story.id))?.text ?? '';
+        // Drop an off-topic body (cookie-wall/paywall/unrelated page) so it isn't fed to the model
+        // nor labelled "+ article text" — matches the guard the summary path applies.
+        article = text && articleLooksRelevant(story.title ?? '', text) ? text : '';
       }
       const messages = buildAskMessages({
         question: query,

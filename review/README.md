@@ -3476,3 +3476,52 @@ not catch "looks sparse / folds in a jarring order / relocates the gap". For a n
 control cluster, a hosted MOCKUP reviewed by the maintainer is the right tool before building, and the
 priority order + monotonicity + no-empty-space rules belong in the lens briefs so a future round can
 measure them.*
+
+## c3r39 — header touch-target root-cause + full 7-lens review (2026-07-31)
+
+**Developer report → root cause.** "Narrowing the window increases the discussion-header vertical
+space even though no line wraps." Root cause: a width-gated touch rule — `index.css` gave the
+header/comment/card action controls a 44px `min-height` inside `@media (max-width: 1023px)`, so a
+NARROW DESKTOP window (a mouse, not a phone) got phone-sized tap targets, ballooning the meta row
+16px→44px with no wrapping. Fix: gate touch sizing on actual touch capability (`@media (pointer:
+coarse)`), matching the existing `.seg-act` rule — desktop stays compact at every width, real touch
+devices keep 44px. Header spacing also tightened (title→meta 6px, meta→pill 8px). Per golden rule #8
+the design/uiux briefs were upgraded with a "vertical space grows on a narrow desktop with no wrap"
+detection directive and the fix was proven; guarded by `mobiletest` (narrow-desktop fine-pointer stays
+compact) + the `hasTouch` touch-target assertions.
+
+**7-lens outcome: 0 BLOCKER, 0 HIGH; OSS = READY for public GitHub.** Design&theme CLEAN; performance
+within budget; AI ranker beats the popularity baseline. All findings were 4 MEDIUM + LOWs on the new
+discussion toolbar.
+
+**Fixed (test-first + gated):**
+- M1 `l` opened a duplicate tray search over the inline box → focuses the inline box.
+- M2 "N new"/gist jump during an active search navigated away to a permalink → clears the filter and
+  lands in the thread (`jumpToComment` defers via `pendingJump` when searching).
+- M3 the toolbar's own controls (Sort, ⋯, "N new") skipped the 44px touch target → added to the
+  `pointer: coarse` block.
+- M4 below ~400px the folded-search row left a dead trailing gap → right actions pin (`ml-auto`).
+- L1 `/` focused the global nav search on /item → prefers the inline discussion search.
+- L2 the narrow ⇅ sort toggle only flipped Newest/Replies → cycles all four sorts.
+- L3 "Ask" fed an off-topic proxy page (paywall/cookie-wall) to the model labelled "+ article text" →
+  applies the shared `articleLooksRelevant` guard (moved to `hn/article` so summaries, Ask, and the
+  ranking path can share one definition). VALIDATED-AND-PARTIALLY-REJECTED: the guard was deliberately
+  NOT applied to the ranking path (`content.ts`) — an off-topic page's terms rarely match the liked
+  profile, and the title↔body heuristic false-drops a legit vague-title article (the train/serve
+  parity fixture proved it). Applied only the correct half.
+- L4 (COMMENT-WRONG) `feedcontinuitytest`'s comment claimed the fix made engage-cost "not scale with
+  the list" → corrected: the re-rank (computeForYou + re-render of the cards whose rank actually
+  changes) is inherent to live personalization and DOES scale; the identity fixes only remove the
+  churn of UNCHANGED cards.
+
+**Accepted in writing (LOW, with rationale):**
+- L5 comment Sort (~123ms) / Tune slider (~102–159ms) exceed the 100ms local-control budget ONLY
+  under an artificial 4× CPU throttle; unthrottled they are a few ms. Accepted.
+- L6 `article.ts` (~8KB gz, off-by-default reader-proxy feature) sits on the cold-start critical path.
+  Negligible; accepted.
+- L7 `themecontrasttest`'s /item fixture seeds no OP badge / "new" comment / collapsed-reply pill, so
+  those accent tints aren't render-measured (the underlying TOKENS are guarded across all 62 combos and
+  the design lens confirmed the rendered controls pass this round). Accepted as a documented follow-up:
+  the render-walk's "expand every `aria-expanded=false`" step clicks the reply pill away before
+  measurement, so a clean fixture change is risk-prone across 62 combos for a gap with no actual defect.
+- OSS dev-process disclosure in `AGENTS.md`/`review/*` is an accepted maintainer decision (SPEC §10).

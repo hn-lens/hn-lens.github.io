@@ -6,7 +6,7 @@ import { usePrefs } from '../prefs';
 import { commentToText, stripHtml } from '../html';
 import { commentSubstanceScore } from '../hn/topComment';
 import { kvGet, kvSet } from '../db';
-import { fetchArticleBody } from '../hn/article';
+import { articleLooksRelevant, fetchArticleBody } from '../hn/article';
 import { fetchItemTree } from '../hn/algolia';
 import type { AlgoliaComment, AlgoliaItem, HnItem } from '../../types';
 
@@ -766,21 +766,6 @@ const PROVIDER_LABEL: Record<string, string> = {
  * quality. A real article about the story shares proper nouns and topic words with its own headline;
  * a cookie wall, a login page or an unrelated article typically shares nothing but stopwords.
  */
-export function articleLooksRelevant(title: string, article: string): boolean {
-  const STOP = new Set(
-    'the a an and or but of to in on for with from by is are was were be been it its this that as at how why what when new show ask hn using use used your you our we they i'.split(' ')
-  );
-  const words = (t: string) =>
-    (t.toLowerCase().match(/[a-z][a-z0-9'-]{2,}/g) ?? []).filter((w) => !STOP.has(w));
-  const titleWords = [...new Set(words(title))];
-  // Nothing distinctive in the title (very short or all stopwords) ⇒ nothing to check against, so
-  // do not reject: a false negative here silently discards a perfectly good article.
-  if (titleWords.length < 3) return true;
-  const body = new Set(words(article).slice(0, 4000));
-  const hits = titleWords.filter((w) => body.has(w)).length;
-  return hits / titleWords.length >= 0.25;
-}
-
 // ── Input hygiene: is there enough real material to send to the model at all? ────────────────
 //
 // ONE definition, used by every path that puts thread content in front of the model. It used to

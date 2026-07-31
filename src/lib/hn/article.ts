@@ -114,8 +114,27 @@ export async function prefetchArticles(items: HnItem[], max = 6, gapMs = 1500): 
       if (r.text) fetched++;
       await new Promise((res) => setTimeout(res, gapMs)); // be gentle on free proxies
     }
-  } finally {
+   } finally {
     speculativeInFlight = false;
   }
   return fetched;
+}
+
+/** Does the extracted body plausibly belong to the linked story, or is it a cookie-wall / paywall /
+ *  unrelated page the proxy returned? Cheap title↔body term-overlap heuristic, shared by every path
+ *  that consumes cached article text (summaries, Ask, ranking term-affinity) so an off-topic body is
+ *  never fed to the model nor to the ranker. Lives here (not in the lazy llm module) so the ranking
+ *  path can import it without pulling in WebLLM. */
+export function articleLooksRelevant(title: string, article: string): boolean {
+  const STOP = new Set(
+    'the a an and or but of to in on for with from by is are was were be been it its this that as at how why what when new show ask hn using use used your you our we they i'.split(' ')
+  );
+  const words = (t: string) => (t.toLowerCase().match(/[a-z][a-z0-9'-]{2,}/g) ?? []).filter((w) => !STOP.has(w));
+  const titleWords = [...new Set(words(title))];
+  // Nothing distinctive in the title (very short or all stopwords) ⇒ nothing to check against, so do
+  // not reject: a false negative here silently discards a perfectly good article.
+  if (titleWords.length < 3) return true;
+  const body = new Set(words(article).slice(0, 4000));
+  const hits = titleWords.filter((w) => body.has(w)).length;
+  return hits / titleWords.length >= 0.25;
 }
