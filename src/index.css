@@ -1990,12 +1990,15 @@ html[data-textsize='lg'] {
   font-size: 112.5%;
 }
 
-/* Touch-friendly tap targets on phones/tablets (<lg): the primary story-card action
-   buttons (Save / Not interested / Personalize / TL;DR / open) grow to >=44px so they're
-   comfortable to tap, while desktop keeps its denser 36px mouse sizing.    Scoped to
-   .sc-actions so no other IconButton is affected. In `compact` .sc-actions is display:none at rest
-   but IS revealed (display:flex) on touch/<lg, where this touch sizing then correctly applies. */
-@media (max-width: 1023px) {
+/* Touch-friendly tap targets, gated on ACTUAL touch capability (coarse pointer), NOT viewport
+   width. A desktop window narrowed below 1024px still has a mouse and must keep the dense 36px
+   sizing: the old `max-width: 1023px` gate gave the header/comment/card links a 44px min-height on
+   a narrow desktop, ballooning the discussion-header meta row 16px->44px with no text wrapping.
+   On real phones/tablets these controls (Save / Not interested / Personalize / TL;DR / open, plus
+   the comment + header actions) grow to >=44px so they're comfortable to tap. Same axis as the
+   `.seg-act` rule below. In `compact` .sc-actions is display:none at rest but IS revealed
+   (display:flex) on touch, where this touch sizing then correctly applies. */
+@media (pointer: coarse) {
   /* Every action control, including the "Open on HN" link (an <a>, not a <button>). */
   .sc-actions button,
   .sc-actions a {
@@ -2026,12 +2029,10 @@ html[data-textsize='lg'] {
     min-width: 2.75rem;
   }
 
-  /* The DISCUSSION page was never covered. The rule above is scoped to the feed card's own hooks,
-     so on /item every control stayed finger-hostile: an 18x18 collapse chevron, a 14x14
-     jump-to-parent, and 16px-tall Save / Article / HN links in the header — on the surface a reader
-     spends the most time on, and where the controls are packed closest together. Same 44px bar.
-     Applied via padding rather than min-width so a chevron sitting inline with text does not become
-     a 44px-wide gap in the middle of a sentence. */
+  /* The DISCUSSION page controls: an 18x18 collapse chevron, a 14x14 jump-to-parent, and the
+     Save / Article / HN links in the header — the surface a reader spends the most time on, and
+     where the controls are packed closest together. Same 44px bar, applied as min-height (not
+     min-width) so a chevron sitting inline with text does not become a 44px-wide gap in a sentence. */
   .thread-root button,
   .comment-actions button,
   .comment-actions a,

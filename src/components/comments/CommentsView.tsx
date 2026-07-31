@@ -493,7 +493,7 @@ export default function CommentsView({ id }: { id: number }) {
           </Link>
         )}
 
-        <div className="discussion-header mt-[1.5px] flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
+        <div className="discussion-header mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
           <span className="inline-flex items-center gap-1 font-medium text-fg">
             <ArrowBigUp className="size-3.5 text-accent" /> {story.score ?? 0}
           </span>
@@ -551,7 +551,7 @@ export default function CommentsView({ id }: { id: number }) {
         {/* Discussion | Article toggle (link stories only). Inside the header block so its top gap is a
             direct margin, not the outer space-y (a child mt can't override space-y's `> * + *` rule). */}
         {canReadArticle && (
-          <div className="seg mt-1" role="tablist" aria-label="Read the discussion or the article">
+          <div className="seg mt-2" role="tablist" aria-label="Read the discussion or the article">
             <button type="button" role="tab" aria-selected={view === 'discussion'} onClick={() => setView('discussion')} className="seg-btn">
               Discussion
             </button>

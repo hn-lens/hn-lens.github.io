@@ -18,7 +18,10 @@ const check = (name, pass, detail = '') => {
 };
 
 const b = await chromium.launch({ headless: true });
-const ctx = await b.newContext({ viewport: { width: 375, height: 780 } }); // phone
+// A real phone: a touch device with a COARSE pointer. Touch-target sizing is gated on
+// `@media (pointer: coarse)` (not viewport width), so the context must advertise touch or the
+// >=44px assertions below would test a fine-pointer narrow window and wrongly fail.
+const ctx = await b.newContext({ viewport: { width: 375, height: 780 }, hasTouch: true }); // phone
 const page = ctx.pages()[0] || (await ctx.newPage());
 await page.route(/hacker-news\.firebaseio\.com/, (r) => {
   const u = r.request().url();
@@ -326,6 +329,29 @@ const sidebarVisibleZen = await dp.evaluate(() => {
 const tuneReachableZen = await dp.getByRole('button', { name: 'Tune ranking' }).isVisible();
 check('zen layout hides the sidebar on desktop', !sidebarVisibleZen);
 check('desktop + zen: in-context "Tune ranking" is still reachable', tuneReachableZen);
+
+// (e) REGRESSION — a NARROW DESKTOP window (fine pointer / mouse) must NOT get 44px touch targets in
+// the discussion header. They are gated on ACTUAL touch (`@media (pointer: coarse)`), not viewport
+// width: the old width gate (`max-width: 1023px`) ballooned the meta row 16->44px on a narrow desktop
+// with NO text wrapping (the Article/HN/Save/author links grew to a 44px tap height). Assert the meta
+// row stays compact and its links are mouse-sized when the pointer is fine.
+await dp.evaluate(() => window.__hnlens.prefs.getState().setLayout('cards'));
+await dp.setViewportSize({ width: 900, height: 900 });
+await dp.goto(`${BASE}#/item/1`, { waitUntil: 'domcontentloaded' });
+await dp.waitForSelector('.discussion-header', { timeout: 15000 });
+await dp.waitForTimeout(300);
+const metaDesk = await dp.evaluate(() => {
+  const meta = document.querySelector('.discussion-header');
+  const links = [...meta.querySelectorAll('a, button')];
+  const maxLinkH = Math.max(0, ...links.map((el) => Math.round(el.getBoundingClientRect().height)));
+  return { coarse: matchMedia('(pointer: coarse)').matches, metaH: Math.round(meta.getBoundingClientRect().height), links: links.length, maxLinkH };
+});
+check(
+  'narrow desktop (fine pointer) keeps the discussion-header meta compact — no 44px touch balloon',
+  !metaDesk.coarse && metaDesk.links > 0 && metaDesk.metaH <= 24 && metaDesk.maxLinkH <= 30,
+  JSON.stringify(metaDesk)
+);
+
 await desk.close();
 
 await b.close();
