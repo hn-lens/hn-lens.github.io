@@ -149,10 +149,14 @@ in the browser; deploys to GitHub Pages.
       is why rounds 16–20 all "failed". A round CONVERGES when: **zero BLOCKER/HIGH**, **zero
       self-inflicted regressions**, and **every MEDIUM either fixed or explicitly accepted in writing
       with a rationale**. That makes the self-inflicted rate the actual convergence signal.
-   All seven lenses are **strictly READ-ONLY: never edit code/tests, never run the gate, never
-   commit** — their only deliverable is a report. Run each as a **durable** job — a foreground
-   `task` (block on it) or `session_spawn` (survives turns) — **never a background `task`** (turn-
-   scoped; gets torn down at a context boundary, which silently killed a hunt mid-run 2026-07-19).
+    All seven lenses are **strictly READ-ONLY: never edit code/tests, never run the gate, never
+    commit** — their only deliverable is a report. Run each as a **durable** job — a foreground
+    `task` (block on it) or `session_spawn` (survives turns) — **never a background `task`** (turn-
+    scoped; gets torn down at a context boundary, which silently killed a hunt mid-run 2026-07-19).
+    A lens finding ships a **re-runnable REPRO left on disk** plus a **fix DIRECTION** — the
+    direction names what it could break and the invariant that must hold — **never a patch**. The
+    repro is not optional polish: the fix discipline below requires re-running *the lens's* repro
+    across *the lens's* matrix, which is impossible if the lens only described what it did.
 8. **A DEVELOPER-REPORTED DEFECT GOES THROUGH THE LENSES — NEVER STRAIGHT TO A FIX.** When the
    developer reports something that needs fixing (a bug, a wrong output, a confusing UI — e.g. the
    "Why #N?" reconciliation defect), **DO NOT fix it directly.** A direct fix is wrong three ways: the
@@ -277,6 +281,12 @@ in the browser; deploys to GitHub Pages.
 - **Keep `package-lock.json` on the public registry** (`registry.npmjs.org`). If a network/proxy
   policy rewrites `resolved` URLs to a private mirror, rewrite them back before committing — CI
   (GitHub Actions) can only reach the public registry, and the deploy workflow forces it too.
+- **Harness navigation is HASH navigation (`HashRouter`).** Drive routes as `#/settings`,
+  `#/item/<id>`, with query params AFTER the `#` — a bare `/settings` silently renders **Home**,
+  so a harness that "opened Settings" may be asserting against the feed. And `page.goto` to a URL
+  you are already on is a **hash-only nav with NO document reload**, so anything on
+  `staleTime: Infinity` (`['readSnapshot']`, the For-You pool, `['ranker']`) keeps its stale value
+  and the probe measures the previous state — use `page.reload()` when you need fresh queries.
 - **Use Playwright's bundled Chromium for all automation**, not a system browser — a managed/
   policy-locked Chrome can stall on external fetches. For WebGPU add
   `--enable-unsafe-webgpu --enable-features=Vulkan --use-angle=metal` and load over `localhost`
@@ -472,6 +482,15 @@ in the browser; deploys to GitHub Pages.
   opens the extracted text in a **formatted overlay** (paragraphs preserved via `htmlToText`), and —
    when a URL exists but the proxy is off — prompts to enable it. Both go through `summarizeItem`.
    `summarizeThread`/`tldr` still exist (article optional) for the eval harnesses.
+- **Do NOT post-process or sanitize model OUTPUT — guarantee the INPUT instead.** The product makes
+  no correctness guarantee about what the model emits (invented specifics, a view put in a named
+  commenter's mouth); a deterministic attribution sanitiser was tried, holed in three consecutive
+  rounds, and **deleted on purpose** — a partial sanitiser advertises a guarantee it cannot keep.
+  What IS guaranteed and testable: thin input is refused before any model call, untrusted text is
+  fenced, every provenance string equals what was actually sent, and every surface rendering model
+  text carries the disclaimer. Recorded as an accepted design decision in `review/base/ai-ml.md`
+  (authority: `review/SPEC.md`) — **lenses must not report output fabrication as a defect**, and
+  neither should you "add a check" for it.
 - **Provenance is EARNED — a refusal claims NO basis, on ALL 4 summary surfaces (2026-07-30):** on a
   too-thin story `summarizeItem`/`summarizeUser` REFUSE before any model call, returning `request: []`
   plus a ZEROED-but-truthy `sources`. The "Based on …" line must be gated on a real request
@@ -893,6 +912,10 @@ in the browser; deploys to GitHub Pages.
   also blank the intentional keepPreviousData flash on populated→populated switches and broke `uitest`.)
   Guarded by `readtest` (populated Top → empty Read shows the empty state, no stale cards). *Lesson:
   keepPreviousData leaks across DIFFERENT queries when the new one is disabled — guard the empty case.*
+- **A React Query key must carry CONTENT IDENTITY — the ids — never a shape or length proxy.**
+  `['items', kind, sliceCount]` and `['content', …, pool.length]` each served **stale data** because
+  the set changed while the key did not; both now key on the id arrays (`slicedIds`, `poolIds` in
+  `useFeed.ts`). This is a recurring defect class, not a one-off: check every new query key for it.
 - **Keyboard nav covers ALL navigation, or it's removed (`KeyboardShortcuts.tsx`):** the rule is *all
   nav needs*, not just the feed. `j`/`k` walk the **current list** — feed cards normally, **comments**
   when a discussion page is open (`/item`; Enter/`c` then collapses the selected comment). **`h`/`l`**
@@ -1032,6 +1055,11 @@ in the browser; deploys to GitHub Pages.
   `articleproxytest` (a hung proxy is abandoned via the timeout and the chain continues; profile-building
   makes **zero** proxy requests). *Lesson: background training must never do unbounded network I/O — feed
   it cached data, and bound every external fetch with a timeout.*
+- **A probe that seeds engagement must ALSO seed `db.items` for those ids.** The background paths
+  (auto-train, profile building, candidate enrichment) read items **cache-only** by design — the
+  same rule that keeps training off the network. Seed events without the matching `db.items` rows
+  and training legitimately sees nothing, which reads as a broken ranker rather than a broken
+  fixture.
 - **For You is HONEST about how much it knows (usability pass, 2026-07-20):** four presentation fixes so
   the personalization never over- or under-claims. (a) The "Why #N?" dialog shows a **bounded** engage
   chance (`engageChancePct`, ~5–95%, prefixed "~"), never a false "100% chance you'll engage" — the
@@ -1409,11 +1437,39 @@ in the browser; deploys to GitHub Pages.
   context-scoped: `l` search, `s` summary, `a` ask — all three are free on `/item` because
   `switchTab` returns early with no feed tabs and `s`-to-save is guarded to story cards. The action
   group is skin-2 (`.seg-act`: raised fill + `--edge` border) so it reads as ACTIONS beside the flat
-  `.seg` selection control. Labels collapse to icon-only below `lg`, so each carries an explicit
-  `aria-label`. **Watch for duplicate accessible names** — three collisions appeared in one sitting
-  (toolbar *Summary* vs panel *Summarize*, toolbar *Ask* vs submit *Send*, toast *Undo* vs stub
-  *Restore*). Guarded by `wrapqualitytest`, which measures row SHAPE because page overflow is 0 for a
-  row that wraps while a line sits half empty.
+   `.seg` selection control. Labels collapse to icon-only below `lg`, so each carries an explicit
+   `aria-label`. **Watch for duplicate accessible names** — three collisions appeared in one sitting
+   (toolbar *Summary* vs panel *Summarize*, toolbar *Ask* vs submit *Send*, toast *Undo* vs stub
+   *Restore*). Guarded by `wrapqualitytest`, which measures row SHAPE because page overflow is 0 for a
+   row that wraps while a line sits half empty.
+ - **That toolbar DEGRADES its controls to stay one row with no dead gap — it does not wrap and does
+   not leave empty space (2026-07-30; developer-reported ragged wrap → then the fix co-designed with the
+   maintainer via hosted mockups):** the toolbar is a full-width bar (`@container/tb` on `CommentsView`'s
+   `.disc-tb-bar`) whose controls DEGRADE, not merely fold, as the reading column narrows — so it is ONE
+   row at every width 320–1440 (verified across the 31 themes; `terminal`/mono widest) AND has no empty
+   gap. Priority, widest→narrowest: **Summary/Ask fold into the "…" menu FIRST** (below ~660px CQ); the
+   flat **Sort degrades 4 segments → 2 buttons (`Newest|Replies`) → a single `⇅` toggle** (below 600 / 460
+   CQ) — its FULL option set (`Default/Newest/Oldest/Replies`) stays in the "…" menu the whole time, so
+   nothing is lost; the **Search box is a persistent inline filter that `flex-1` fills the leftover space**
+   (killing the gap), then moves into the "…" menu LAST (below ~400px CQ). `count` and "N new" never fold.
+   Search stopped being a tray *tool* and became an always-visible inline `input` (typing filters the
+   thread; the tray is used only for the narrowest, `<400`, via the "…" item). `MenuItem` is shared from
+   `ui/primitives`. **Why the degrade-don't-just-fold design:** an earlier fix that folded whole controls
+   into "…" left a dead gap the moment a filler control folded, and a hug-content variant just relocated
+   the empty space — the maintainer's rule was "empty space is empty space wherever it is", so Search is
+   the flex filler and Sort degrades (rather than vanishing) to keep filling. **Process (golden rule #8
+   for the report; mock-first for the fix):** the original ragged wrap was routed through the UI/UX-stress
+   lens (its brief upgraded to render the MAX-CONTENT state incl. the "N new" button, sweep the whole
+   width range in ≤40px steps, treat any <~70%-fill wrapped row as a defect at every width, and put a
+   max-content + fill% proof burden on any "not-a-defect" verdict; a fresh lens then rediscovered it on
+   the pre-fix build). The *redesign* was then iterated as self-contained HTML mockups served from
+   `public/mocks/` (drag-to-resize + fixed snapshots) until the maintainer approved, before any React
+   change. Guarded by `wrapqualitytest` (ONE row at every width 320–1440 × {default, mono}; the Sort
+   4→2→1 degradation order; Summary/Ask fold first, Search folds last; the "…" menu holds every folded
+   control + the full Sort options). *Lesson: judge a control row in its BUSIEST state; a wrap OR a dead
+   gap is a defect at every width; when "show everything" and "no empty space" collide in a fixed-width
+   column, make one control a flex filler and DEGRADE the others rather than folding them wholesale; and
+   iterate a non-trivial responsive redesign as a hosted mockup before building it.*
 - **"Not interested" leaves a placeholder, it does not yank the row (2026-07-26):** removing the row
   instantly pulled everything below up a card and sent the reader's next click to the wrong story.
   The hide is still immediate everywhere else; only the ROW lingers as a `Hidden — <title> · Restore`

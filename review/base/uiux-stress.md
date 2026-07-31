@@ -214,6 +214,29 @@ is incomplete for this lens.
   the arrow, for EVERY option, not just the default one.
 
 
+## Render the MAX-CONTENT state before judging ANY row or cluster (folded in — this is the #1 miss)
+
+A control row is only as good as its BUSIEST state, and most rows have OPTIONAL elements that appear
+only in certain data/config states. Judging a row in its default (emptiest) state is how a ragged
+two-row discussion toolbar shipped "clean": the harness had no unread comments, so the **"N new"
+catch-up button never rendered**, and that button is exactly what tips the row into two ragged rows at
+~498px. Before you screenshot/measure ANY cluster, enumerate its conditional elements and drive the
+surface with ALL of them PRESENT (the max-content state). Known conditional elements to populate:
+
+- **Discussion toolbar "N new" catch-up button** (`CommentsView.tsx`, gated on `newIds.length`): seed a
+  prior visit so unread comments exist — load the app, `(await window.__hnlens.db()).db.seen.put({id,
+  ts})` with `ts` (ms) older than most comments' `created_at_i` (sec), THEN open `/item/:id` (the mount
+  reads the seen ts into `lastVisit`). Use a 2–3 digit count so the button is realistically wide
+  ("58 new").
+- **Summary / Ask buttons** in that toolbar (gated on `hasCloudKey || (llmEnabled && webgpu ok)`): set a
+  mocked cloud key in prefs so both render (headless has no WebGPU).
+- **Reader / cloud-model `<select>`** showing a LONG model name (the widest option), not the default.
+- **Story-card meta**: a long HN username (up to 15 chars) + 3–4-digit score & comment counts.
+- Any other element gated on data/config/state on the surface you're judging.
+
+A row that is clean empty but ragged/overflowing once its conditional elements render is a DEFECT, and
+"I didn't see it" because the state wasn't populated is not a pass — populate the state.
+
 ## Wrapping QUALITY, not just overflow
 
 Every overflow check in this repo measures `scrollWidth - clientWidth`. That number is **0** for one
@@ -237,14 +260,66 @@ So measure the SHAPE of every multi-control row, not just whether the page scrol
      shorter (an abbreviated label, a word dropped, labels reduced to icons at mid widths).
    Reporting only (a) misses the more common case, and reporting only (b) misdiagnoses it — say
    which one you measured, and give the numbers (`total 827px into 718px` is the actionable form).
-4. Sweep this across widths in small steps (e.g. 1440, 1280, 1150, 1024, 900, 820, 768, 600, 430,
-   390), not just at the two or three breakpoints — these failures live in the narrow band right
-   where a cluster stops fitting, and testing only at round breakpoints steps straight over it.
+4. Sweep this across widths in **small (≤40px) steps over the WHOLE 320–1440 range** — do NOT jump
+   between round breakpoints. The old example list (1440,1280,1150,1024,900,820,768,600,430,390)
+   itself **STEPS OVER the ~440–560 band**, and a real ragged-wrap toolbar defect lived at ~498px (a
+   narrow desktop window / large-phone-landscape / small tablet) — exactly in the skipped gap. Include
+   720,680,640,600,560,520,480,440 explicitly. These failures live in the narrow band right where a
+   cluster stops fitting, and testing only at round breakpoints steps straight over it.
 
 Report the width band in which the bad wrap occurs and the fill ratio of the offending row, e.g.
-"at 980-1120px the toolbar wraps to 2 rows with row 1 only 55% full". Wrapping itself is fine and
-expected on a phone; wrapping that leaves obvious empty space beside the controls is not.
+"at 460-520px the toolbar wraps to 2 rows with row 1 63% full and row 2 34% full". **The threshold is
+FILL%, not the width label:** a wrap where ANY resulting row is < ~70% full is a defect at EVERY width,
+phone included — do NOT wave it away as "fine on a phone" (that exact rationalization certified a real
+ragged two-row toolbar as clean). A wrap is only acceptable when each row is genuinely full, or the
+content truly cannot fit and every row is packed tight.
+
+**A "clean / intended wrap / not-a-defect" verdict carries the SAME proof burden as a finding:** you
+must show (i) the row rendered in its MAX-CONTENT state (see the section above) AND (ii) the measured
+fill% at the width where it wraps. A "clean" call reached from an incomplete state (a conditional
+element such as the "N new" button missing) is a FALSE NEGATIVE — worse than not looking, because it
+actively clears a real defect.
+
+**Consistency cross-check:** if one control cluster collapses overflow into a menu when tight (e.g. the
+story-card action row's container-query overflow into the ⋯ menu) while a SIBLING cluster (the
+discussion toolbar) instead wraps raggedly, flag the inconsistency — the app has already chosen a
+pattern for "too many controls for the width," and the outlier should adopt it. **Do NOT downgrade
+such a ragged wrap to LOW because "everything is still reachable" — reachability is a SEPARATE axis
+from wrap-quality.** A sub-~70%-fill ragged wrap that ignores an overflow pattern the app already uses
+elsewhere is a real layout defect (treat as at least MEDIUM); the two-tap reachability of the wrapped
+controls neither causes nor excuses the ragged shape.
 
 Related, and worth checking in the same pass: when a row *does* legitimately wrap, does it wrap into
 a sensible shape (balanced, aligned, grouped by function), or does one stray control end up alone on
 a line? A single orphaned control is the same defect in a milder form.
+
+## Responsive control clusters: monotonicity, no-empty-space, and a priority order (folded in)
+
+For a control ROW with more than ~2 controls in a FIXED-WIDTH container (the discussion toolbar is the
+canonical case: count · Sort · Search · Summary · Ask · N-new in a `max-w-3xl` column), `scrollWidth`
+and even the fill-ratio checks above are NOT enough. Sweep the whole width range and grade three more
+things that a guard does not catch but the eye does — all three shipped as defects here across
+successive rounds:
+
+1. **Monotonic degradation.** As the width DROPS, controls may only ever get SIMPLER — shrink, drop a
+   label, degrade to fewer buttons, or move into "…". A control that DISAPPEARS at one width and
+   REAPPEARS at a narrower one (observed: Search folded 470–560 then came back <470) is a defect; it
+   reads as a glitch while resizing. Verify each control's presence is a monotonic function of width.
+2. **No visible empty space at ANY width — wherever it is.** "The gap is on the page, not inside the
+   bar" is NOT a defense (a hug-content bar that leaves space beside it was rejected for exactly this).
+   The row must fill its width at every size: either a flex FILLER control (e.g. a search input) grows
+   to eat the slack, or a control STRETCHES to fill when its neighbour folds. A fixed cluster pinned to
+   one edge with a dead center/trailing gap is the defect — measure it at wide AND intermediate widths,
+   not just where it wraps.
+3. **An explicit, documented control-priority order.** When controls must give up space, WHICH goes
+   first is a product decision, not an accident — and the maintainer has one (here: Summary/Ask fold
+   first; the flat Sort degrades 4→2→1 but its full options stay reachable in "…"; Search is the flex
+   filler that yields last; count + "N new" never fold). If the implementation folds them in a
+   different order, or drops a control the maintainer considers important (Sort/"Replies") before a
+   less-important one, flag it. Read the current-state appendix / `AGENTS.md` for the intended order.
+
+And the process note this class earns: for a NON-TRIVIAL responsive control cluster, the right first
+step is a **hosted mockup** (self-contained HTML in `public/mocks/`, drag-to-resize + fixed snapshots)
+reviewed by the maintainer BEFORE the React change — the mockup surfaces "looks sparse / folds in a
+jarring order / relocates the gap" that no automated guard will, and catches CSS traps early (a
+`flex: 1 1 auto` filler wraps on its content width; use `flex: 1 1 0`).

@@ -84,8 +84,9 @@ await page.evaluate(() => {
 await page.waitForSelector('.thread-root > *', { timeout: 20000 });
 await page.waitForTimeout(500);
 check('PRECONDITION: back to a windowed render before the jump test', (await topCount()) <= 45, `${await topCount()} of ${N}`);
-await page.getByRole('button', { name: /^Search$/ }).first().click().catch(() => {});
-await page.waitForSelector('#disc-search, input[placeholder*="Search this discussion"], input', { timeout: 8000 }).catch(() => {});
+// Search is an always-visible INLINE box on the toolbar; click it to focus, then type.
+await page.getByLabel('Search comments in this discussion').first().click().catch(() => {});
+await page.waitForSelector('input[type="search"]', { timeout: 8000 }).catch(() => {});
 await page.keyboard.type(UNIQUE);
 await page.waitForTimeout(500);
 // Click the search result → it clears the query and jumps to the comment in the thread.

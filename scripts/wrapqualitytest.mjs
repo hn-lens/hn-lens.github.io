@@ -2,14 +2,16 @@
 //
 // Every overflow guard in this repo measures `scrollWidth - clientWidth`. That number is 0 for one
 // of the ugliest layouts the app can produce: a control row that wraps onto a second line, leaving
-// the first line half empty, while the page itself fits perfectly. It shipped twice — once because a
-// `flex-1` spacer ate every pixel of slack so the last control had nowhere to sit, and once because
-// the row was simply over-stuffed at ordinary desktop widths. Both looked broken; neither overflowed.
+// the first line half empty, while the page itself fits perfectly. The discussion toolbar did this
+// at ~460-540px whenever the "N new" catch-up button was present — a band the old width sweep
+// stepped over, and a wrap the old check EXCUSED below 768px as "genuinely can't fit". The fix is
+// to COLLAPSE overflow into the "..." menu (container queries `/tb`): the tools fold first, then the
+// sort control, so the toolbar is a SINGLE ROW at every width instead of wrapping raggedly.
 //
-// Two distinct failures, which need opposite fixes:
-//   (a) wrapped ALTHOUGH the content would fit  -> a layout bug (greedy spacer / atomic cluster)
-//   (b) wrapped at a desktop width (>= 768px)   -> over-stuffed; something has to get shorter
-// Wrapping on a narrow screen because the content genuinely does not fit is correct and is allowed.
+// So this guard now asserts the collapse, not "wraps well": ONE row at EVERY width (phone included),
+// the tools-before-sort fold ORDER, and that nothing folded is lost (every control reachable via the
+// menu). A single row with a wide gap between the count and the right-pinned actions is fine — that
+// is a toolbar, not a ragged wrap; the defect was the SECOND line, and there is no longer one.
 //
 // The fixture deliberately turns EVERYTHING on (a prior visit so the "N new" jump renders, and a
 // cloud key so the Ask tool renders). Without them the toolbar is two controls lighter than a real
@@ -19,7 +21,9 @@ import { chromium } from 'playwright';
 const BASE = process.env.BASE || 'http://localhost:4173/';
 const now = Math.floor(Date.now() / 1000);
 const STORY = 90210;
-const kids = Array.from({ length: 40 }, (_, i) => ({
+// 120 kids so BOTH the comment count and the "N new" catch-up count are 3-digit — the realistic
+// max-content width. A 2-digit fixture "just fits" the capped column and hid a >=1280px wrap.
+const kids = Array.from({ length: 120 }, (_, i) => ({
   id: STORY * 10 + i,
   author: `commenter${i}`,
   text: `<p>A substantive comment number ${i} with enough text to render as a real row.</p>`,
@@ -70,86 +74,89 @@ try {
   await page.waitForSelector('.disc-toolbar', { timeout: 30000 });
   await page.waitForTimeout(1200);
 
-  // PRECONDITION: the row really is carrying its full complement of controls.
+  // PRECONDITION: the row really is carrying its full complement of controls. The tools are icon-only
+  // (a visible label can't fit the width-capped column), so detect Ask by its aria-label, not text.
   const pre = await page.evaluate(() => {
     const t = document.querySelector('.disc-toolbar')?.textContent ?? '';
-    return { hasNew: /\d+\s+new/.test(t), hasAsk: /Ask/.test(t) };
+    return { hasNew: /\d+\s+new/.test(t), hasAsk: !!document.querySelector('.disc-toolbar [aria-label="Ask"]') };
   });
   check('precondition: the toolbar carries every control (jump + Ask)', pre.hasNew && pre.hasAsk, JSON.stringify(pre));
 
+  // SINGLE ROW AT EVERY WIDTH. The old sweep stepped over the ~460-540 band and excused sub-768
+  // wraps as "can't fit" — the exact hole the ragged two-row toolbar shipped through. Sweep in
+  // small steps across the WHOLE range, phones included, and require exactly one rendered row with
+  // no page overflow. The overflow-into-menu collapse makes this true at every width.
+  const rowFn = () => {
+    const bar = document.querySelector('.disc-tb-bar');
+    if (!bar) return null;
+    const items = [...bar.children].filter((k) => k.getBoundingClientRect().width > 0);
+    const buckets = [];
+    for (const k of items) {
+      const rect = k.getBoundingClientRect();
+      const cy = rect.top + rect.height / 2;
+      const hit = buckets.find((x) => Math.abs(x.cy - cy) < 12);
+      if (hit) hit.w += rect.width;
+      else buckets.push({ cy, w: rect.width });
+    }
+    return { rows: buckets.length, pageOver: document.documentElement.scrollWidth - document.documentElement.clientWidth };
+  };
+  // Swept in BOTH the default and the widest (monospace `terminal`) theme: the toolbar controls are
+  // ~10% wider in mono, so a wrap can appear in terminal while default just fits. And the wide widths
+  // (>=1024) matter because label/word visibility must be governed by the SAME axis as the fold — a
+  // viewport-driven label on a width-capped column inflates content past the column without folding.
   const offenders = [];
-  for (const w of [1440, 1280, 1150, 1024, 980, 900, 820, 768, 700, 600, 500, 430, 390]) {
-    await page.setViewportSize({ width: w, height: 800 });
-    await page.waitForTimeout(300);
-    const r = await page.evaluate(() => {
-      const bar = document.querySelector('.disc-toolbar > div');
-      if (!bar) return null;
-      const inner = bar.clientWidth - 16;
-      const items = [...bar.children].filter((k) => k.getBoundingClientRect().width > 0);
-      // Bucket by vertical CENTRE: children of different heights share a visual row but never
-      // share a `top`, so grouping on `top` counts every child as its own row.
-      const buckets = [];
-      for (const k of items) {
-        const rect = k.getBoundingClientRect();
-        const cy = rect.top + rect.height / 2;
-        const hit = buckets.find((x) => Math.abs(x.cy - cy) < 12);
-        if (hit) hit.w += rect.width;
-        else buckets.push({ cy, w: rect.width });
-      }
-      const total = items.reduce((n, k) => n + k.getBoundingClientRect().width, 0) + 8 * (items.length - 1);
-      return { rows: buckets.length, fits: total <= inner, total: Math.round(total), inner: Math.round(inner) };
-    });
-    if (!r) continue;
-    if (r.rows > 1 && (r.fits || w >= 768)) {
-      offenders.push(`${w}px: ${r.rows} rows, ${r.total}/${r.inner}px ${r.fits ? '(WRAPPED THOUGH IT FITS)' : '(over-stuffed at desktop width)'}`);
+  for (const theme of ['reader', 'terminal']) {
+    await page.evaluate((id) => { const p = window.__hnlens.prefs; const s = p.getState ? p.getState() : p; if (s.setThemeName) s.setThemeName(id); }, theme);
+    for (const w of [1440, 1280, 1152, 1024, 900, 820, 768, 700, 640, 600, 560, 540, 520, 500, 480, 460, 430, 390, 360, 320]) {
+      await page.setViewportSize({ width: w, height: 800 });
+      await page.waitForTimeout(150);
+      const r = await page.evaluate(rowFn);
+      if (!r) continue;
+      if (r.rows !== 1 || r.pageOver > 0) offenders.push(`${theme}@${w}px: ${r.rows} row(s), pageOver=${r.pageOver}`);
     }
   }
-  check('the discussion toolbar is a single row at every desktop width', offenders.length === 0, offenders.join(' | ') || '13 widths swept');
+  await page.evaluate(() => { const p = window.__hnlens.prefs; const s = p.getState ? p.getState() : p; if (s.setThemeName) s.setThemeName('reader'); });
+  check('the discussion toolbar is a SINGLE row at every width (320-1440) x {default, widest theme}', offenders.length === 0, offenders.join(' | ') || '40 cells swept');
 
-  // PHONE SHAPE. Below ~440px the row genuinely cannot fit, so it WILL wrap — the requirement is
-  // that it wraps WELL. Two failures were measured before: the comment count orphaned alone on a
-  // line at 6% fill, and the action cluster stayed pinned right by `ml-auto` so its line began
-  // ~60% of the way across. Page overflow is 0 in both cases, which is why an overflow-only guard
-  // misses them entirely.
-  const shapeOffenders = [];
-  for (const w of [440, 390, 375, 360, 320]) {
+  // DEGRADATION ORDER (monotonic): as the toolbar narrows, Summary/Ask fold into "…" FIRST; the flat
+  // Sort control degrades 4 segments → 2 buttons → 1 toggle (never folding fully — its options stay in
+  // "…"); the Search box flex-fills then folds into "…" LAST. Measured by the visible sort-button count
+  // + whether the inline Search box and the Summary/Ask group are present.
+  const stateAt = async (w) => {
     await page.setViewportSize({ width: w, height: 800 });
-    await page.waitForTimeout(300);
-    const r = await page.evaluate(() => {
-      const bar = document.querySelector('.disc-toolbar > div');
-      if (!bar) return null;
-      const barRect = bar.getBoundingClientRect();
-      const inner = bar.clientWidth - 16;
-      const items = [...bar.children].filter((k) => k.getBoundingClientRect().width > 0);
-      const buckets = [];
-      for (const k of items) {
-        const rect = k.getBoundingClientRect();
-        const cy = rect.top + rect.height / 2;
-        const hit = buckets.find((x) => Math.abs(x.cy - cy) < 12);
-        if (hit) {
-          hit.w += rect.width;
-          hit.left = Math.min(hit.left, rect.left);
-        } else buckets.push({ cy, w: rect.width, left: rect.left });
-      }
-      return {
-        rows: buckets.length,
-        fills: buckets.map((b) => +(b.w / inner).toFixed(2)),
-        startX: buckets.map((b) => Math.round(b.left - barRect.left)),
-      };
+    await page.waitForTimeout(180);
+    return page.evaluate(() => {
+      const bar = document.querySelector('.disc-tb-bar');
+      const vis = (el) => !!(el && el.getBoundingClientRect().width > 0);
+      const sortBtns = [...bar.querySelectorAll('.seg')].filter(vis).flatMap((s) => [...s.querySelectorAll('button')]).filter(vis).length;
+      return { sortBtns, search: vis(bar.querySelector('input[type="search"]')), tools: vis(bar.querySelector('.seg-act')) };
     });
-    if (!r) continue;
-    // No line may be nearly empty (the orphan), and no line may start stranded across the row.
-    const orphan = r.fills.some((f) => f < 0.2);
-    const stranded = r.startX.some((x) => x > 40);
-    if (orphan || stranded || r.rows > 2) {
-      shapeOffenders.push(`${w}px: rows=${r.rows} fills=[${r.fills}] startX=[${r.startX}]`);
-    }
+  };
+  const s720 = await stateAt(720);
+  const s660 = await stateAt(660);
+  const s560 = await stateAt(560);
+  const s440 = await stateAt(440);
+  const s380 = await stateAt(380);
+  check('wide (720px): full Sort (4 segments) + inline Search + Summary/Ask inline', s720.sortBtns === 4 && s720.search && s720.tools, JSON.stringify(s720));
+  check('660px: Summary/Ask folded FIRST; full Sort still inline + Search inline', s660.sortBtns === 4 && s660.search && !s660.tools, JSON.stringify(s660));
+  check('560px: Sort degrades to 2 buttons; Search still inline', s560.sortBtns === 2 && s560.search, JSON.stringify(s560));
+  check('440px: Sort degrades to 1 toggle; Search still inline', s440.sortBtns === 1 && s440.search, JSON.stringify(s440));
+  check('380px: Sort stays a toggle; Search folds into the menu LAST', s380.sortBtns === 1 && !s380.search, JSON.stringify(s380));
+
+  // REACHABILITY: nothing folded is lost — at 360px the "..." menu holds every tool + every sort option.
+  await page.setViewportSize({ width: 360, height: 800 });
+  await page.waitForTimeout(200);
+  let menuText = '';
+  try {
+    await page.click('.disc-toolbar button[aria-label="More discussion tools"]', { timeout: 4000 });
+    await page.waitForTimeout(150);
+    menuText = await page.evaluate(() => document.querySelector('.disc-toolbar [role="menu"]')?.textContent ?? '');
+  } catch {
+    menuText = ''; // no overflow menu at 360px is itself the failure (recorded below)
   }
-  check(
-    'when the toolbar must wrap on a phone, it wraps well (no orphan line, no stranded line, <=2 rows)',
-    shapeOffenders.length === 0,
-    shapeOffenders.join(' | ') || '5 phone widths swept'
-  );
+  const wanted = ['Search', 'Summary', 'Ask', 'Default', 'Newest', 'Oldest', 'Replies'];
+  const missing = menuText ? wanted.filter((t) => !menuText.includes(t)) : ['(no "..." menu at 360px)'];
+  check('the overflow menu holds every folded control (3 tools + 4 sort options)', missing.length === 0, missing.length ? `missing: ${missing.join(', ')}` : 'all present');
 } finally {
   await ctx.close().catch(() => {});
   await b.close().catch(() => {});

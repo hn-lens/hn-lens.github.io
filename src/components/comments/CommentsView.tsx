@@ -3,13 +3,16 @@ import { Link, useNavigate } from 'react-router-dom';
 import {
   ArrowBigUp,
   ArrowDown,
+  ArrowUpDown,
   ArrowUpRight,
   Bookmark,
   BookmarkCheck,
+  Check,
   ExternalLink,
   ListTree,
   MessageCircleQuestion,
   MessageSquare,
+  MoreHorizontal,
   Search,
   Sparkles,
   X,
@@ -30,6 +33,7 @@ import ThreadGist from './ThreadGist';
 import ArticleReader from './ArticleReader';
 import Favicon from '../ui/Favicon';
 import OfflineOutageHint from '../ui/OfflineOutageHint';
+import { IconButton, MenuItem } from '../ui/primitives';
 import { useOnline } from '../../hooks/useOnline';
 import type { AlgoliaComment } from '../../types';
 
@@ -86,6 +90,8 @@ export default function CommentsView({ id }: { id: number }) {
   // Which tool the reader has open, if any. Exactly one at a time: opening one closes the others,
   // so the tray can never stack and reintroduce the wall of chrome this replaced.
   const [tool, setTool] = useState<null | 'search' | 'summary' | 'ask'>(null);
+  const [toolMenuOpen, setToolMenuOpen] = useState(false);
+  const toolMenuRef = useRef<HTMLSpanElement>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const lastToolBtn = useRef<HTMLElement | null>(null);
   const deferredQuery = useDeferredValue(query);
@@ -286,6 +292,8 @@ export default function CommentsView({ id }: { id: number }) {
   }, [allComments, q, searching]);
   const matches = useMemo(() => allMatches.slice(0, MAX_RENDERED_MATCHES), [allMatches]);
   const matchOverflow = allMatches.length - matches.length;
+  // Label for the compact single-button sort toggle (narrowest widths); the full option set stays in the ⋯ menu.
+  const sortLabel = SORTS.find(([k]) => k === sort)?.[1] ?? 'Sort';
   const newIds = useMemo(
     () => (lastVisit > 0 ? allComments.filter((c) => c.created_at_i > lastVisit).map((c) => c.id) : []),
     [allComments, lastVisit]
@@ -314,6 +322,22 @@ export default function CommentsView({ id }: { id: number }) {
     lastToolBtn.current = document.activeElement as HTMLElement | null;
     setTool(t);
   };
+  // Close the overflow menu on outside-click / Escape (mirrors the story-card ⋯ menu).
+  useEffect(() => {
+    if (!toolMenuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (toolMenuRef.current && !toolMenuRef.current.contains(e.target as Node)) setToolMenuOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setToolMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [toolMenuOpen]);
   // Focus whatever the open tray's primary input is — not only Search's.
   //
   // Ask has an input and never received focus, so with focus left on BODY every letter went to the
@@ -546,70 +570,137 @@ export default function CommentsView({ id }: { id: number }) {
               thread opens where the reader already is, with its input focused. */}
           {tree && (topLevel.length > 0 || searching || newIds.length > 0) && (
             <div className="disc-toolbar">
-              <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-surface-2 px-2 py-1.5">
-                {/* Count + Sort travel together as ONE cluster so the count never orphans onto a line
-                    of its own (it did at ≤360px). `min-w-0` matters: without it this flex item's
-                    min-width is its content width, so the `.seg` track cannot wrap tightly inside it
-                    and the row grows taller instead of the track reflowing. */}
-                <div className="flex min-w-0 items-center gap-2">
-                  <span className="text-sm font-semibold">{story.descendants ?? topLevel.length}</span>
-                  {/* The count carries the meaning; the word is decoration and is the first thing
-                      to go when the row is tight. Kept in the accessible name via the title. */}
-                  <span className="hidden text-xs text-muted xl:inline" title="comments">
-                    {(story.descendants ?? topLevel.length) === 1 ? 'comment' : 'comments'}
+              {/* Container-query context (`/tb`): the bar is FULL-WIDTH and its controls DEGRADE as the
+                  column narrows so the row is always ONE line with no dead gap. Priority (widest→narrowest):
+                  Summary/Ask fold into "…" first; the flat SORT degrades 4 segments → 2 buttons
+                  (Newest|Replies) → a single ⇅ toggle (the full option set stays in "…" the whole time);
+                  the SEARCH box flex-fills the leftover space, then moves into "…" at the very narrowest.
+                  count + "N new" never fold. */}
+              <div className="@container/tb">
+                <div className="disc-tb-bar flex w-full flex-wrap items-center gap-2 rounded-xl border border-border bg-surface-2 px-2 py-1.5">
+                  <span className="shrink-0 text-sm font-semibold">
+                    {story.descendants ?? topLevel.length}
+                    {/* Word is screen-reader-only (kept inside the count so it adds no visual width). */}
+                    <span className="sr-only"> {(story.descendants ?? topLevel.length) === 1 ? 'comment' : 'comments'}</span>
                   </span>
-                  <div
-                    className="seg"
-                    role="group"
-                    aria-label="Sort comments"
-                    title="Sort top-level comments. HN doesn't publish per-comment scores, so there's no 'top by points' — Default is HN's own ordering."
-                  >
-                    {SORTS.map(([sk, label]) => (
-                      <button key={sk} type="button" aria-pressed={sort === sk} onClick={() => setSort(sk)} className="seg-btn">
-                        {label}
+
+                  {/* SORT — flat, degrades with width; the full option set is always reachable (here or in "…"). */}
+                  {/* full 4-segment (>=560) */}
+                  <span className="hidden shrink-0 @min-[600px]/tb:contents">
+                    <div
+                      className="seg"
+                      role="group"
+                      aria-label="Sort comments"
+                      title="Sort top-level comments. HN doesn't publish per-comment scores, so there's no 'top by points' — Default is HN's own ordering."
+                    >
+                      {SORTS.map(([sk, label]) => (
+                        <button key={sk} type="button" aria-pressed={sort === sk} onClick={() => setSort(sk)} className="seg-btn">
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </span>
+                  {/* 2 buttons Newest|Replies (460-559); Default/Oldest remain in the "…" menu */}
+                  <span className="hidden shrink-0 @min-[460px]/tb:contents @min-[600px]/tb:hidden">
+                    <div className="seg" role="group" aria-label="Sort comments">
+                      <button type="button" aria-pressed={sort === 'new'} onClick={() => setSort('new')} className="seg-btn">Newest</button>
+                      <button type="button" aria-pressed={sort === 'replies'} onClick={() => setSort('replies')} className="seg-btn">Replies</button>
+                    </div>
+                  </span>
+                  {/* single ⇅ toggle (<460); flips Newest/Replies, full options in "…" */}
+                  <span className="hidden shrink-0 @max-[459.98px]/tb:contents">
+                    <div className="seg" role="group" aria-label="Sort comments">
+                      <button
+                        type="button"
+                        onClick={() => setSort(sort === 'replies' ? 'new' : 'replies')}
+                        className="seg-btn inline-flex items-center gap-1"
+                        title="Toggle sort (Newest / Replies) — more options in the ⋯ menu"
+                        aria-label={`Sort: ${sortLabel}. Tap to toggle Newest and Replies; more in the more-actions menu.`}
+                      >
+                        <ArrowUpDown className="size-3.5" /> {sortLabel}
                       </button>
-                    ))}
-                  </div>
-                </div>
-                {/* The action cluster. Right-pinned only at sm+, where the whole row fits on one
-                    line; on phones the pin is dropped so a wrapped cluster starts at the LEFT edge
-                    instead of stranding 60% of the second line blank behind an `ml-auto`. */}
-                <div className="flex flex-wrap items-center justify-start gap-2 sm:ml-auto sm:justify-end">
-                <div className="seg-act" role="group" aria-label="Discussion tools">
-                  <button type="button" aria-label="Search" aria-expanded={tool === 'search'} onClick={() => toggleTool('search')} title="Search this discussion (l)">
-                    <Search className="size-3.5" />
-                    <span className="hidden lg:inline">Search</span>
-                  </button>
-                  {/* ALWAYS present, and always labelled "Summarize", whether or not AI is
-                      configured. Showing only a non-AI "Key points" button when AI is off made the
-                      marquee feature invisible to precisely the readers who have not enabled it —
-                      the discoverability rule this app already learned once. With AI off the tray
-                      holds the heuristic gist AND the in-context CTA to turn AI on. */}
-                  {/* "Summary" (the panel), not "Summarize" (the act) — the button that actually
-                      generates lives inside the tray and is called Summarize. Two controls sharing
-                      one accessible name on the same page is ambiguous for screen readers and for
-                      anyone told to "press Summarize". */}
-                  <button type="button" aria-label="Summary" aria-expanded={tool === 'summary'} onClick={() => toggleTool('summary')} title="Summary of this discussion (s)">
-                    {aiSummaryActive ? <Sparkles className="size-3.5" /> : <ListTree className="size-3.5" />}
-                    <span className="hidden lg:inline">Summary</span>
-                  </button>
-                  {/* Asking is only meaningful with a model behind it. */}
-                  {aiSummaryActive && (
-                    <button type="button" aria-label="Ask" aria-expanded={tool === 'ask'} onClick={() => toggleTool('ask')} title="Ask this discussion (a)">
-                      <MessageCircleQuestion className="size-3.5" />
-                      <span className="hidden lg:inline">Ask</span>
+                    </div>
+                  </span>
+
+                  {/* SEARCH — flex filler; typing filters the thread inline. Moves into "…" below ~360. */}
+                  <span className="relative hidden min-w-[6rem] flex-1 items-center @min-[400px]/tb:flex">
+                    <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-subtle" />
+                    <input
+                      type="search"
+                      value={query}
+                      onChange={(e) => setQuery(e.target.value)}
+                      placeholder="Search this discussion…"
+                      aria-label="Search comments in this discussion"
+                      className="w-full rounded-lg border border-edge bg-surface-2 py-1.5 pl-8 pr-8 text-sm outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                    />
+                    {query && (
+                      <button type="button" aria-label="Clear search" onClick={() => setQuery('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-subtle hover:text-fg">
+                        <X className="size-4" />
+                      </button>
+                    )}
+                  </span>
+
+                  {/* SUMMARY / ASK — icon buttons; fold into "…" FIRST, below ~640. */}
+                  <span className="hidden shrink-0 @min-[660px]/tb:contents">
+                    <div className="seg-act" role="group" aria-label="Discussion tools">
+                      {/* "Summary" (the panel), not "Summarize" (the act, inside the tray): two controls
+                          sharing one accessible name on one page is ambiguous for screen readers. */}
+                      <button type="button" aria-label="Summary" aria-expanded={tool === 'summary'} onClick={() => toggleTool('summary')} title="Summary of this discussion (s)">
+                        {aiSummaryActive ? <Sparkles className="size-3.5" /> : <ListTree className="size-3.5" />}
+                      </button>
+                      {aiSummaryActive && (
+                        <button type="button" aria-label="Ask" aria-expanded={tool === 'ask'} onClick={() => toggleTool('ask')} title="Ask this discussion (a)">
+                          <MessageCircleQuestion className="size-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  </span>
+
+                  {/* Overflow menu — shown once anything has folded (below ~640). Holds Summary/Ask, then
+                      Search (only when its inline box has dropped, <360), then the full Sort options (<560). */}
+                  <span ref={toolMenuRef} className="relative shrink-0 @min-[660px]/tb:hidden">
+                    <IconButton label="More discussion tools" active={toolMenuOpen} onClick={() => setToolMenuOpen((v) => !v)}>
+                      <MoreHorizontal className="size-4" />
+                    </IconButton>
+                    {toolMenuOpen && (
+                      <div role="menu" className="absolute right-0 top-full z-20 mt-1 w-56 overflow-hidden rounded-lg border border-border bg-surface py-1 shadow-xl">
+                        <MenuItem onClick={() => { toggleTool('summary'); setToolMenuOpen(false); }}>
+                          {aiSummaryActive ? <Sparkles className="size-3.5" /> : <ListTree className="size-3.5" />} Summary
+                        </MenuItem>
+                        {aiSummaryActive && (
+                          <MenuItem onClick={() => { toggleTool('ask'); setToolMenuOpen(false); }}>
+                            <MessageCircleQuestion className="size-3.5" /> Ask
+                          </MenuItem>
+                        )}
+                        {/* Search — only when the inline box has dropped (below ~360). */}
+                        <div className="@min-[400px]/tb:hidden">
+                          <MenuItem onClick={() => { toggleTool('search'); setToolMenuOpen(false); }}>
+                            <Search className="size-3.5" /> Search this discussion
+                          </MenuItem>
+                        </div>
+                        {/* Full Sort options — whenever the inline Sort is degraded (below ~560). */}
+                        <div className="@min-[600px]/tb:hidden">
+                          <div className="my-1 border-t border-border" />
+                          <div className="px-3 py-1 text-[11px] font-medium uppercase tracking-wide text-subtle">Sort</div>
+                          {SORTS.map(([sk, label]) => (
+                            <MenuItem key={sk} onClick={() => { setSort(sk); setToolMenuOpen(false); }}>
+                              <Check className={cn('size-3.5', sort === sk ? 'text-accent' : 'invisible')} /> {label}
+                            </MenuItem>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </span>
+
+                  {newIds.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={jumpNextNew}
+                      className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-edge bg-accent/10 px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-accent/15"
+                    >
+                      <ArrowDown className="size-3.5 text-accent" /> {newIds.length} new
                     </button>
                   )}
-                </div>
-                {newIds.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={jumpNextNew}
-                    className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-edge bg-accent/10 px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-accent/15"
-                  >
-                    <ArrowDown className="size-3.5 text-accent" /> {newIds.length} new
-                  </button>
-                )}
                 </div>
               </div>
 

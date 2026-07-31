@@ -1,5 +1,4 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import type { ReactNode } from 'react';
 import { useModalBehavior } from '../../hooks/useModalBehavior';
 import { Link, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -36,25 +35,12 @@ import { domainOf, safeUrl, timeAgo } from '../../lib/time';
 import { stripHtml } from '../../lib/html';
 import { cn } from '../../lib/cn';
 import { effectiveLayout } from '../../lib/themes';
-import { IconButton, Spinner } from '../ui/primitives';
+import { IconButton, MenuItem, Spinner } from '../ui/primitives';
 import Logo from '../ui/Logo';
 import Favicon from '../ui/Favicon';
 import type { HnItem } from '../../types';
 
 const HN_ITEM = (id: number) => `https://news.ycombinator.com/item?id=${id}`;
-
-function MenuItem({ onClick, children }: { onClick: () => void; children: ReactNode }) {
-  return (
-    <button
-      type="button"
-      role="menuitem"
-      onClick={onClick}
-      className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-muted hover:bg-surface-2 hover:text-fg"
-    >
-      {children}
-    </button>
-  );
-}
 
 function StoryCard({
   item,

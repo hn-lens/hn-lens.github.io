@@ -3374,3 +3374,105 @@ budget.
 *Lesson: convergence is measurable and was reached — the round's own numbers (0 self-inflicted, the
 only MEDIUM pre-existing + architectural) are what certify it, not "0 findings". The remaining backlog
 is a deliberate, written triage, not an open wound.*
+
+---
+
+## c3r38-dev — developer-reported: the discussion toolbar wraps to two ragged rows on narrow screens (2026-07-30)
+
+**The report (with an annotated screenshot):** on a ~498px window the discussion toolbar splits into
+two rows — `count · Sort` on row 1 (~63% full) and `⋯tools · N new` on row 2 (~34% full) — with big
+empty gaps in both, and the note "some elements can collapse or remove when space is tight."
+
+**This is a RECURRENCE of the c3r18d class**, and the recurrence is the lesson. c3r18d "fixed" the
+same toolbar wrap by *slimming the row* (Most replies→Replies, drop "comments" below xl, icon-only
+tool labels) — which bought one row **only from ~600px up** and explicitly ACCEPTED sub-600 wrapping
+as "wraps well". The new defect lives in that accepted band (~460–540px) and only appears when the
+**"N new" catch-up button is present** (max-content). So "slim it for desktop, wrap well on phones"
+was never a fix for the class — the class is "too many controls for the width," and the app already
+had the right answer (the story-card action row's container-query overflow into a ⋯ menu). The
+toolbar was simply the outlier that still wrapped.
+
+**Which lens should have caught it, and why it didn't (golden rule #8).** The UI/UX-stress lens DID
+drive this surface and CERTIFIED it "clean / not the empty-space defect" — a false negative, worse
+than a gap. Two compounding causes, both proven:
+1. **Incomplete state:** its harness had no unread comments, so the "N new" button — the element that
+   tips the row ragged — never rendered. Its own `disc-toolbar-600/768` captures have no "new" button
+   and one row; the reporter's screenshot has "58 new" and two ragged rows.
+2. **Skipped band + convenient fill:** it measured "row-1 82–95% full" only at phone widths (320–390),
+   and treated the ~460–540 band as "intended wrap" without measuring fill there (row 2 = 34%). The
+   old `wrapqualitytest` had the same holes — its width sweep stepped 600→500→430 and it EXCUSED any
+   sub-768 wrap as "genuinely can't fit."
+
+**Brief upgraded first (`base/uiux-stress.md`), then proven, then fixed:**
+- Added a **"Render the MAX-CONTENT state before judging ANY row"** section (populate the "N new"
+  button via a seeded prior visit, Ask via a cloud key, long model names/usernames/counts).
+- Width sweep rewritten to **≤40px steps over the whole 320–1440 range**, explicitly including the
+  440–720 band the old list skipped.
+- **Fill% is the threshold, not the width label:** any wrapped row < ~70% full is a defect at EVERY
+  width — deleted the "fine on a phone" escape hatch.
+- A **"not-a-defect" verdict now carries the same proof burden** as a finding (max-content state +
+  measured fill%), and reachability ("everything's still reachable") may NOT downgrade a ragged wrap.
+
+**Proof before fix.** A fresh UI/UX lens, given only the upgraded brief and a neutral appendix (no
+mention of the toolbar), INDEPENDENTLY rediscovered it on the unchanged build — it seeded the "60 new"
+button + a cloud key, swept 320–800, tabulated fill% (row 2 ~34–40%), quoted the new fill rule, and
+flagged the outlier-vs-⋯-menu inconsistency (it rated it LOW-borderline on reachability grounds,
+which the severity clause now forbids). And the rewritten `wrapqualitytest` FAILS pre-fix (2 rows at
+320–540, no folding, no menu) and PASSES post-fix.
+
+**The fix.** `CommentsView` wraps the toolbar in `@container/tb` and folds overflow into the ⋯ menu:
+**tools (Search/Summary/Ask) first** (below `@xl`≈576px CQ), then the **Sort control** (below ~500px
+CQ), so it is ONE row at every width 320–1440 (verified across the 31 themes; `terminal`/mono widest).
+`MenuItem` was extracted to `ui/primitives` so the card and toolbar share one component; only one of
+{inline tools, menu} is in the DOM at a time, so no duplicate accessible names. `wrapqualitytest` now
+asserts one row at every width, the tools-before-sort fold order, and that the ⋯ menu holds every
+folded control.
+
+*Lesson: a "fix" that treats the symptom for one width range (slim the row for desktop) and accepts
+the failure elsewhere (wrap on phones) is not a fix for the class — it just relocates it. The class
+here was solved once already on the story card; the toolbar should have adopted the same overflow
+pattern. And a lens that certifies a row "clean" without rendering its busiest state is producing
+false negatives — the max-content rule is now mandatory.*
+
+---
+
+## c3r38-dev-2 — the toolbar redesign, co-designed with the maintainer via mockups (2026-07-31)
+
+The c3r38-dev fix (fold whole controls into ⋯) was correct-by-the-guard but the maintainer, driving
+the real build, rejected it on **look**, across several rounds of feedback that the lenses had not
+been measuring:
+1. "full width yet collapsing already" — at the *capped* reading column (`max-w-3xl`, ~734px CQ) the
+   tools were icon-only with a huge center gap; there was room for labels.
+2. "empty space is empty space no matter where it is" — a **hug-content** variant (bar shrinks to fit,
+   leftover beside it) was rejected: relocating the gap is not removing it.
+3. "sort should stay flat as long as possible; Replies especially" then "sort is MORE important than
+   search" — an explicit control-**priority** the briefs never encoded.
+4. "this is weird — search disappears then reappears" — the first attempt was **non-monotonic**.
+
+**Root cause of the churn:** the review lenses measure *overflow, wrap, and contrast* but had **no
+notion of a control-priority order or of monotonic degradation**, and no way to capture the
+maintainer's aesthetic constraint ("no visible empty space anywhere, at any width"). So each fix
+satisfied the guard and failed the eye.
+
+**What resolved it:** iterating the redesign as **self-contained HTML mockups served from
+`public/mocks/`** (drag-to-resize live + fixed-width snapshots), screenshotted and sent to the
+maintainer, until approved — *before* touching React. The mockup immediately caught two things a
+guard would not have surfaced early: a `flex: 1 1 auto` search box uses its *content* width as its
+flex-basis and wraps (must be `flex: 1 1 0`), and the exact fold thresholds per theme.
+
+**The shipped design:** full-width bar; **Summary/Ask fold first**, the flat **Sort degrades 4→2→⇅
+toggle** (full options always in ⋯), the **Search is a flex-fill inline filter** that fills leftover
+space then moves to ⋯ last; monotonic (controls only ever simplify). Search changed from a tray tool
+to a persistent inline `input`, which rippled into 4 harnesses (they drove the old "Search" button) —
+all updated to drive the inline box. Guarded by `wrapqualitytest` (one row 320–1440 × {default, mono};
+the 4→2→1 degradation order; Summary/Ask-first, Search-last fold; ⋯ holds every folded control).
+
+**Lens upgrade this produced (folded into `review/base/uiux-stress.md` / `usability.md`):** a control
+ROW with N>2 controls in a fixed-width container must be judged for (a) monotonic degradation — as
+width drops, controls only simplify, never reappear; (b) zero visible empty space at every width —
+"the gap is on the page not the bar" is not a defense; and (c) an explicit, documented control-
+priority order (what degrades/folds first vs last). *Lesson: guards catch wrap and overflow; they do
+not catch "looks sparse / folds in a jarring order / relocates the gap". For a non-trivial responsive
+control cluster, a hosted MOCKUP reviewed by the maintainer is the right tool before building, and the
+priority order + monotonicity + no-empty-space rules belong in the lens briefs so a future round can
+measure them.*

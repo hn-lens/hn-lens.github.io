@@ -39,6 +39,19 @@ export function IconButton({ active, label, children, className, ...rest }: Icon
   );
 }
 
+export function MenuItem({ onClick, children }: { onClick: () => void; children: ReactNode }) {
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      onClick={onClick}
+      className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-muted hover:bg-surface-2 hover:text-fg"
+    >
+      {children}
+    </button>
+  );
+}
+
 export function Chip({
   children,
   className,

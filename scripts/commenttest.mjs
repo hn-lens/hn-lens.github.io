@@ -148,16 +148,15 @@ check(
 }
 
 // ---- C1: in-thread comment search (flat filter) ----
-// Search is now a TOOL on the discussion toolbar rather than a box parked above the comments —
-// the four stacked blocks that used to sit there pushed the first comment 493px down an 800px
-// viewport. It opens on demand (click, or the `l` key) into a tray inside the sticky region, with
-// its input focused so the reader can type immediately.
-await page.getByRole('button', { name: /^Search$/ }).first().click();
-await page.waitForTimeout(250);
-const searchBox = page.getByPlaceholder('Find in this discussion…');
-check('C1: in-thread search box present', (await searchBox.count()) > 0);
-check('C1: opening Search focuses its input', await page.evaluate(() => document.activeElement?.getAttribute('aria-label') === 'Search comments in this discussion'));
-await searchBox.fill('original poster');
+// Search is now an always-visible INLINE filter box on the discussion toolbar (it flex-fills the row
+// at readable widths, and only moves into the "…" menu at the very narrowest). Clicking it focuses it
+// so the reader can type immediately; typing filters the thread.
+const searchBox = page.getByLabel('Search comments in this discussion');
+check('C1: inline search box present', (await searchBox.count()) > 0);
+await searchBox.first().click();
+await page.waitForTimeout(150);
+check('C1: clicking the inline search focuses its input', await page.evaluate(() => document.activeElement?.getAttribute('aria-label') === 'Search comments in this discussion'));
+await searchBox.first().fill('original poster');
 await page.waitForTimeout(350);
 {
   const body = await page.locator('body').innerText();

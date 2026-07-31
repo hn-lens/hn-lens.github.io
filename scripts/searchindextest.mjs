@@ -100,10 +100,11 @@ check(
 // not a sanitized DOM, so the index is built with `searchText` and the sanitize cache — the
 // observable this file used to count — is no longer touched by searching at all. That is the fix,
 // which is why the assertion is now about TIME rather than about parses.
-await page.getByRole('button', { name: /^Search$/ }).first().click();
+// Search is now an always-visible INLINE filter box on the toolbar (no tool/tray to open at this width).
+await page.getByLabel('Search comments in this discussion').first().click();
 await page.waitForTimeout(200);
 const box = page.getByLabel('Search comments in this discussion');
-check('PRECONDITION: the search input is open and reachable', (await box.count()) > 0);
+check('PRECONDITION: the inline search input is present and reachable', (await box.count()) > 0);
 
 await page.evaluate(() => {
   window.__lt = [];

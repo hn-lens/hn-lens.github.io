@@ -219,6 +219,12 @@ for (const w of [360, 320]) {
   }));
   check(`discussion Sort control: no horizontal page overflow at ${w}px`, r.hasSeg && r.over <= 2, JSON.stringify({ w, ...r }));
 }
+// Reset to a wide viewport after the narrow [D] sweep: below ~576px the discussion tools fold into
+// the "…" overflow menu, so the sections below (which drive the INLINE Search/tool buttons) must run
+// at a width where those buttons are inline. Narrow-width tool reachability (via the menu) is covered
+// by wrapqualitytest.
+await page.setViewportSize({ width: 1280, height: 900 });
+await page.waitForTimeout(200);
 
 // --- "Back to feed" must preserve the feed you came from, and must never leave the app ---
 // It used to push "/" unconditionally, which resolves to the DEFAULT feed — so the tab was lost from
@@ -255,29 +261,25 @@ for (const w of [360, 320]) {
   await page.waitForSelector('[id^="comment-"]', { timeout: 20000 });
   await page.waitForTimeout(500);
 
-  // E1 — closing Search from its own toolbar button must clear the query too. It used to close the
-  // tray while leaving the results filtering the whole page: no visible input, the button reporting
-  // aria-expanded=false while still controlling everything on screen, and Escape inert because its
-  // guard needs an open tool. Escape WHILE open cleared correctly, so the two ways to dismiss one
-  // panel disagreed.
-  await page.getByRole('button', { name: /^Search$/ }).first().click();
-  await page.waitForTimeout(250);
+  // E1 — Search is an always-visible INLINE box on the toolbar (it flex-fills the row); typing filters
+  // the thread, and clearing it via the × restores the thread with no orphaned filter. (The box only
+  // moves into the "…" menu at the very narrowest widths; this section runs at a wide viewport.)
   const box = page.getByLabel('Search comments in this discussion');
-  check('PRECONDITION: the search input opens', (await box.count()) > 0);
+  check('PRECONDITION: the inline search box is present', (await box.count()) > 0);
   await box.first().fill('repl');
   await page.waitForTimeout(800);
-  check('PRECONDITION: the query is actually filtering the discussion', /\d+ match/.test(await page.evaluate(() => document.body.innerText)));
-  await page.getByRole('button', { name: /^Search$/ }).first().click();
+  check('PRECONDITION: typing filters the discussion', /\d+ match/.test(await page.evaluate(() => document.body.innerText)));
+  await page.getByRole('button', { name: /^Clear search$/ }).first().click();
   await page.waitForTimeout(600);
-  const afterClose = await page.evaluate(() => ({
+  const afterClear = await page.evaluate(() => ({
     stillFiltering: /\d+ match/.test(document.body.innerText),
-    inputVisible: !!document.querySelector('.disc-tray input[type="search"]'),
     threadShown: !!document.querySelector('[id^="comment-"]'),
+    boxEmpty: (document.querySelector('input[type="search"]')?.value ?? '') === '',
   }));
   check(
-    'closing Search from its own button restores the thread (no orphaned filter)',
-    !afterClose.stillFiltering && afterClose.threadShown && !afterClose.inputVisible,
-    JSON.stringify(afterClose)
+    'clearing the inline search (×) restores the thread (no orphaned filter)',
+    !afterClear.stillFiltering && afterClear.threadShown && afterClear.boxEmpty,
+    JSON.stringify(afterClear)
   );
 
   // E2 — a tool that HAS an input opens with it focused. Ask never focused its box, so with focus
