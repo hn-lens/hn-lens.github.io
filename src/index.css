@@ -2111,6 +2111,16 @@ html[data-textsize='lg'] {
     height: 44px;
     padding-inline: 0.75rem;
   }
+  /* The rest of the discussion toolbar's controls get the same 44px tap target on touch as every
+     other action control: the flat Sort segments/toggle (.seg-btn), the "…" overflow trigger and its
+     menu items, and the "N new" catch-up button (a direct child of the bar). min-height only, so the
+     one-row layout is unchanged — the row is just taller on touch. */
+  .disc-tb-bar .seg-btn,
+  .disc-tb-bar > button,
+  .disc-tb-bar button[aria-label='More discussion tools'],
+  .disc-toolbar [role='menu'] button {
+    min-height: 44px;
+  }
 }
 
 /* The tray: bounded so it can never eat the screen, and scrollable within. */

@@ -323,6 +323,100 @@ await page.waitForTimeout(200);
   check('with AI unconfigured, `a` does NOT open an empty Ask tray', askOff !== 'ask panel', String(askOff));
 }
 
+// ===== [F] Toolbar keyboard + jump interaction (c3r39 review fixes) =====
+// The redesign made discussion Search a persistent INLINE box. Three interaction bugs followed:
+//  F1 (M1): `l` still opened the tray search TOOL, stacking a second, identical search input on top
+//           of the always-visible inline box. `l` should FOCUS the inline box instead.
+//  F2 (M2): jumping to a comment (the "N new" catch-up) while a search filter is active navigated the
+//           reader AWAY to a permalink — the thread isn't mounted under an active search, so the jump
+//           fell through to navigate(). It must clear the search and land within the thread.
+//  F4 (L2): the narrow ⇅ Sort toggle only flipped Newest↔Replies, so a "Default"/"Oldest" label was
+//           unreachable by the toggle. It should cycle through all four sorts.
+console.log('\n[F] toolbar keyboard + jump interaction');
+{
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto(`${BASE}#/item/1000`, { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('[id^="comment-"]', { timeout: 20000 });
+  // A prior visit BEFORE the two fresh comments ⇒ they render as "new" (the N-new catch-up button).
+  // Seed then RELOAD: an earlier section already sits on /item/1000 and marked it seen ~now, and a
+  // goto to the same #/item URL is a hash-only nav (no remount) — so without a reload lastVisit≈now
+  // and nothing is "new" (the HashRouter same-URL gotcha).
+  await page.evaluate(async (t) => {
+    await (await window.__hnlens.interactions()).clearAllData();
+    const dbMod = await window.__hnlens.db();
+    await dbMod.db.seen.put({ id: 1000, ts: (t - 50000) * 1000 });
+    window.__hnlens.prefs.getState().set({ llmEnabled: false });
+  }, now);
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('[id^="comment-"]', { timeout: 20000 });
+  await page.waitForTimeout(600);
+
+  // F1 (M1) — `l` focuses the inline search; it must NOT open a second (tray) search input.
+  await page.evaluate(() => document.body.click());
+  await page.keyboard.press('l');
+  await page.waitForTimeout(300);
+  const afterL = await page.evaluate(() => ({
+    activeInInlineBar: !!document.activeElement?.closest?.('.disc-tb-bar') && document.activeElement?.getAttribute('type') === 'search',
+    trayOpen: !!document.querySelector('.disc-tray'),
+  }));
+  check('`l` focuses the inline discussion search (no duplicate tray search box)', afterL.activeInInlineBar && !afterL.trayOpen, JSON.stringify(afterL));
+
+  // F3 (L1) — on a discussion, `/` focuses the INLINE discussion search, not TopNav's global "Search
+  // Hacker News" box. Before the fix `/` grabbed the first input[type=search] in the DOM (TopNav's).
+  await page.evaluate(() => document.activeElement instanceof HTMLElement && document.activeElement.blur());
+  await page.evaluate(() => document.body.click());
+  await page.keyboard.press('/');
+  await page.waitForTimeout(250);
+  const afterSlash = await page.evaluate(() => ({
+    inInlineBar: !!document.activeElement?.closest?.('.disc-tb-bar') && document.activeElement?.getAttribute('type') === 'search',
+    inTopNav: !!document.activeElement?.closest?.('header'),
+  }));
+  check('`/` focuses the inline discussion search on /item (not the global nav search)', afterSlash.inInlineBar && !afterSlash.inTopNav, JSON.stringify(afterSlash));
+
+  // F2 (M2) — "N new" during an active search stays on the discussion + clears the filter.
+  // Search a term that matches ONLY the OLD comment ("...before your last visit"), so the NEW comments
+  // are NOT in the results (not mounted). Jumping to one then reproduces the navigate-away: the thread
+  // isn't mounted under the filter, so the pre-fix jump fell through to a /item/<commentId> permalink.
+  const box = page.getByLabel('Search comments in this discussion');
+  await box.first().fill('before');
+  await page.waitForTimeout(700);
+  const nnew = page.locator('.disc-tb-bar button', { hasText: /\d+ new/ });
+  const preF2 = { nnew: await nnew.count(), matching: /\d+ match/.test(await page.evaluate(() => document.body.innerText)) };
+  check('PRECONDITION: an active search filter + a "N new" button are both present', preF2.nnew > 0 && preF2.matching, JSON.stringify(preF2));
+  if (await nnew.count()) {
+    await nnew.first().click();
+    await page.waitForTimeout(700);
+    const afterJump = await page.evaluate(() => ({
+      hash: location.hash,
+      filtering: /\d+ match/.test(document.body.innerText),
+      threadShown: !!document.querySelector('[id^="comment-"]'),
+    }));
+    check('clicking "N new" during a search stays on the discussion (no navigate-away) + clears the filter',
+      /\/item\/1000$/.test(afterJump.hash) && !afterJump.filtering && afterJump.threadShown, JSON.stringify(afterJump));
+  }
+
+  // F4 (L2) — the narrow ⇅ Sort toggle cycles through all four sorts (every label reachable).
+  await page.setViewportSize({ width: 380, height: 800 });
+  await page.waitForTimeout(300);
+  const cycleLabels = [];
+  for (let i = 0; i < 5; i++) {
+    const lbl = await page.evaluate(() => {
+      const segs = [...document.querySelectorAll('.seg[aria-label="Sort comments"]')].filter((s) => s.offsetParent !== null);
+      const btns = segs.flatMap((s) => [...s.querySelectorAll('button')]).filter((btEl) => btEl.offsetParent !== null);
+      return btns.length === 1 ? btns[0].textContent.trim() : `UNEXPECTED_BTN_COUNT:${btns.length}`;
+    });
+    cycleLabels.push(lbl);
+    await page.evaluate(() => {
+      const segs = [...document.querySelectorAll('.seg[aria-label="Sort comments"]')].filter((s) => s.offsetParent !== null);
+      const btns = segs.flatMap((s) => [...s.querySelectorAll('button')]).filter((btEl) => btEl.offsetParent !== null);
+      btns[0]?.click();
+    });
+    await page.waitForTimeout(150);
+  }
+  check('narrow ⇅ sort toggle cycles through all four sorts (every label reachable)', new Set(cycleLabels).size === 4, JSON.stringify(cycleLabels));
+  await page.setViewportSize({ width: 1280, height: 900 });
+}
+
 await b.close();
 console.log(`\n${fails.length === 0 ? 'RESULT: DISCUSSION VIEW (summary gate + feed-open new-badge) PASS \u2713' : `RESULT: ${fails.length} FAILED \u2717`}`);
 if (fails.length) fails.forEach((f) => console.log('  - ' + f));

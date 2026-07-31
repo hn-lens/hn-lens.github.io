@@ -157,6 +157,67 @@ try {
   const wanted = ['Search', 'Summary', 'Ask', 'Default', 'Newest', 'Oldest', 'Replies'];
   const missing = menuText ? wanted.filter((t) => !menuText.includes(t)) : ['(no "..." menu at 360px)'];
   check('the overflow menu holds every folded control (3 tools + 4 sort options)', missing.length === 0, missing.length ? `missing: ${missing.join(', ')}` : 'all present');
+
+  // M4 — below ~400px CQ the inline Search folds into the "…" menu. The remaining controls must form a
+  // LEFT/RIGHT toolbar (right actions pinned), NOT clump at the left leaving a dead TRAILING gap on the
+  // right. Assert the rightmost visible control sits at the bar's inner-right edge once Search has folded.
+  await page.setViewportSize({ width: 380, height: 800 });
+  await page.waitForTimeout(200);
+  const narrowGap = await page.evaluate(() => {
+    const bar = document.querySelector('.disc-tb-bar');
+    const br = bar.getBoundingClientRect();
+    const items = [...bar.children].filter((k) => k.getBoundingClientRect().width > 0);
+    const rightmost = Math.max(...items.map((k) => k.getBoundingClientRect().right));
+    const padRight = parseFloat(getComputedStyle(bar).paddingRight) || 0;
+    // VISIBLE, not merely present: the folded search <input> stays in the DOM inside a display:none
+    // span, so querySelector alone always finds it — check its rendered box.
+    const si = bar.querySelector('input[type="search"]');
+    return { searchInline: !!si && si.getBoundingClientRect().width > 0, trailing: Math.round(br.right - padRight - rightmost) };
+  });
+  check('narrow (<400px): Search has folded and the right actions are pinned — no dead trailing gap', !narrowGap.searchInline && narrowGap.trailing <= 12, JSON.stringify(narrowGap));
+
+  // M3 — on a TOUCH device (coarse pointer) the toolbar's OWN controls are >=44px tap targets (the flat
+  // Sort segments/toggle, the "…" overflow, the "N new" button), matching every sibling control. The
+  // sweep above is a FINE pointer (denser 36/28px by design), so this needs its own touch context —
+  // a viewport-only narrow context would test the wrong pointer type and wave the gap through.
+  {
+    const tctx = await b.newContext({ viewport: { width: 560, height: 900 }, hasTouch: true });
+    const tp = await tctx.newPage();
+    await tp.route(/hacker-news\.firebaseio\.com/, (r) => {
+      const u = r.request().url();
+      const j = (x) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(x) });
+      if (u.includes('item/')) return j({ id: STORY, type: 'story', by: 'op', title: 'A discussion with a full toolbar', url: 'https://ex.com/x', score: 394, descendants: kids.length, time: now - 43200 });
+      if (/topstories|beststories|newstories|askstories|showstories|jobstories/.test(u)) return j([STORY]);
+      return j(null);
+    });
+    await tp.route(/hn\.algolia\.com/, (r) =>
+      r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: STORY, story_id: STORY, title: 'A discussion with a full toolbar', url: 'https://ex.com/x', author: 'op', created_at_i: now - 43200, type: 'story', text: null, points: 394, children: kids }) })
+    );
+    await tp.goto(`${BASE}#/item/${STORY}`, { waitUntil: 'domcontentloaded' });
+    await tp.waitForSelector('.disc-toolbar', { timeout: 30000 });
+    await tp.evaluate(async (id) => {
+      const dbMod = await window.__hnlens.db();
+      await dbMod.db.seen.put({ id: Number(id), ts: Date.now() - 8000 * 1000 });
+      window.__hnlens.prefs.getState().set({ llmProvider: 'gemini', apiKeys: { gemini: 'probe-key' } });
+    }, STORY);
+    await tp.reload({ waitUntil: 'domcontentloaded' });
+    await tp.waitForSelector('.disc-toolbar', { timeout: 30000 });
+    await tp.waitForTimeout(800);
+    const touch = await tp.evaluate(() => {
+      const bar = document.querySelector('.disc-tb-bar');
+      const els = [
+        ...bar.querySelectorAll('.seg-btn'),
+        ...bar.querySelectorAll('button[aria-label="More discussion tools"]'),
+        ...[...bar.children].filter((k) => k.tagName === 'BUTTON' && /\d+\s+new/.test(k.textContent || '')),
+      ].filter((e) => e.getBoundingClientRect().width > 0);
+      const small = els
+        .filter((e) => e.getBoundingClientRect().height < 44)
+        .map((e) => ({ t: (e.textContent || e.getAttribute('aria-label') || '').trim().slice(0, 10), h: Math.round(e.getBoundingClientRect().height) }));
+      return { coarse: matchMedia('(pointer: coarse)').matches, n: els.length, small };
+    });
+    check('touch: toolbar controls (Sort, "…", "N new") are >=44px tap targets', touch.coarse && touch.n >= 3 && touch.small.length === 0, JSON.stringify(touch));
+    await tctx.close();
+  }
 } finally {
   await ctx.close().catch(() => {});
   await b.close().catch(() => {});

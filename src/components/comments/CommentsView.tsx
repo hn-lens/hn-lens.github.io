@@ -152,6 +152,15 @@ export default function CommentsView({ id }: { id: number }) {
    * away when the id genuinely isn't in this tree.
    */
   const jumpToComment = (cid: number) => {
+    // Under an active search filter the thread is unmounted (only the results show), so a scroll fails
+    // and the reveal path below falls through to navigate() — yanking the reader to a permalink and
+    // losing their place + filter. Clear the filter and defer to the pendingJump effect, which lands
+    // in the remounted thread. (query>=MIN_QUERY mirrors `searching`, which is declared below.)
+    if (query.trim().length >= 2) {
+      setQuery('');
+      setPendingJump(cid);
+      return;
+    }
     const scroll = () => {
       const el = document.getElementById(`comment-${cid}`);
       if (!el) return false;
@@ -370,7 +379,11 @@ export default function CommentsView({ id }: { id: number }) {
       if (typing) return;
       if (e.key === 'l') {
         e.preventDefault();
-        toggleTool('search');
+        // Focus the always-visible inline search box; open the tray tool only when the inline box has
+        // folded into the "…" menu at the narrowest widths (else `l` stacks a duplicate search input).
+        const inline = document.querySelector('.disc-tb-bar input[type="search"]');
+        if (inline instanceof HTMLElement && inline.offsetParent !== null) inline.focus();
+        else toggleTool('search');
       } else if (e.key === 's') {
         e.preventDefault();
         toggleTool('summary');
@@ -613,10 +626,10 @@ export default function CommentsView({ id }: { id: number }) {
                     <div className="seg" role="group" aria-label="Sort comments">
                       <button
                         type="button"
-                        onClick={() => setSort(sort === 'replies' ? 'new' : 'replies')}
+                        onClick={() => setSort(SORTS[(SORTS.findIndex(([k]) => k === sort) + 1) % SORTS.length][0])}
                         className="seg-btn inline-flex items-center gap-1"
-                        title="Toggle sort (Newest / Replies) — more options in the ⋯ menu"
-                        aria-label={`Sort: ${sortLabel}. Tap to toggle Newest and Replies; more in the more-actions menu.`}
+                        title="Cycle sort order — full options also in the ⋯ menu"
+                        aria-label={`Sort: ${sortLabel}. Tap to cycle sort order; full options in the more-actions menu.`}
                       >
                         <ArrowUpDown className="size-3.5" /> {sortLabel}
                       </button>
@@ -659,7 +672,7 @@ export default function CommentsView({ id }: { id: number }) {
 
                   {/* Overflow menu — shown once anything has folded (below ~640). Holds Summary/Ask, then
                       Search (only when its inline box has dropped, <360), then the full Sort options (<560). */}
-                  <span ref={toolMenuRef} className="relative shrink-0 @min-[660px]/tb:hidden">
+                  <span ref={toolMenuRef} className="relative shrink-0 @max-[399.98px]/tb:ml-auto @min-[660px]/tb:hidden">
                     <IconButton label="More discussion tools" active={toolMenuOpen} onClick={() => setToolMenuOpen((v) => !v)}>
                       <MoreHorizontal className="size-4" />
                     </IconButton>

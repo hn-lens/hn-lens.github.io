@@ -114,7 +114,12 @@ export default function KeyboardShortcuts() {
       switch (e.key) {
         case '/':
           e.preventDefault();
-          document.querySelector<HTMLInputElement>('input[type="search"]')?.focus();
+          // On a discussion, focus the inline discussion search if present; else the global nav search.
+          // (Plain `input[type="search"]` matches TopNav's box first, so /item ignored its own search.)
+          (
+            document.querySelector<HTMLInputElement>('.disc-tb-bar input[type="search"]') ??
+            document.querySelector<HTMLInputElement>('input[type="search"]')
+          )?.focus();
           break;
         case '?':
           setHelpOpen((v) => !v);
