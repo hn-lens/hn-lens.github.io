@@ -453,7 +453,7 @@ export default function CommentsView({ id }: { id: number }) {
   const showArticle = view === 'article' && canReadArticle;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-2">
       <div>
         <div className="mb-1 flex min-w-0 items-center gap-1.5 text-xs text-subtle">
           {/* Through the shared component, not a hand-rolled <img>. The bare tag inherited none of
@@ -493,7 +493,7 @@ export default function CommentsView({ id }: { id: number }) {
           </Link>
         )}
 
-        <div className="discussion-header mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
+        <div className="discussion-header mt-[1.5px] flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
           <span className="inline-flex items-center gap-1 font-medium text-fg">
             <ArrowBigUp className="size-3.5 text-accent" /> {story.score ?? 0}
           </span>
@@ -547,19 +547,20 @@ export default function CommentsView({ id }: { id: number }) {
             dangerouslySetInnerHTML={{ __html: sanitize(story.text) }}
           />
         )}
-      </div>
 
-      {/* HackerWeb-style Discussion | Article segmented toggle (link stories only). */}
-      {canReadArticle && (
-        <div className="seg" role="tablist" aria-label="Read the discussion or the article">
-          <button type="button" role="tab" aria-selected={view === 'discussion'} onClick={() => setView('discussion')} className="seg-btn">
-            Discussion
-          </button>
-          <button type="button" role="tab" aria-selected={view === 'article'} onClick={() => setView('article')} className="seg-btn">
-            Article
-          </button>
-        </div>
-      )}
+        {/* Discussion | Article toggle (link stories only). Inside the header block so its top gap is a
+            direct margin, not the outer space-y (a child mt can't override space-y's `> * + *` rule). */}
+        {canReadArticle && (
+          <div className="seg mt-1" role="tablist" aria-label="Read the discussion or the article">
+            <button type="button" role="tab" aria-selected={view === 'discussion'} onClick={() => setView('discussion')} className="seg-btn">
+              Discussion
+            </button>
+            <button type="button" role="tab" aria-selected={view === 'article'} onClick={() => setView('article')} className="seg-btn">
+              Article
+            </button>
+          </div>
+        )}
+      </div>
 
       {showArticle ? (
         <ArticleReader item={story} />
