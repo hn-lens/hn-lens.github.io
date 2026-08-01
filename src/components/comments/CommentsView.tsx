@@ -362,6 +362,15 @@ export default function CommentsView({ id }: { id: number }) {
     if (r.left < pad) dx = pad - r.left;
     else if (r.right > window.innerWidth - pad) dx = window.innerWidth - pad - r.right;
     if (dx) el.style.transform = `translateX(${dx}px)`;
+    // Close on viewport change rather than re-clamp: after a resize/rotate the trigger has usually
+    // moved, so there is no correct position to re-clamp to (same as the story-card ⋯ menu).
+    const closeOnResize = () => setToolMenuOpen(false);
+    window.addEventListener('resize', closeOnResize);
+    window.addEventListener('orientationchange', closeOnResize);
+    return () => {
+      window.removeEventListener('resize', closeOnResize);
+      window.removeEventListener('orientationchange', closeOnResize);
+    };
   }, [toolMenuOpen]);
   // Focus whatever the open tray's primary input is — not only Search's.
   //

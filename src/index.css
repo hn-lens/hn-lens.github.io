@@ -2118,6 +2118,7 @@ html[data-textsize='lg'] {
   .disc-tb-bar .seg-btn,
   .disc-tb-bar > button,
   .disc-tb-bar button[aria-label='More discussion tools'],
+  .disc-tb-bar input[type='search'],
   .disc-toolbar [role='menu'] button {
     min-height: 44px;
   }

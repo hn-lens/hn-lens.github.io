@@ -25,6 +25,9 @@ dist-ssr
 # Generated proof/report artifacts (regenerate with `npm run test:personalization`)
 scripts/.artifacts
 
+# Throwaway review-lens / debugging probe scripts (prefixed with _; never committed)
+scripts/_*.mjs
+
 # Internal competitive-analysis / roadmap notes — leak-free but not for the public repo
 /docs/competitive-analysis.md
 

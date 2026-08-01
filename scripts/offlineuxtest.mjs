@@ -105,11 +105,12 @@ if (indCount) {
 
 // --- M3: switch to an UNCACHED feed while offline → outage says "offline" + points to Saved/Read ---
 await page.getByRole('button', { name: 'Best', exact: true }).click();
-await page.waitForFunction(
-  () => /offline|Couldn.t load/i.test(document.querySelector('main')?.innerText ?? ''),
-  null, { timeout: 15000 }
-).catch(() => {});
-await page.waitForTimeout(400);
+// Wait for the OUTAGE to actually render — the offline hint is its definitive marker. A loose text
+// match raced keepPreviousData (which briefly shows the PRIOR feed while Best's query errors), so the
+// assertion sometimes read the stale loaded feed ("Updated just now …") instead of the outage.
+// Waiting for the hint element removes that intermittent flake.
+await page.waitForSelector('[data-offline-hint]', { timeout: 15000 }).catch(() => {});
+await page.waitForTimeout(300);
 const outage = await mainText();
 check('M3: offline feed outage says "You\'re offline" (not a bare "Couldn\'t load")',
   /offline/i.test(outage) && !/Couldn.t load stories/i.test(outage), outage.replace(/\s+/g, ' ').slice(0, 90));

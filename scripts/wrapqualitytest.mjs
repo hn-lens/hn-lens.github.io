@@ -192,6 +192,12 @@ try {
     return { left: Math.round(r.left), right: Math.round(r.right), vw: window.innerWidth };
   });
   check('the "…" overflow menu clamps fully on-screen at 320px (no left/right clip)', !!menuBounds && menuBounds.left >= -1 && menuBounds.right <= menuBounds.vw + 1, JSON.stringify(menuBounds));
+  // SR-B regression — the clamp closes the menu on a viewport change (real parity with the story-card
+  // menu), so it can't drift off-screen after a resize/rotate WHILE OPEN. Menu is still open from above.
+  await page.setViewportSize({ width: 500, height: 800 });
+  await page.waitForTimeout(200);
+  const menuAfterResize = await page.evaluate(() => !!document.querySelector('.disc-toolbar [role="menu"]'));
+  check('the "…" menu closes on a viewport resize while open (no off-screen drift)', !menuAfterResize, `menuStillOpen=${menuAfterResize}`);
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.waitForTimeout(150);
 
@@ -227,6 +233,7 @@ try {
       const els = [
         ...bar.querySelectorAll('.seg-btn'),
         ...bar.querySelectorAll('button[aria-label="More discussion tools"]'),
+        ...bar.querySelectorAll('input[type="search"]'),
         ...[...bar.children].filter((k) => k.tagName === 'BUTTON' && /\d+\s+new/.test(k.textContent || '')),
       ].filter((e) => e.getBoundingClientRect().width > 0);
       const small = els
@@ -234,7 +241,7 @@ try {
         .map((e) => ({ t: (e.textContent || e.getAttribute('aria-label') || '').trim().slice(0, 10), h: Math.round(e.getBoundingClientRect().height) }));
       return { coarse: matchMedia('(pointer: coarse)').matches, n: els.length, small };
     });
-    check('touch: toolbar controls (Sort, "…", "N new") are >=44px tap targets', touch.coarse && touch.n >= 3 && touch.small.length === 0, JSON.stringify(touch));
+    check('touch: toolbar controls (Sort, Search, "…", "N new") are >=44px tap targets', touch.coarse && touch.n >= 4 && touch.small.length === 0, JSON.stringify(touch));
     await tctx.close();
   }
 } finally {
