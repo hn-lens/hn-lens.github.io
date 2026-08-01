@@ -373,6 +373,28 @@ console.log('\n[F] toolbar keyboard + jump interaction');
   }));
   check('`/` focuses the inline discussion search on /item (not the global nav search)', afterSlash.inInlineBar && !afterSlash.inTopNav, JSON.stringify(afterSlash));
 
+  // F3b (SR1 regression) — at a NARROW width the inline search folds into the "…" menu (display:none
+  // but still in the DOM). `/` must fall back to the VISIBLE global nav search, not target the hidden
+  // inline box and no-op. (A null-coalesce on mere presence, not visibility, made `/` a dead key here.)
+  await page.setViewportSize({ width: 380, height: 800 });
+  await page.waitForTimeout(300);
+  await page.evaluate(() => document.activeElement instanceof HTMLElement && document.activeElement.blur());
+  await page.evaluate(() => document.body.click());
+  await page.keyboard.press('/');
+  await page.waitForTimeout(250);
+  const slashNarrow = await page.evaluate(() => {
+    const a = document.activeElement;
+    const inline = document.querySelector('input[type="search"].sr-only, .disc-tb-bar input[type="search"]');
+    return {
+      focusedSearch: a?.getAttribute?.('type') === 'search',
+      inTopNav: !!a?.closest?.('header'),
+      inlineFolded: !inline || inline.getBoundingClientRect().width === 0,
+    };
+  });
+  check('`/` at a narrow width focuses the VISIBLE global search (inline box folded → not a dead key)', slashNarrow.focusedSearch && slashNarrow.inTopNav && slashNarrow.inlineFolded, JSON.stringify(slashNarrow));
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.waitForTimeout(200);
+
   // F2 (M2) — "N new" during an active search stays on the discussion + clears the filter.
   // Search a term that matches ONLY the OLD comment ("...before your last visit"), so the NEW comments
   // are NOT in the results (not mounted). Jumping to one then reproduces the navigate-away: the thread

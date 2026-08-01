@@ -1,4 +1,4 @@
-import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import { useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   ArrowBigUp,
@@ -92,6 +92,7 @@ export default function CommentsView({ id }: { id: number }) {
   const [tool, setTool] = useState<null | 'search' | 'summary' | 'ask'>(null);
   const [toolMenuOpen, setToolMenuOpen] = useState(false);
   const toolMenuRef = useRef<HTMLSpanElement>(null);
+  const toolMenuContentRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const lastToolBtn = useRef<HTMLElement | null>(null);
   const deferredQuery = useDeferredValue(query);
@@ -346,6 +347,21 @@ export default function CommentsView({ id }: { id: number }) {
       document.removeEventListener('mousedown', onDown);
       document.removeEventListener('keydown', onKey);
     };
+  }, [toolMenuOpen]);
+  // Keep the "…" menu inside the viewport horizontally: it is right-anchored (w-56) and at the
+  // narrowest widths the ⋯ trigger is pinned to the column's right edge, so the menu would spill off
+  // the LEFT screen edge and clip its labels (measured -21px at 320px). Nudge it back after it opens
+  // (mirrors the story-card ⋯ clamp).
+  useLayoutEffect(() => {
+    const el = toolMenuContentRef.current;
+    if (!toolMenuOpen || !el) return;
+    el.style.transform = 'none';
+    const r = el.getBoundingClientRect();
+    const pad = 6;
+    let dx = 0;
+    if (r.left < pad) dx = pad - r.left;
+    else if (r.right > window.innerWidth - pad) dx = window.innerWidth - pad - r.right;
+    if (dx) el.style.transform = `translateX(${dx}px)`;
   }, [toolMenuOpen]);
   // Focus whatever the open tray's primary input is — not only Search's.
   //
@@ -677,7 +693,7 @@ export default function CommentsView({ id }: { id: number }) {
                       <MoreHorizontal className="size-4" />
                     </IconButton>
                     {toolMenuOpen && (
-                      <div role="menu" className="absolute right-0 top-full z-20 mt-1 w-56 overflow-hidden rounded-lg border border-border bg-surface py-1 shadow-xl">
+                      <div ref={toolMenuContentRef} role="menu" className="absolute right-0 top-full z-20 mt-1 w-56 overflow-hidden rounded-lg border border-border bg-surface py-1 shadow-xl">
                         <MenuItem onClick={() => { toggleTool('summary'); setToolMenuOpen(false); }}>
                           {aiSummaryActive ? <Sparkles className="size-3.5" /> : <ListTree className="size-3.5" />} Summary
                         </MenuItem>

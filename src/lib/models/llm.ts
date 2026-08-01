@@ -758,14 +758,6 @@ const PROVIDER_LABEL: Record<string, string> = {
   anthropic: 'Anthropic',
 };
 
-
-/**
- * Cheap relevance check on extracted article text: does it share meaningful words with the title?
- *
- * Deliberately weak — it only has to reject text that is obviously about something else, not judge
- * quality. A real article about the story shares proper nouns and topic words with its own headline;
- * a cookie wall, a login page or an unrelated article typically shares nothing but stopwords.
- */
 // ── Input hygiene: is there enough real material to send to the model at all? ────────────────
 //
 // ONE definition, used by every path that puts thread content in front of the model. It used to

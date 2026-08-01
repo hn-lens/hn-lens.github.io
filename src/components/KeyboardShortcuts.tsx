@@ -112,15 +112,16 @@ export default function KeyboardShortcuts() {
       if (document.querySelector('[aria-modal="true"]')) return;
 
       switch (e.key) {
-        case '/':
+        case '/': {
           e.preventDefault();
-          // On a discussion, focus the inline discussion search if present; else the global nav search.
-          // (Plain `input[type="search"]` matches TopNav's box first, so /item ignored its own search.)
-          (
-            document.querySelector<HTMLInputElement>('.disc-tb-bar input[type="search"]') ??
-            document.querySelector<HTMLInputElement>('input[type="search"]')
-          )?.focus();
+          // Focus the inline discussion search when it's VISIBLE, else the global nav search. The
+          // inline box folds into the "…" menu at the narrowest widths, where it is display:none but
+          // STILL in the DOM — so check the rendered box (offsetParent), not mere presence, or `/`
+          // would target a hidden input and no-op (matches the `l` handler's visibility check).
+          const disc = document.querySelector<HTMLInputElement>('.disc-tb-bar input[type="search"]');
+          (disc && disc.offsetParent !== null ? disc : document.querySelector<HTMLInputElement>('input[type="search"]'))?.focus();
           break;
+        }
         case '?':
           setHelpOpen((v) => !v);
           break;

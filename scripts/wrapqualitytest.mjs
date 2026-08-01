@@ -176,6 +176,25 @@ try {
   });
   check('narrow (<400px): Search has folded and the right actions are pinned — no dead trailing gap', !narrowGap.searchInline && narrowGap.trailing <= 12, JSON.stringify(narrowGap));
 
+  // SR2 regression — the "…" overflow menu must stay fully on-screen at the narrowest width. It is
+  // right-anchored (w-56) and the ⋯ trigger is pinned to the column's right edge, so without a viewport
+  // clamp the menu spilled off the LEFT edge (measured -21px at 320px). A useLayoutEffect nudges it back.
+  await page.setViewportSize({ width: 320, height: 800 });
+  await page.waitForTimeout(200);
+  await page.keyboard.press('Escape'); // close any menu the reachability check above left open
+  await page.waitForTimeout(120);
+  await page.evaluate(() => document.querySelector('.disc-toolbar button[aria-label="More discussion tools"]')?.click());
+  await page.waitForTimeout(250);
+  const menuBounds = await page.evaluate(() => {
+    const m = document.querySelector('.disc-toolbar [role="menu"]');
+    if (!m) return null;
+    const r = m.getBoundingClientRect();
+    return { left: Math.round(r.left), right: Math.round(r.right), vw: window.innerWidth };
+  });
+  check('the "…" overflow menu clamps fully on-screen at 320px (no left/right clip)', !!menuBounds && menuBounds.left >= -1 && menuBounds.right <= menuBounds.vw + 1, JSON.stringify(menuBounds));
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.waitForTimeout(150);
+
   // M3 — on a TOUCH device (coarse pointer) the toolbar's OWN controls are >=44px tap targets (the flat
   // Sort segments/toggle, the "…" overflow, the "N new" button), matching every sibling control. The
   // sweep above is a FINE pointer (denser 36/28px by design), so this needs its own touch context —

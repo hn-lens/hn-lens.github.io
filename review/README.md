@@ -3525,3 +3525,37 @@ discussion toolbar.
   the render-walk's "expand every `aria-expanded=false`" step clicks the reply pill away before
   measurement, so a clean fixture change is risk-prone across 62 combos for a gap with no actual defect.
 - OSS dev-process disclosure in `AGENTS.md`/`review/*` is an accepted maintainer decision (SPEC §10).
+
+## c3r40 — CONFIRMING round certifying the c3r39 fixes (2026-07-31)
+
+Ran all 7 lenses read-only against the rebuilt HEAD. Outcome: **0 BLOCKER, 0 HIGH; OSS still READY.**
+The value of a confirming round — it caught **3 SELF-INFLICTED regressions** from the c3r39 fixes
+(none were visible from inside the change round), plus one pre-existing perf MEDIUM. All 3 self-
+inflicted defects are fixed + guarded:
+- **SR1 (MEDIUM, from the L1 fix)** `/` became a DEAD KEY on a narrow discussion. `KeyboardShortcuts`
+  preferred `.disc-tb-bar input[type="search"]` but — unlike the sibling `l` handler — omitted the
+  `offsetParent` visibility check, so it targeted the folded (display:none) inline box and the `??`
+  fallback to the global search never ran. Fixed with the same visibility check; guarded by
+  `discussionviewtest` F3b (narrow-width `/` focuses the visible global search). The classic
+  sibling-inconsistency the fix discipline warns about — the `l` fix was right, `/` copied it wrong.
+- **SR2 (MEDIUM, from the M4 fix)** the "…" overflow menu clipped ~21px off the LEFT edge at ≤340px.
+  M4's `ml-auto` pinned the ⋯ trigger to the column's right edge, so the right-anchored `w-56` menu
+  spilled left — and unlike the story-card ⋯ menu it had no viewport clamp. Added a `useLayoutEffect`
+  horizontal clamp; guarded by `wrapqualitytest` (menu fully on-screen at 320px).
+- **SR3 (LOW, from the L3 move)** the `articleLooksRelevant` doc-comment was orphaned in `llm.ts`
+  after the function moved to `hn/article`. Deleted.
+
+**Accepted in writing (LOW/pre-existing, with rationale):**
+- Perf MEDIUM (PRE-EXISTING, not a c3r39 regression): the non-AI `ThreadGist` HTML-parses the whole
+  comment tree once when the Summary tray is opened (~220ms unthrottled / ~954ms@4×CPU on a 659-comment
+  thread). Already memoized (not per-render) and deferred to tray-open; a cheaper scoring proxy would
+  alter the gist's comment ranking on a fallback path. Documented follow-up.
+- Pre-existing LOWs: duplicate accessible name "Article" (external link vs the Discussion|Article
+  view-tab, disambiguated by role/icon); the "…" menu uses `border-border` + `shadow-xl` like every
+  app dropdown (delineated, not a WCAG failure).
+
+*Lesson: a change round never certifies itself — the confirming round found 3 regressions the change
+round could not. Two were sibling-inconsistencies (a fix applied correctly in one place, copied
+without its guard into a sibling): the `offsetParent` check present in `l` but missing in `/`, and the
+viewport clamp present on the story-card menu but missing on the discussion menu. Enumerate the
+siblings of every fix.*
