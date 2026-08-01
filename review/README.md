@@ -3559,3 +3559,40 @@ round could not. Two were sibling-inconsistencies (a fix applied correctly in on
 without its guard into a sibling): the `offsetParent` check present in `l` but missing in `/`, and the
 viewport clamp present on the story-card menu but missing on the discussion menu. Enumerate the
 siblings of every fix.*
+
+## c3r41 — CERTIFYING round + CI-flake hardening (2026-08-01)
+
+Ran all 7 lenses against the batch-4 build. **0 BLOCKER, 0 HIGH; OSS still READY**; self-inflicted
+rate down again (c3r40: 3 → c3r41: 2, both LOW). Resolved:
+- **SR-B (LOW, self-inflicted from the c3r40 clamp):** the discussion "…" menu clamp comment claimed
+  parity with the story-card menu but omitted its resize/orientation-close listener, so the menu could
+  drift off-screen if the viewport changed WHILE OPEN. Added the listener (real parity). Guarded by
+  `wrapqualitytest` (menu closes on resize while open).
+- **Inline-search touch target (LOW):** the discussion search `<input>` was 34px on touch while every
+  sibling was 44px (the c3r39 touch pass missed the input). Added it to the `pointer: coarse` block;
+  `wrapqualitytest` touch check now includes it.
+- **gitignore hygiene (LOW):** throwaway `scripts/_*.mjs` review-probe scripts are now ignored.
+
+**Accepted in writing (with rationale):**
+- **Center-gap MEDIUM** (≤400px, after Search folds): a genuine tension between two rules — "Search
+  folds to … LAST" (approved in mock v4) vs "no visible empty space at any width". At the narrowest
+  the Search flex-filler can't stay inline without overflowing the one-row constraint, so folding it
+  is unavoidable and the resulting count-left / actions-right layout is a standard mobile pattern.
+  Maintainer decision: accept for now. (Follow-up option: lower the fold threshold to keep Search
+  inline on more phones, folding only at the true extreme.)
+- **SR-A (LOW):** on a narrow discussion `/` focuses the global search while `l` opens the in-thread
+  tray. `/` is the app-wide "focus search" shortcut; falling back to the global search when the inline
+  box has folded is reasonable, and `l` remains the discussion-specific search. Unifying them would
+  couple the global handler to the tray state.
+- The 2-button Sort degrade showing no selected segment for Default/Oldest (recoverable via "…").
+
+**CI-flake hardening (the failing GitHub CI, `npm run verify` on the slow hosted runner):** the CI was
+red intermittently — NOT on any product code, but on two timing races the slow runner exposed that a
+fast dev machine hides. (1) `offlineuxtest` M3 switched feeds while offline, but the app prefetches
+adjacent tabs and keepPreviousData held the prior feed's data, so the new feed's outage never rendered
+→ now it loads the uncached feed FRESH via reload (empty cache; SW serves the shell; the list fetch
+aborts → outage). (2) `audit`'s Read-tab check resolved on a transient "Nothing to show" before the
+async Dexie read-ids query populated → now it waits for the seeded read item to actually render.
+*Lesson: a harness that waits for "some content OR the empty state" races an async data source — wait
+for the SPECIFIC expected element, and drive outage states from a FRESH load, not a keepPreviousData
+tab-switch.*

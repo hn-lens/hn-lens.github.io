@@ -110,8 +110,11 @@ const fyIds = await titleIds(page);
 check('"For You" shows blended top/best/new', fyIds.length > 0 && fyIds.every((id) => [...RANGES.top, ...RANGES.best, ...RANGES.new].includes(id)), `got ${JSON.stringify(fyIds.slice(0, 4))}`);
 // Read tab = the one story we opened (102)
 await page.getByRole('button', { name: 'Read', exact: true }).click();
-await page.waitForFunction(() => document.querySelector('article') || /Nothing to show/i.test(document.body.innerText), null, { timeout: 15000 });
-await page.waitForTimeout(400);
+// Wait for the SEEDED read item (102) to actually render — NOT a transient "Nothing to show" (the Read
+// feed derives from an async Dexie read query, which in the slow CI runner briefly shows the empty
+// state before the read ids resolve) and NOT a stale keepPreviousData article from the prior feed.
+await page.waitForFunction(() => !!document.querySelector('article[data-id="102"]'), null, { timeout: 15000 }).catch(() => {});
+await page.waitForTimeout(300);
 const readIds = await titleIds(page);
 check('"Read" tab shows only what was read (102)', readIds.length === 1 && readIds[0] === 102, `got ${JSON.stringify(readIds)}`);
 await page.screenshot({ path: join(OUT, 'tabs-read.png') });

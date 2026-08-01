@@ -104,11 +104,15 @@ if (indCount) {
 }
 
 // --- M3: switch to an UNCACHED feed while offline → outage says "offline" + points to Saved/Read ---
-await page.getByRole('button', { name: 'Best', exact: true }).click();
-// Wait for the OUTAGE to actually render — the offline hint is its definitive marker. A loose text
-// match raced keepPreviousData (which briefly shows the PRIOR feed while Best's query errors), so the
-// assertion sometimes read the stale loaded feed ("Updated just now …") instead of the outage.
-// Waiting for the hint element removes that intermittent flake.
+// Load an UNCACHED feed FRESH while offline (a reload, NOT a tab-switch). A tab-switch keeps the prior
+// feed's data via keepPreviousData — and the app prefetches adjacent tabs — so in the slower CI runner
+// "Best" showed stale/prefetched content ("Updated just now …") instead of erroring, the outage never
+// rendered, and this assertion flaked. A fresh reload has an empty in-memory query cache: the service
+// worker serves the app shell offline, Best's list fetch then aborts, and the outage renders with no
+// stale data to mask it. The offline state is context-level, so it survives the reload.
+await page.evaluate(() => { location.hash = '#/?feed=best'; });
+await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {});
+await page.waitForFunction(() => window.__hnlens, null, { timeout: 20000 }).catch(() => {});
 await page.waitForSelector('[data-offline-hint]', { timeout: 15000 }).catch(() => {});
 await page.waitForTimeout(300);
 const outage = await mainText();
