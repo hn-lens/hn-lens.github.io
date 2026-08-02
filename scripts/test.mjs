@@ -70,6 +70,10 @@ const TIERS = {
       // The gate only protects the public site if a red gate actually STOPS a publish, which is a
       // property of the workflow wiring rather than of any code the other checks cover.
       { name: 'a red gate cannot publish (deploy waits on CI)', cmd: 'node', args: ['scripts/releasegatecheck.mjs'] },
+      // Three AGENTS.md convergence rules that prose did not hold: the product and the review
+      // instrument must not change in the same interval, an interval must stay small enough to
+      // review as one change, and a fix must not explain itself in source prose.
+      { name: 'convergence discipline (interval size, instrument freeze, no narrative)', cmd: 'node', args: ['scripts/convergencecheck.mjs'] },
       // This repo is developed privately and published publicly, so an internal hostname/tool name
       // in a tracked file is a release blocker. `--require-notes` turns "the pattern list is
       // missing" from a warning into a failure — the only thing standing between a renamed or lost

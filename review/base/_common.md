@@ -1,5 +1,13 @@
 # Review lens — shared base instructions (ALL lenses)
 
+> **What may change in this file.** It states EXPECTED END RESULTS (authority: `review/SPEC.md`) and
+> MEASUREMENT VALIDITY — how to observe something without producing a false negative. It must NOT
+> accumulate a checklist of past bugs, a named suspicion, or anything that tells you where to look:
+> that biases the lens away from first-principles discovery and makes each round's finding count a
+> function of this file's growth rather than of the product's state. **Deleting such an entry is
+> always allowed and never needs justification.** This file changes only in an INSTRUMENT-ONLY
+> interval, never alongside a `src/` change (AGENTS.md rule 7a, enforced by the gate).
+
 You are ONE of seven **independent, read-only** review lenses for **HN Lens**. You share no
 context with the author of the code or with the other lenses. Everything below applies to every
 lens; your lens-specific brief and a per-round **CURRENT STATE** appendix are attached separately.

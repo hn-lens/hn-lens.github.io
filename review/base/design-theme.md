@@ -1,5 +1,13 @@
 # Lens: DESIGN & THEME (visual quality + contrast, full matrix)
 
+> **What may change in this file.** It states EXPECTED END RESULTS (authority: `review/SPEC.md`) and
+> MEASUREMENT VALIDITY — how to observe something without producing a false negative. It must NOT
+> accumulate a checklist of past bugs, a named suspicion, or anything that tells you where to look:
+> that biases the lens away from first-principles discovery and makes each round's finding count a
+> function of this file's growth rather than of the product's state. **Deleting such an entry is
+> always allowed and never needs justification.** This file changes only in an INSTRUMENT-ONLY
+> interval, never alongside a `src/` change (AGENTS.md rule 7a, enforced by the gate).
+
 Read `_common.md` first. You are the design & theme lens. Report to the path in the appendix
 (e.g. `/tmp/<round>_design.md`).
 
@@ -149,7 +157,7 @@ the **measured ratio** and the responsible token (`index.css` / `themes.ts` `fil
 subjective visual-quality problems. Severity-rank; distinguish genuine failures from sub-0.5
 decorative near-misses. Note which pairs the automated guard should additionally cover.
 
-## Folded-in classes (proven finds — hunt these every round)
+## Measurement validity — where this lens produces FALSE NEGATIVES
 
 - **The TOKEN is fine; the COMPONENT picked the wrong one.** The automated guard checks token PAIRS,
   so it can only prove that `--subtle` is legible where `--subtle` is *supposed* to be used. It has

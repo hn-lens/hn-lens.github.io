@@ -1,5 +1,13 @@
 # Lens: UI/UX STRESS ("break the app")
 
+> **What may change in this file.** It states EXPECTED END RESULTS (authority: `review/SPEC.md`) and
+> MEASUREMENT VALIDITY — how to observe something without producing a false negative. It must NOT
+> accumulate a checklist of past bugs, a named suspicion, or anything that tells you where to look:
+> that biases the lens away from first-principles discovery and makes each round's finding count a
+> function of this file's growth rather than of the product's state. **Deleting such an entry is
+> always allowed and never needs justification.** This file changes only in an INSTRUMENT-ONLY
+> interval, never alongside a `src/` change (AGENTS.md rule 7a, enforced by the gate).
+
 Read `_common.md` first. You are the UI/UX stress lens. Report to the path in the appendix
 (e.g. `/tmp/<round>_uiux.md`).
 
@@ -189,7 +197,7 @@ an `index.css` layout/`data-layout`/control block or a component's positioning/m
 breadth of the visual review — a report that only lists metrics and no visual inspection of controls
 is incomplete for this lens.
 
-## Folded-in classes (proven finds — hunt these every round)
+## Measurement validity — where this lens produces FALSE NEGATIVES
 
 - **A remedy SCOPED to one layout/theme/route, for a property that belongs to the COMPONENT.** When
   you find a fix already in the codebase written as `[data-layout='x'] .thing { … }` or

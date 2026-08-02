@@ -42,151 +42,106 @@ in the browser; deploys to GitHub Pages.
 6. **Test at realistic laptop viewport heights** (768/800/900), never oversized canvases — that is
    how the clipped-sidebar bug slipped through. Any `sticky`/`overflow` container needs a
    max-height + scroll and a bottom-reachability assertion (`npm run test:reach`).
-7. **Review is done by SEVEN INDEPENDENT, READ-ONLY lenses in an iterative loop — not by solo
-   guessing, and the review agents NEVER change code.** The primary agent is biased (wrote the code,
-   has wrong theories — proven repeatedly), so fresh agents review and only the primary fixes. Run
-   these seven lenses each round, **IN THIS ORDER**, each as its own read-only agent:
-   1. **Usability** (load **`hnlens-usability`**) — role-plays a *real user pursuing a real goal*
-      (default persona: a regular daily HN reader — Hacker Lens is a personalized HN *reader*, so don't
-      let a stray word narrow it to one feed); reports usability issues + feature requests +
-      information-presentation improvements (effectiveness & ease).
-   2. **UI/UX stress** — a creative "break the app" pass across a **device matrix** (desktop, mobile
-      emulation *with touch*, tablet) at realistic viewport heights; drives every control + hostile
-      combinations and hunts visual / layout / overflow / **scrollbar** glitches. (This is the lens
-      that must independently catch things like the mobile feed-tabs scrollbar — headless overlay
-      scrollbars hide it, so it must emulate a real touch device and inspect computed styles.)
-   3. **Design & theme** — a VISUAL DESIGN & readability pass across the **full theme/layout matrix**:
-      EVERY one of the 31 designs (`themeName`) in BOTH light and dark modes, and every one of the 14
-      layouts (`data-layout`). It must check TWO distinct kinds of contrast, because passing one does
-      NOT imply the other:
-      - **(a) TEXT contrast** of every text element (body/muted/subtle text, headings, accent links,
-        button LABELS, "why" chips, badges, the At-a-glance chart colors + treemap tile labels + SVG
-        network/mind-map text & edges, context panel, dialogs, sidebar) — WCAG AA: 4.5:1 normal, 3:1
-        large.
-      - **(b) NON-TEXT / UI-COMPONENT contrast (WCAG 1.4.11, ≥3:1)** — whether each INTERACTIVE
-        CONTROL is *visible AS a control and distinguishable from its neighbours*, independent of its
-        label. For EVERY button, segmented toggle, text input, dropdown, and pill (e.g. the
-        discussion **Discussion|Article** view toggle, the At-a-glance **viz switcher**, the comment
-        **Sort** control, the **"N replies"** collapse pill, story-card action buttons, the search
-        box, dialog buttons) check: does the control's FILL and/or BORDER contrast ≥3:1 against the
-        ADJACENT surface (so it doesn't melt into the page)? For a GROUPED/segmented control, can you
-        tell there are N SEPARATE segments (visible divider/border between them) AND which one is
-        SELECTED (the active segment clearly distinct from the inactive)? A control whose label is
-        readable but whose body is invisible, or a two-segment toggle that looks like one blob, is a
-        FAILURE — and this fails even in the DEFAULT theme, so text-only checks miss it.
-      It **computes contrast programmatically** for the key foreground/background pairs AND the
-      control-fill/border-vs-surface pairs of every design×mode, AND **screenshots the control
-      clusters** (discussion header toggle + action row, viz switcher, sort control, collapsed-reply
-      pills, story-card actions) in representative themes to confirm each control is findable and its
-      segments/active-state are distinguishable. Reports per-(design, mode/layout) the elements that
-      are hard to READ or hard to SEE/FIND/tell-apart, with the measured ratio + the responsible token
-      (`index.css` / `themes.ts` `file:line`). (This is the lens that catches both "text X is illegible
-      in theme Y" AND "you can't tell that control Z is a button / has two segments" — the UI/UX-stress
-      lens only spot-checks themes and does not measure component contrast.)
-   4. **AI** — reviews the *use* of AI (summaries, editable prompts, transparency, discoverability)
-      AND the technical ML: model choice, prompt completeness/config, learned-ranker training /
-      eval / calibration, on-device vs cloud correctness, and data gaps.
-   5. **Bug/correctness** (load **`hnlens-bughunt`**) — a *neutral, factual* brief (how to drive the
-      app + the expected-behavior spec + "exhaustively discover every discrepancy and root-cause
-      it"), never seeded with suspected bugs; reports correctness discrepancies with root causes
-      (`file:line`).
-   6. **Performance** — latency (interaction, render, feed/summary/context load) AND resource use
-      (bundle size, memory, redundant fetches / network, IndexedDB growth); reports concrete costs
-      + causes.
-   7. **OSS release audit** (load **`oss-release`** base prompt) — Hacker Lens is developed in a private
-      environment but **published publicly** (GitHub + Pages). Audits the REPO/build/deploy/docs (not
-      the running UI) for anything unsafe to make public: committed **secrets** / API keys, **internal
-      leakage** (employer-internal hostnames, short-link schemes, bug/CL reference formats, group
-      paths, usernames or tool names in any shipped file incl. `AGENTS.md` + `review/*.md` — the
-      literal patterns live in the gitignored local notes, deliberately NOT here), the
-      **`package-lock.json` public-
-      registry** gotcha (a private-mirror `resolved` URL breaks the public CI build), **license**
-      presence/compatibility, **doc accuracy** (README/SECURITY claims vs. code), `.gitignore` /
-      committed-artifact / absolute-local-path hygiene, deploy-workflow safety, and the "all-local, no
-      telemetry" privacy posture. Reports `file:line` + the public-release risk.
-   - **Briefs:** usability + UI/UX-stress + design-&-theme get a PERSONA / visual-quality goal + the
-     device or theme/layout matrix (NOT a correctness spec); AI + bug + performance + OSS-release get
-     a neutral factual SPEC / release-checklist + how to drive it (NOT hypotheses). Never tell any
-     lens where a bug is.
-   - **REFRESH THE SPEC BEFORE EVERY RUN (do not reuse a stale brief).** Rebuild every lens's brief
-     from the *current* features each time — re-read this file's "Product decisions & lessons
-     learned" AND `git log` since the last review, and fold every new/changed feature into the spec
-     + persona goals. A lens can only catch behaviors its brief describes. (2026-07-20: the "Article
-     text link" bug shipped because the spec predated fetch-on-click.)
-   - **The loop:** usability → UI/UX stress → design & theme → AI → bug → performance → OSS release
-     audit → **the primary combines all reports, validates each finding against the code (a report can
-     be wrong — confirm first), applies root-cause fixes (+ regression tests), and runs the gate** →
-     then iterate from usability again, until a full round is clean.
-   - **FIX DISCIPLINE (a fix is not done until all four hold — see `review/README.md` step 3).**
-     (i) re-run the LENS'S repro across the LENS'S matrix, not a narrower probe of your own;
-     (ii) enumerate the SIBLINGS of the shape and fix them in the SAME change, stating what you
-     grepped and how many sites you found; (iii) write down and TEST the invariant your fix assumes;
-     (iv) after the fix batch, run one diff-scoped read-only pass over just the changed surfaces.
-      Also record each finding's ORIGIN (new-from-my-fix / incomplete-sibling / pre-existing) so the
-      self-inflicted-regression rate stays measurable.
-    - **CONVERGENCE MODE (adopted 2026-07-26, after rounds 16–20 all failed to converge).** Measured
-      across round 20, **8 of 15 findings were created by round 19's own fixes** — a loop that
-      generates ~1 new finding per fix cannot terminate, and the review side was not the problem.
-      While converging, four rules bind:
-      1. **No narrative comments in source.** Reasoning goes in `review/README.md`, which is audited
-         and versioned. In code, state only what is mechanically true. Long explanatory comments
-         added during fixes were the single largest defect category (12 false claims in one round,
-         nearly all prose written to explain a fix — `Logo.tsx`, `useFeed.ts`, `feedSession.ts`,
-         `html.ts`, `index.css`). Every comment is an unverified claim; stop manufacturing them
-         faster than anything can audit them.
-      2. **Feature freeze.** Defect removal only — no new notices, controls or capabilities until a
-         round is clean. The `departed` notice was new capability added while fixing a claim audit,
-         and became a HIGH in the next round.
-      3. **Write the failing test FIRST, from the lens's own words, before touching code.** A guard
-         written after the fix encodes what you did, not what should be true — twice in one session a
-         guard passed while the behaviour was still wrong.
-      4. **Cap the batch at ~5 findings**, then gate, then run a diff-scoped read-only pass over only
-         those changes, before taking the next batch. Fixing fifteen things and gating once is how
-         the regressions get in.
-      **Prefer deletion.** When a lens says something is wrong, removing the wrong thing (a false
-      comment, a dead function, a broken notice) is usually the correct minimal fix.
-    - **TERMINATION.** "Zero findings" is unreachable — any thorough lens always finds something, which
-      is why rounds 16–20 all "failed". A round CONVERGES when: **zero BLOCKER/HIGH**, **zero
-      self-inflicted regressions**, and **every MEDIUM either fixed or explicitly accepted in writing
-      with a rationale**. That makes the self-inflicted rate the actual convergence signal.
-    All seven lenses are **strictly READ-ONLY: never edit code/tests, never run the gate, never
-    commit** — their only deliverable is a report. Run each as a **durable** job — a foreground
-    `task` (block on it) or `session_spawn` (survives turns) — **never a background `task`** (turn-
-    scoped; gets torn down at a context boundary, which silently killed a hunt mid-run 2026-07-19).
-    A lens finding ships a **re-runnable REPRO left on disk** plus a **fix DIRECTION** — the
-    direction names what it could break and the invariant that must hold — **never a patch**. The
-    repro is not optional polish: the fix discipline below requires re-running *the lens's* repro
-    across *the lens's* matrix, which is impossible if the lens only described what it did.
-8. **A DEVELOPER-REPORTED DEFECT GOES THROUGH THE LENSES — NEVER STRAIGHT TO A FIX.** When the
-   developer reports something that needs fixing (a bug, a wrong output, a confusing UI — e.g. the
-   "Why #N?" reconciliation defect), **DO NOT fix it directly.** A direct fix is wrong three ways: the
-   primary agent is biased (rule #7), a hand-patch carries **no independent signal** that the problem
-   is real or fully understood, and it addresses only the **reported instance**, never the **class** —
-   so the next instance of the same kind ships again, and the review loop still can't see it. A
-   developer report is not a work order; it is **evidence that a lens has a blind spot.** The report's
-   real value is that it tells you *which detector is broken*. Instead, in this order:
-   1. **Diagnose the CLASS, not the case.** Ask "what general kind of defect is this an instance of?"
-      (not "how do I make this one symptom go away"). Name the class explicitly.
-   2. **Identify which lens should have caught it**, and why it didn't — quote the brief's existing
-      wording that *nearly* covers it and explain the gap. (For "Why #N?": `ai-ml.md` checked "each
-      number equals feature×weight" — individually exact — but never "do the parts RECONCILE / does
-      the sign mean what a reader thinks".)
-   3. **Upgrade that lens's brief** (`review/base/*.md`) to catch the whole KIND — generalized beyond
-      the reported surface, with the grading procedure that would surface it. Fold into every other
-      lens whose scope also touches the class.
-   4. **PROVE THE DETECTOR on the PRE-FIX state.** A brief edit is a hypothesis until demonstrated.
-      Reproduce the defect (a scratch copy of the tree with the fix reverted, served on its own port —
-      never disturb the developer's 5173) and run the upgraded lens against it **read-only**. It must
-      **independently rediscover the defect without being told it exists**. If it doesn't, the brief is
-      still wrong — iterate on the brief, not on the code. This is the same pre-fix-must-fail /
-      post-fix-must-pass discipline already required of regression guards.
-   5. **Only THEN fix**, on the lens's independent signal — and fix **every** instance the lens found,
-      root-cause, plus a regression guard.
-   6. **Re-run the review loop** so a *clean* round is what certifies the fix (a change round is never
-      its own confirmation), and record the whole thing in `review/README.md`.
-   The success test for this rule: **the same developer report, made again later, would be caught by
-   a lens first.** If a fix leaves the lenses exactly as blind as they were, the work isn't done.
+7. **THE REVIEW INSTRUMENT DESCRIBES THE END RESULT, AND ONLY MOVES WHEN THE END RESULT MOVES.**
+   *(Rules 7a-7c are enforced by `scripts/convergencecheck.mjs` in the gate. They were prose for many
+   rounds and were violated by every agent that read them, including immediately after reading them.
+   Do not treat the gate as the rule's edge: it catches the shapes it can measure, and you are still
+   bound by the parts it cannot.)*
 
+   The review system measures the product against a statement of what CORRECT LOOKS LIKE. That
+   statement is `review/SPEC.md`. It changes when the product's intended behaviour changes, and at no
+   other time. Everything else the lenses are told is either **measurement validity** (how to observe
+   without producing false negatives) or **noise to be deleted**.
+
+   - **7a. `review/SPEC.md` and `review/base/*.md` MUST NOT change in the same interval as `src/`.**
+     A round measures the product with the briefs. Move both at once and the next round's findings
+     are partly a function of the instrument getting sharper rather than the product getting worse —
+     the target moves, and the loop provably cannot terminate. This is not a stylistic preference: it
+     is why rounds 16-20 and 39-43 all failed to converge while the product was improving. Product
+     changes and instrument changes get their own intervals, with a confirmation between them.
+   - **7b. An interval is capped** (see `MAX_FILES`). Self-inflicted defects scale with how much
+     changes between independent confirmations — not with how much changes per commit. Three
+     "small" batches run back-to-back are one large interval and behave like one.
+   - **7c. A fix does not explain itself in source prose.** Reasoning goes in `review/README.md`,
+     which is audited and versioned. A source comment is an unverified claim; prose written to
+     explain a fix is the single largest defect category this project has measured. Comments state
+     what is mechanically true NOW — never what used to be true, never what a round found.
+
+   **What may go in a brief.** Only two things:
+   1. **Expected end results** — behaviour and outcome, owned by `review/SPEC.md`.
+   2. **Measurement validity** — how to observe a thing without lying to yourself: judge a popover by
+      hit test rather than bounding box; enumerate a control class rather than sampling it; emulate a
+      coarse pointer when measuring touch; fail loudly on a metric that computes NaN. These prevent
+      FALSE NEGATIVES, so they are not spoilers, and they stabilise quickly.
+
+   **What may NOT go in a brief:** a checklist of past bugs ("check the collapsed-reply pill tint"),
+   a named suspicion, or anything that tells a lens where to look. That accretion is what turned the
+   briefs into spoiler lists, biased the lenses away from first-principles discovery, and made each
+   round's finding count a function of brief growth. **Deleting such an entry is always allowed and
+   never needs justification.**
+
+   **The lenses.** Seven independent, READ-ONLY lenses, each its own agent, run in this order:
+   usability (`hnlens-usability`), UI/UX stress, design & theme, AI/ML, bug/correctness
+   (`hnlens-bughunt`), performance, OSS release audit (`oss-release`). The primary agent is biased —
+   it wrote the code and has been wrong about its own work in every round on record — so it never
+   reviews its own change. Lenses NEVER edit code or tests, never run the gate, and never commit;
+   their only deliverable is a report plus a re-runnable repro left on disk and a fix DIRECTION
+   naming the invariant that must hold. Run each as a **durable** job (foreground `task` or
+   `session_spawn`) — **never a background `task`**, which is turn-scoped and has been torn down
+   mid-hunt. Give the persona lenses (usability, UI/UX, design) a goal and a matrix; give the
+   spec lenses (AI, bug, performance, OSS) the expected behaviour and how to drive it. Never tell any
+   lens where a bug is.
+
+   **The loop.** ONE interval of fixes → gate → an independent read-only pass over just that
+   interval → close everything it finds → `node scripts/convergencecheck.mjs --confirm` → next
+   interval. A full seven-lens round only when the register has no open BLOCKER/HIGH. **A change
+   round never certifies itself.**
+
+   **Fix discipline.** A fix is not done until all four hold: (i) re-run the LENS'S repro across the
+   LENS'S matrix, not a narrower probe of your own; (ii) enumerate the SIBLINGS of the shape and fix
+   them in the same change, stating what you grepped and how many sites you found; (iii) write the
+   failing test FIRST, from the lens's own words, and **also the test for the OPPOSITE case** — the
+   recurring defect shape here is a fix that trades one wrong state for its mirror image (an outage
+   check that made absent ids retry forever; a filter rule that fixed wide and stranded narrow); both
+   tests must fail before and pass after; (iv) record each finding's ORIGIN (new-from-my-fix /
+   incomplete-sibling / pre-existing) so the self-inflicted rate stays measurable.
+
+   **A probe that passes before the fix is measuring nothing.** Prove every new guard FAILS on the
+   pre-fix state. Two guards written here passed pre-fix because the fixture never reached the code
+   under test, and both would have certified a live defect as fixed.
+
+   **TERMINATION.** "Zero findings" is unreachable — a thorough lens always finds something. A round
+   CONVERGES when, **measured against an unchanged instrument**: zero open BLOCKER/HIGH in
+   `review/REGISTER.md`, zero self-inflicted findings, and every MEDIUM either fixed or accepted in
+   writing with a rationale. The self-inflicted rate is the real signal.
+
+8. **A DEVELOPER-REPORTED DEFECT IS EVIDENCE A LENS IS BLIND — BUT IT DOES NOT LICENSE MOVING THE
+   TARGET.** Do not fix it directly: a hand-patch carries no independent signal that the problem is
+   real or fully understood, and it addresses the reported instance rather than the class, so the
+   next instance ships again and the review loop still cannot see it. Instead:
+   1. **Name the CLASS**, not the case. "What general kind of defect is this an instance of?"
+   2. **Identify which lens should have caught it, and why it didn't** — quote the wording that
+      nearly covers it and state the gap.
+   3. **Route the gap to exactly one of two places, and no third:**
+      - the report shows the **expected end result was wrong, missing or ambiguous** → update
+        `review/SPEC.md`. This is the ONLY legitimate reason to change the target, and it is
+        legitimate precisely because the product's definition of correct actually changed.
+      - the report shows the spec was right but **the lens could not observe the defect** → that is
+        **measurement validity**. Queue it, and apply it in an INSTRUMENT-ONLY interval (rule 7a) —
+        never in the same interval as the fix.
+      What rule 8 may NOT do is add "also hunt for X" to a brief. That is the accretion that moved
+      the target for twenty rounds.
+   4. **PROVE THE DETECTOR ON THE PRE-FIX STATE.** A brief or spec edit is a hypothesis until
+      demonstrated. Reproduce the defect (a scratch copy with the fix reverted, on its own port —
+      never disturb the developer's 5173) and run the upgraded lens read-only. It must
+      **independently rediscover the defect without being told it exists.** If it doesn't, iterate on
+      the instrument, not on the code.
+   5. **Only THEN fix**, on the lens's independent signal — every instance it found, root-caused,
+      with a regression guard and its opposite-case twin.
+   6. **Re-run the loop** so a clean round certifies the fix, and record it in `review/README.md`.
+
+   The success test: **the same report, made again later, would be caught by a lens first.** If a fix
+   leaves the lenses as blind as they were, the work isn't done.
 ---
 
 ## Architecture map

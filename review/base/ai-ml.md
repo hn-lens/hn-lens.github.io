@@ -1,5 +1,13 @@
 # Lens: AI / ML (output quality + personalization efficacy)
 
+> **What may change in this file.** It states EXPECTED END RESULTS (authority: `review/SPEC.md`) and
+> MEASUREMENT VALIDITY — how to observe something without producing a false negative. It must NOT
+> accumulate a checklist of past bugs, a named suspicion, or anything that tells you where to look:
+> that biases the lens away from first-principles discovery and makes each round's finding count a
+> function of this file's growth rather than of the product's state. **Deleting such an entry is
+> always allowed and never needs justification.** This file changes only in an INSTRUMENT-ONLY
+> interval, never alongside a `src/` change (AGENTS.md rule 7a, enforced by the gate).
+
 Read `_common.md` first. You are the AI/ML lens. Report to the path in the appendix
 (e.g. `/tmp/<round>_ai.md`).
 
