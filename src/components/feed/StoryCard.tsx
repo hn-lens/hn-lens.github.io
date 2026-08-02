@@ -36,6 +36,7 @@ import { stripHtml } from '../../lib/html';
 import { cn } from '../../lib/cn';
 import { effectiveLayout } from '../../lib/themes';
 import { IconButton, MenuItem, Spinner } from '../ui/primitives';
+import { usePopoverClamp } from '../ui/usePopoverClamp';
 import Logo from '../ui/Logo';
 import Favicon from '../ui/Favicon';
 import type { HnItem } from '../../types';
@@ -163,7 +164,7 @@ function StoryCard({
   const previewHiddenByLayout = effectiveLayout(themeName, layoutPref) === 'compact';
   const topCommentsQ = useQuery({
     queryKey: ['topComments', item.id],
-    queryFn: () => getTopComments(item),
+    queryFn: ({ signal }) => getTopComments(item, signal),
     enabled: showTopComments && !previewHiddenByLayout && comments > 0 && inView,
     staleTime: 5 * 60_000,
     gcTime: 30 * 60_000,
@@ -216,69 +217,8 @@ function StoryCard({
     };
   }, [menuOpen]);
 
-  // Keep the Personalize (⋯) menu inside the viewport horizontally: in narrow multi-column
-  // layouts (e.g. newspaper, the default for the royal/swiss designs) the card sits in a slim
-  // column, so the right-anchored menu would spill off the LEFT screen edge and clip its
-  // labels on phones. Nudge it back on-screen after it opens.
-  useLayoutEffect(() => {
-    const el = menuContentRef.current;
-    if (!menuOpen || !el) return;
-    // Clamped on open; CLOSED on any later viewport change (see the listener below) — after a
-    // resize the card has usually moved to a different column, so there is no correct position to
-    // re-clamp to.
-    const clamp = () => {
-        el.style.transform = 'none';
-      const r = el.getBoundingClientRect();
-      const pad = 6;
-      let dx = 0;
-      if (r.left < pad) dx = pad - r.left;
-      else if (r.right > window.innerWidth - pad) dx = window.innerWidth - pad - r.right;
-      // Vertical is the exact same problem and was never handled: the menu is absolutely positioned
-      // BELOW its trigger, so opening one on a card near the bottom of the viewport left only 22px of
-      // a 186px menu on screen (12% on phones, 25% at 1280x800) — in all 39 layout x viewport cells.
-      // Flip it above the trigger when it would overflow the bottom and there is more room above,
-      // otherwise just nudge it up; the card is already raised to z-30 while open, so the upward case
-      // paints over the preceding card the same way the downward case paints over the next one.
-      let dy = 0;
-      const overflowBottom = r.bottom - (window.innerHeight - pad);
-      if (overflowBottom > 0) {
-        // THE MENU MUST NEVER COVER ITS OWN TRIGGER.
-        //
-        // The comment above promised a flip; the code only ever nudged, which is worse than doing
-        // nothing. Lifting by the amount hanging below the fold slid the menu up OVER the ⋯ button,
-        // so the natural "tap ⋯ again to close" landed on a menu ITEM. Measured: an item sat under
-        // the tap point in 22 of 55 cells (most often `Mute <user>`), and 4 of 5 touch cells plus
-        // 9 of 18 mouse cells actually mutated the reader's mutes/follows. A dismissal silently
-        // muting an author is the worst outcome a mis-tap can have.
-        //
-        // Flip fully ABOVE the trigger when there is room; otherwise nudge up but stop short of the
-        // trigger's top edge. Either way the trigger stays uncovered and a second tap closes.
-        const trigger = menuRef.current?.getBoundingClientRect();
-        const gap = 4;
-        const roomAbove = (trigger?.top ?? r.top) - pad;
-        if (trigger && roomAbove >= r.height + gap) {
-          dy = trigger.top - gap - r.bottom; // menu's bottom sits just above the trigger
-        } else {
-          const maxLift = trigger
-            ? Math.max(0, r.bottom - (trigger.top - gap)) // never rise past the trigger
-            : Math.max(0, r.top - pad);
-          dy = -Math.min(overflowBottom, maxLift);
-        }
-      }
-      if (dx || dy) el.style.transform = `translate(${dx}px, ${dy}px)`;
-    };
-    clamp();
-    // Re-clamping is not enough on a rotate: the card itself moves to a different column, so the
-    // menu's anchor is somewhere else entirely and no clamp recovers it (measured 0% visible, 3/3,
-    // with no self-heal). Close it instead. See review/README.md (c3r20 batch 2).
-    const closeOnResize = () => setMenuOpen(false);
-    window.addEventListener('resize', closeOnResize);
-    window.addEventListener('orientationchange', closeOnResize);
-    return () => {
-      window.removeEventListener('resize', closeOnResize);
-      window.removeEventListener('orientationchange', closeOnResize);
-    };
-  }, [menuOpen]);
+  const closeMenu = useCallback(() => setMenuOpen(false), []);
+  usePopoverClamp(menuOpen, menuContentRef, menuRef, closeMenu);
 
   // The extracted-article overlay is a modal — close on Escape like every other dialog.
   useEffect(() => {

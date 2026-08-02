@@ -167,7 +167,9 @@ because a comment is what a reviewer reads *instead of* checking:
 - an overlay commented "opaque, so the controls stay legible", translucent in one theme;
 - a comment stating that switching tab clears the pinned order, which it does not;
 - a helper documented as "used when reading history is deleted", wired to nothing;
-- a cache comment quoting the cost it removed, above a cap that made that cost 3-4x WORSE.
+- a cache comment quoting the cost it removed, above a cap that made that cost 3-4x WORSE;
+- a popover clamp commented as matching its sibling menu, which copied the clamp but not the
+  sibling's close-on-resize — so it could still drift off-screen while open.
 
 So treat prose in the source as an ASSERTION UNDER TEST, not as documentation:
 
@@ -178,6 +180,11 @@ So treat prose in the source as an ASSERTION UNDER TEST, not as documentation:
    two files is invisible from either file alone.
 3. A function whose comment describes an invariant it enforces is worth a **caller check**: does
    anything actually call it? An unreferenced guard is indistinguishable from no guard.
+3b. **A claim of PARITY with a named sibling — "mirrors X", "same as the story-card menu", "like the
+   article path" — asserts EVERY behaviour of the referent, not just the headline one.** Open the
+   referent, enumerate what it actually does, and diff the two implementations. A subset carrying a
+   parity comment is worse than an uncommented subset: the comment tells the next reader that the
+   diff has already been done, so nobody looks again.
 4. Report a false claim as a defect **in its own right**, with the quoted comment and the
    contradicting `file:line` — even when the underlying behaviour happens to be acceptable. The
    comment will mislead the next change, which is how several of these became real bugs.

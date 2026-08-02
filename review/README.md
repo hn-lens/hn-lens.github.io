@@ -3596,3 +3596,124 @@ async Dexie read-ids query populated → now it waits for the seeded read item t
 *Lesson: a harness that waits for "some content OR the empty state" races an async data source — wait
 for the SPECIFIC expected element, and drive outage states from a FRESH load, not a keepPreviousData
 tab-switch.*
+
+## c3r42 — full 7-lens round on b8b1984, then two fix batches (2026-08-02)
+
+**Brief upgrades first (golden rule #8).** The developer report "the GitHub release action is failing"
+was treated as evidence a LENS was blind, not as a work order. Three base prompts and the spec were
+upgraded BEFORE the round:
+- `base/oss-release.md` — audited workflow YAML statically but never checked whether the workflow
+  actually PASSES. Every lens tests the local preview and the local gate, and both were green while
+  public CI was red. Now requires inspecting real run history (read-only `gh`), reporting failures,
+  INTERMITTENCY, the local-green/hosted-red shape, and whether the deployed page boots.
+- `base/uiux-stress.md` — had NO touch-target directive at all, yet two consecutive rounds each found
+  exactly one undersized control. Now requires ENUMERATING every interactive element type (inputs and
+  links included), per cluster, reported as one table.
+- `base/_common.md` — added the partial-parity claim shape: a comment claiming parity with a named
+  sibling asserts EVERY behaviour of the referent.
+- `SPEC.md` §11 — records the accepted narrow-width toolbar centre gap with its exact scope.
+
+Both new detectors fired immediately: the touch enumeration and the parity audit produced the #1 and
+#3 findings of the round.
+
+**Round outcome: 1 HIGH, 9 MEDIUM verified.** The "…" overflow menu having no VERTICAL clamp was
+found independently by THREE lenses. The OSS lens found public CI red on 11 of 16 runs on main, with
+deploy not gated on CI — 11 commits published over a red gate — and traced the local-green/hosted-red
+divergence to the repo bundling no fonts, so width-sensitive assertions measure differently on the
+runner. (Verified: 11 failures / 5 successes; the failures were `wrapqualitytest` x3, `audit` x2,
+`offlineuxtest` x1 — the earlier CI "fix" had closed only two of the three.)
+
+**Batch 1** — menu vertical clamp (HIGH), deploy gated on CI, touch-target siblings, "Not interested"
+counted as positive engagement, `closeTool` wiping the search filter.
+- The two popovers had TWO divergent clamp implementations, one claiming parity with the other. They
+  now share ONE hook (`ui/usePopoverClamp.ts`), so parity is structural rather than copied.
+- `hide` was the unhandled sibling of `unsave` in the withdrawn-engagement cleanup. First attempt
+  re-derived "hidden" locally and was ORDER-DEPENDENT — caught by `feedstabilitytest`, which the file's
+  own comment predicted. Replaced by consuming `classifyEngagement`'s `hidden` set, the declared
+  single source of truth.
+
+**Two diff-scoped passes then found SIX self-inflicted defects in batch 1** — the strongest argument
+yet for check (iv):
+- **BLOCKER**: the new `workflow_run` deploy trigger let a FORK PULL REQUEST publish. CI also runs on
+  `pull_request`, the `branches` filter matches the TRIGGERING run's head branch, and a fork's default
+  branch is `main` — so a PR from `fork:main` would have been built and published from a job holding
+  `pages: write`. Now requires `event == 'push'` AND a matching `head_repository`.
+- **HIGH**: a flipped-up menu slid UNDER the sticky TopNav (z-30 vs z-20) — measured top 26px against a
+  57px nav, `elementFromPoint` returning the header. The vertical algorithm was rewritten to pick a
+  whole side (below / fully above / larger side capped and scrolling) and to treat the pinned header's
+  bottom as the top of the usable band. It never partially lifts, which is what put a menu ITEM under
+  the dismissal tap.
+- **HIGH**: the `closeTool` fix re-introduced the stranded-filter bug below 400px. The real invariant is
+  not about which tool owns the query — it is that a filtered thread must always offer a VISIBLE way
+  out. A Clear control now lives on the RESULTS, so it holds on every route (tool switch, resize,
+  rotate), and Escape clears a filter that outlived its input.
+- Plus: a height-only re-place could put the menu below the fold; the release-gate check overclaimed;
+  guards under-covered (the menu sweep ran with no `hasTouch`, the profile leg rendered "User not
+  found" and measured nothing, and one `check()` was dropped so its sweep computed offenders and never
+  asserted them).
+
+**Batch 2** — preview requests continuing after cards unmount (now consume React Query's AbortSignal;
+new `previewcanceltest`), the "Why #N?" panel printing a signed value for a signal that contributes
+nothing until the learned model trains, `getItems` turning a total item-endpoint outage into a
+confident "0" with no Retry, the search `<mark>` failing AA, Chrome's theme-blind search-cancel glyph,
+and `mdLite` emitting bullets that rendered with no markers (scoped to a new `.md-body`, leaving HN
+comment bodies alone per SPEC §10).
+
+*Lessons.* (1) A probe can be VACUOUS: the first "Not interested" guard passed pre-fix because a
+value-less `dwell` contributes 0, so the story never entered the tally being tested — the finding was
+real and the probe was wrong. Always confirm a new guard FAILS before the fix. (2) A bounding box is
+not a hit test: two of the worst defects this round were fully "inside the viewport" and still
+unreachable. (3) Fixing a stranding bug per-ROUTE invites the next route; anchor the affordance to the
+STATE (the results) instead.
+
+## c3r43 — CONFIRMING round on the c3r42 fix batch (2026-08-02): NOT converged
+
+Six lenses (perf not run this round — recorded as a gap). Outcome: **0 BLOCKER, 2 HIGH, 10 MEDIUM**,
+and a **self-inflicted count of ~13** — sharply UP from c3r41's 2. The cause is not the review side:
+this round changed 27 files, and the measured relationship between batch size and self-inflicted
+defects is the same one CONVERGENCE MODE was written for. The ~5-finding cap was respected per batch
+but three batches ran back-to-back before a full round, which is effectively one large batch.
+
+**Confirmed sound under adversarial re-testing** (the substance of the c3r42 work held): the shared
+`usePopoverClamp` across 96 hit-tested layout x viewport cells; `.seg-btn`/`input[type=search]` truly
+44px app-wide; `.md-body` bullet scoping (markers painted in 62/62, HN comment bodies untouched);
+`mark` now AA in 62/62 (worst 5.15, was 3.92); `classifyEngagement` byte-identical across event
+orderings with all five derivations agreeing; the deploy gate's automatic path — fork-PR,
+dispatch-triggered CI, red/cancelled CI, tag push, stale commit and skipped-`needs` all correctly
+closed. The design lens also closed the c3r41-accepted OP/"new"/reply-pill follow-up (AA in 62/62).
+
+**Fixed in this batch:**
+- **HIGH (OSS)** three NEW files were untracked while already imported by tracked files — a
+  non-atomic commit would have failed `tsc -b` and broken the public build. Now tracked.
+- **MEDIUM (bug)** the new "Escape clears a filter with no tool open" branch was INERT: the keydown
+  effect was not keyed on `query`, so the listener held a stale value — the handler could not see the
+  exact case it was written for. Guarded by `discussionviewtest` F8 (pre-fix FAIL demonstrated).
+- **MEDIUM (bug)** a profile printed "Stories (0) · Comments (0)" directly above its own outage
+  error, which SPEC §6 forbids. Counts are now omitted while the activity fetch is failing.
+- **MEDIUM (uiux)** the results `Clear` control — added so a filter always has a visible way out —
+  was itself 26px on touch among 44px neighbours.
+- Four false comments introduced by the previous batch (a width-conditional rule the code does not
+  implement, "enumerating finds them all" above a two-selector list, an overstated claim about what a
+  negative term-overlap means, and a gate check that claimed to prove publishing safe when it checks
+  for specific known regressions).
+
+**Still open — carried, not fixed:**
+- **HIGH (OSS)** every dependency-bump PR fails the gate on `third-party notices up to date`
+  (the notices carry a Version column a bot cannot regenerate); now that deploy is gated on CI, a
+  merged bump would silently stop publishing rather than just showing a red X.
+- **MEDIUM** the "Not interested" fix corrected the habit COUNT but not the affinity SUM, so a
+  rejected story can still leave +2.0–2.5 of positive domain affinity (AI lens F1, measured).
+- **MEDIUM** regime-dependent discovery failure: with a taste concentrated on few domains, saturated
+  affinity features out-vote content and no slider setting moves a position (AI lens F2).
+- **MEDIUM** `hover:opacity-90` drops primary-button labels below AA in 28/62 cells (design M1).
+- **MEDIUM** searching a discussion discards every subtree the reader had expanded (usability).
+- **MEDIUM** `releasegatecheck` is a known-regression check, not a proof (now documented as such);
+  7 of 8 semantic mutations still pass it.
+- **MEDIUM** docs still describe the pre-gate push→publish flow.
+- Plus LOWs: markdown headings flattened (sibling of the bullet fix), absent item on `/item/:id`
+  retries forever, the results Clear also closes an unrelated open tool, stale breakpoint numbers.
+
+*Lesson (the important one).* Three sequential fix batches before a confirming round behaved like one
+oversized batch and produced the worst self-inflicted rate yet measured. The cap that matters is not
+findings-per-batch, it is **changes between independent confirmations**. Next round: one batch, then a
+full round, then stop — regardless of how many findings are outstanding.

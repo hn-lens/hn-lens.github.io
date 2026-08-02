@@ -437,6 +437,111 @@ console.log('\n[F] toolbar keyboard + jump interaction');
   }
   check('narrow ⇅ sort toggle cycles through all four sorts (every label reachable)', new Set(cycleLabels).size === 4, JSON.stringify(cycleLabels));
   await page.setViewportSize({ width: 1280, height: 900 });
+
+  // F5 — WIDE: the inline search box is visible and owns the query, so opening and closing
+  // Summary/Ask must leave the reader's filter alone. Paired with F6 below, which covers the narrow
+  // width where the box has folded and the opposite behaviour is required; one dismissal rule has to
+  // satisfy both, so testing either width alone passes a rule that strands the other.
+  await page.waitForTimeout(200);
+  const inline = page.locator('.disc-tb-bar input[type="search"]').first();
+  await inline.fill('the');
+  await page.waitForTimeout(350);
+  const beforeTool = await page.evaluate(() => ({
+    q: document.querySelector('.disc-tb-bar input[type="search"]')?.value ?? '',
+  }));
+  // Open Summary from the toolbar, then close it again via the same button.
+  for (const _pass of [0, 1]) {
+    await page.evaluate(() => {
+      const b = [...document.querySelectorAll('.disc-tb-bar button')].find((x) => /summary/i.test(x.textContent || x.getAttribute('aria-label') || ''));
+      b?.click();
+    });
+    await page.waitForTimeout(250);
+  }
+  const afterTool = await page.evaluate(() => ({
+    q: document.querySelector('.disc-tb-bar input[type="search"]')?.value ?? '',
+  }));
+  check(
+    'opening and closing Summary preserves the in-thread search filter',
+    beforeTool.q === 'the' && afterTool.q === 'the',
+    JSON.stringify({ beforeTool, afterTool }),
+  );
+  await inline.fill('');
+  await page.waitForTimeout(200);
+
+  // F6 — the thread must never be left FILTERED with no visible control to clear the filter. Below
+  // ~400px the inline box folds into the "…" menu and the tray owns the input, so a rule phrased as
+  // "the search tool clears its own query" strands the reader: switch from Search to Summary and the
+  // results still own the page with no input, and Escape is inert because it is guarded on a
+  // non-null tool. The invariant is about REACHABILITY, not about which tool cleared what.
+  await page.setViewportSize({ width: 340, height: 780 });
+  await page.waitForTimeout(300);
+  const openFromMenu = async (label) => {
+    await page.evaluate(() => document.querySelector('.disc-toolbar button[aria-label="More discussion tools"]')?.click());
+    await page.waitForTimeout(250);
+    await page.evaluate((l) => {
+      const items = [...document.querySelectorAll('.disc-toolbar [role="menu"] button, .disc-toolbar [role="menu"] [role="menuitem"]')];
+      items.find((x) => new RegExp(l, 'i').test(x.textContent || ''))?.click();
+    }, label);
+    await page.waitForTimeout(300);
+  };
+  await openFromMenu('search');
+  // The folded inline box is still in the DOM (display:none) at this width, so target the VISIBLE
+  // input — the tray's — not merely the first match.
+  const trayInput = page.locator('.disc-toolbar input[type="search"]:visible').first();
+  if (await trayInput.count()) {
+    await trayInput.fill('the');
+    await page.waitForTimeout(350);
+    await openFromMenu('summary');
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(300);
+    const stranded = await page.evaluate(() => {
+      const filtered = /\d+\s+match/i.test(document.body.innerText);
+      const inputVisible = [...document.querySelectorAll('.disc-toolbar input[type="search"]')]
+        .some((el) => el.offsetParent !== null);
+      return { filtered, inputVisible };
+    });
+    check(
+      'narrow: the thread is never left filtered with no visible way to clear it',
+      !stranded.filtered || stranded.inputVisible,
+      JSON.stringify(stranded),
+    );
+  }
+  // F7 — the SIBLING route into the same stranded state, which has nothing to do with tools: type a
+  // filter while the inline box is visible, then NARROW the window so that box folds away. `tool` is
+  // already null, so a tool-centred rule cannot help. Whatever the route, a filtered thread must
+  // offer a visible way out.
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.waitForTimeout(250);
+  const wideBox = page.locator('.disc-tb-bar input[type="search"]:visible').first();
+  if (await wideBox.count()) {
+    await wideBox.fill('the');
+    await page.waitForTimeout(350);
+    await page.setViewportSize({ width: 360, height: 780 });
+    await page.waitForTimeout(400);
+    const afterNarrow = await page.evaluate(() => {
+      const filtered = /\d+\s+match/i.test(document.body.innerText);
+      const inputVisible = [...document.querySelectorAll('.disc-toolbar input[type="search"]')]
+        .some((el) => el.offsetParent !== null);
+      const clearVisible = [...document.querySelectorAll('button')]
+        .some((el) => el.offsetParent !== null && /^clear/i.test((el.textContent || el.getAttribute('aria-label') || '').trim()));
+      return { filtered, inputVisible, clearVisible };
+    });
+    check(
+      'a filter that outlives its input (window narrowed) still has a visible way out',
+      !afterNarrow.filtered || afterNarrow.inputVisible || afterNarrow.clearVisible,
+      JSON.stringify(afterNarrow),
+    );
+    // F8 — and ESCAPE must dismiss it too. The keydown listener is installed by an effect; if that
+    // effect is not keyed on the query, the handler closes over the value from the render that
+    // installed it, so a filter typed after the last tool change is invisible to it and the key does
+    // nothing. Checking only that a visible control exists cannot see that.
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(400);
+    const afterEsc = await page.evaluate(() => /\d+\s+match/i.test(document.body.innerText));
+    check('Escape clears a filter that outlived its input', !afterEsc, `stillFiltered=${afterEsc}`);
+  }
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.waitForTimeout(200);
 }
 
 await b.close();

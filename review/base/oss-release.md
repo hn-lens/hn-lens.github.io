@@ -82,6 +82,24 @@ Assume a hostile stranger will read every committed byte and every line of git h
    succeeds; the GitHub Actions workflow(s) in `.github/workflows/` are correct and safe (Pages
    base path, least-privilege permissions, no secret exposure in logs, public registry); `base:
    './'` + HashRouter so Pages works on any path.
+   **The workflows must actually PASS on the HOSTED runner — reading the YAML is not enough.** A
+   developer had to report "the release action is failing" by hand, because every lens exercises the
+   LOCAL preview and the LOCAL gate, and both were green. Public CI/CD is itself a public-facing
+   surface: a red run on the default branch is what a visitor and a prospective contributor see, and
+   it means the project's own quality gate is not holding. Inspect the real run history (read-only)
+   and report:
+   - any FAILED run on the default branch, and whether the cause is a product defect or an
+     environment/timing artefact of the slower hosted runner;
+   - INTERMITTENCY — the same workflow red then green across recent commits with no relevant change
+     is a flaky gate. That is a real finding even when the latest run is green, because a gate that
+     cries wolf trains everyone to ignore it;
+   - the local-green/hosted-red shape specifically: hosted runners are slower, so harnesses that wait
+     for "some content OR the empty state", or that depend on prefetched or kept-previous data, race
+     there while passing on a fast dev machine;
+   - whether the DEPLOYED public site actually loads (fetch the Pages URL) — a green deploy job does
+     not prove the published page boots.
+   Use read-only `gh` commands only (`gh run list`, `gh run view`, the logs API). NEVER re-run,
+   cancel, dispatch, or otherwise mutate a workflow, and never push.
 8. **Privacy / telemetry posture.** No unexpected analytics, telemetry, or phone-home; the "runs
    entirely in the browser, all data local" claim holds — the only external calls are the
    documented, user-toggleable ones (remote favicons, the reader proxy, a BYO-key cloud LLM),

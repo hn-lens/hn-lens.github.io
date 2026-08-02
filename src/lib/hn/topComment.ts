@@ -106,7 +106,7 @@ function releasePreviewSlot(): void {
   previewWaiters.shift()?.();
 }
 
-export async function getTopComments(item: HnItem): Promise<TopComment[]> {
+export async function getTopComments(item: HnItem, signal?: AbortSignal): Promise<TopComment[]> {
   const cached = await kvGet<TopComment[]>(cacheKey(item.id));
   if (cached) return cached;
   // Childless check BEFORE the slot (cheap, both sources carry the top-level ids): a story with no
@@ -118,6 +118,11 @@ export async function getTopComments(item: HnItem): Promise<TopComment[]> {
   let comments: HnItem[] = [];
   let kids: number[] = [];
   try {
+    // Waiting for a slot can take a long time behind a deep feed, and by the time one frees up the
+    // card that asked may be gone — navigating away used to leave the whole queue draining, issuing
+    // hundreds of requests for cards no longer mounted. React Query aborts this signal when the last
+    // observer unsubscribes, so an abandoned request never reaches the network.
+    if (signal?.aborted) return [];
     // Rank from the firebase item's kids (best-first); the For-You item's own kids are Algolia's
     // chronological order. Cache hit (no request) for firebase feeds; a bounded, cached fetch for
     // For-You. Fall back to the item's own kids if the firebase fetch fails (e.g. offline).

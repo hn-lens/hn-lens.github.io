@@ -12,7 +12,7 @@ interface MemEntry {
   cachedAt: number;
 }
 const memItems = new Map<number, MemEntry>();
-const inflight = new Map<number, Promise<HnItem | null>>();
+const inflight = new Map<number, Promise<HnItem | null | undefined>>();
 
 /** Run an async fn over items with bounded concurrency, preserving order. */
 export async function mapPool<T, R>(
@@ -33,7 +33,7 @@ export async function mapPool<T, R>(
   return results;
 }
 
-export async function getItem(id: number, ttl = ITEM_TTL): Promise<HnItem | null> {
+export async function getItem(id: number, ttl = ITEM_TTL): Promise<HnItem | null | undefined> {
   const mem = memItems.get(id);
   if (mem && Date.now() - mem.cachedAt < ttl) return mem.item;
 
@@ -55,7 +55,7 @@ export async function getItem(id: number, ttl = ITEM_TTL): Promise<HnItem | null
     } else if (cached) {
       return cached.item; // fall back to stale on network failure
     }
-    return item;
+    return item; // null = the item does not exist, undefined = the fetch failed
   })();
 
   inflight.set(id, p);
@@ -68,7 +68,17 @@ export async function getItem(id: number, ttl = ITEM_TTL): Promise<HnItem | null
 
 export async function getItems(ids: number[], concurrency = 8, ttl?: number): Promise<HnItem[]> {
   const arr = await mapPool(ids, (id) => getItem(id, ttl), concurrency);
-  return arr.filter((x): x is HnItem => !!x && !x.deleted && !x.dead);
+  const fetched = arr.filter((x): x is HnItem => !!x);
+  // Getting NOTHING back because every REQUEST FAILED is an outage; getting nothing back because the
+  // ids are gone is a genuine empty. `getItem` distinguishes them (undefined = the fetch failed,
+  // null = the item does not exist), which matters because surfaces that render a COUNT — a
+  // profile's "Stories (0)", the Read tab's "No reading history yet" — would otherwise state a
+  // confident zero the network invented. Requiring a REAL failure also stops a stale read history of
+  // deleted ids from becoming a permanent outage whose Retry can never succeed. A PARTIAL failure
+  // stays a tolerated gap: the pool is deliberately built to paint around missing cards.
+  const failed = arr.some((x) => x === undefined);
+  if (ids.length > 0 && fetched.length === 0 && failed) throw new Error('Could not load stories');
+  return fetched.filter((x) => !x.deleted && !x.dead);
 }
 
 /**

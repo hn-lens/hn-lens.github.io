@@ -90,6 +90,46 @@ const m4 = await page.evaluate(async () => {
 check('save→unsave leaves the domain habit count intact for that card (≥2)', m4.domainEngagedN >= 2, `domainEngagedN=${m4.domainEngagedN} affinity=${m4.domainAffinity}`);
 check('save→unsave does not collapse the card\u2019s "often" chip', m4.reasons.some((t) => /often/i.test(t)), JSON.stringify(m4.reasons));
 
+// ---- a story marked "Not interested" is NOT positive engagement (drives the REAL computeAffinities) ----
+// `hide` is the same shape as `unsave`: the negative weight correctly cancels the read in the
+// affinity SUM, but the read had already marked the item as a distinct engaged item and nothing took
+// that back. One genuine read plus one read-then-hidden story on the same domain therefore claimed a
+// two-item habit — "You often read X" — on the strength of a story the reader explicitly rejected.
+const m5 = await page.evaluate(async () => {
+  const I = window.__hnlens.interactions();
+  const F = window.__hnlens.features();
+  const S = window.__hnlens.strategies();
+  const p = window.__hnlens.prefs.getState();
+  p.set({ followedDomains: [], followedUsers: [], keywordsBoost: [], mutedDomains: [], mutedUsers: [], keywordsMute: [] });
+  const probe = { id: 9, by: 'alice', url: 'https://ex.com/probe', title: 'A neutral headline', score: 0, descendants: 0, time: Math.floor(Date.now() / 1000) - 20 * 86400, type: 'story' };
+  const run = async (hideSecond) => {
+    await I.clearAllData();
+    // A genuine READ is an open plus a real dwell: dwellSignal(0) is 0, so a value-less dwell
+    // contributes nothing and the story would never enter the tally in the first place.
+    const t = (type, itemId, value) => I.track({ type, itemId, value, domain: 'ex.com', author: 'alice' });
+    await t('open_link', 1);
+    await t('dwell', 1, 80_000);
+    await t('open_link', 2);
+    await t('dwell', 2, 80_000);
+    if (hideSecond) await t('hide', 2);
+    const aff = await I.computeAffinities();
+    const ctx = S.makeContext(window.__hnlens.prefs.getState(), aff);
+    const fs = F.computeFeatures(probe, ctx);
+    return { n: fs.domainEngagedN, reasons: S.scoreItem(probe, ctx).reasons };
+  };
+  return { kept: await run(false), hidden: await run(true) };
+});
+check(
+  'a story marked "Not interested" drops out of the domain habit tally',
+  m5.hidden.n < m5.kept.n,
+  JSON.stringify({ keptN: m5.kept.n, hiddenN: m5.hidden.n }),
+);
+check(
+  'one read + one rejected story does NOT earn an "often" habit chip',
+  !m5.hidden.reasons.some((t) => /often/i.test(t)),
+  JSON.stringify(m5.hidden.reasons),
+);
+
 await b.close();
 console.log(`\n${fails.length === 0 ? 'RESULT: REASONS TEST PASS \u2713' : `RESULT: ${fails.length} FAILED`}`);
 process.exit(fails.length ? 1 : 0);

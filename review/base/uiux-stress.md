@@ -65,6 +65,29 @@ dark); a glitch often appears only in a specific layout×design×mode×viewport 
 multi-column layout that is the default for some design, on a phone; a switch that only breaks in dark
 mode).
 
+## Touch-target sweep: ENUMERATE every interactive element, never sample the buttons (folded in)
+
+Under real touch emulation every interactive element must meet the ~44px minimum tap target. Two
+consecutive rounds each surfaced exactly ONE control below the minimum while its neighbours in the
+same row were correct — found one at a time, because each pass eyeballed the obvious buttons.
+Sampling finds one per round forever; enumeration finds them all in a single pass.
+
+Do it exhaustively, per container, with touch emulation on:
+
+1. Query EVERY interactive node in the surface, not just `<button>`:
+   `button, a[href], input, select, textarea, [role="button"], [role="menuitem"], [tabindex]:not([tabindex="-1"])`.
+   The recurring miss is the NON-button element — a text/search `<input>` at 34px while every sibling
+   button in its row is 44px, or a menu row that is an `<a>`.
+2. Measure each with `getBoundingClientRect()` and report every element under the minimum with its
+   accessible name, tag and measured height/width, as ONE table — not as one finding per control.
+3. Repeat for each control cluster the product has (discussion toolbar and its overflow menu,
+   story-card action row and its menu, feed tabs, sidebar, settings rows, dialogs). A sizing rule
+   applied to a container is normally applied by a SELECTOR LIST, and a selector list is exactly
+   where one element type gets forgotten.
+4. Flag the INVERSE too: a control that receives touch sizing on a FINE pointer (a mouse), inflating
+   desktop rows. Sizing must key off pointer capability, not viewport width — a narrow desktop window
+   is not a touch device.
+
 ## Defect classes to hunt (screenshot the symptom, then measure it)
 
 - **Malformed / broken-looking controls (screenshot it — metrics are blind).** Per the method above:

@@ -281,8 +281,27 @@ New information (a different trigger, a wider blast radius, a wrong root cause) 
 
 Treat these as SPEC-GAPs. If behaviour here looks wrong, report it as a question, not a defect:
 
-- Whether bulleted and numbered AI output should render with markers, and whether `.hn-html` should
-  style lists at all given it is shared with HN comment bodies.
+- Whether `.hn-html` should style lists at all, given it is shared with HN comment bodies. (AI output
+  is now settled: bulleted output renders real markers via `.md-body`, which is applied only where
+  model output is rendered; numbered output stays as text so the ordinal the model wrote survives.)
 - Whether *Load more* may change the learned normalisation mid-session (see 2.3).
 - Exact copy anywhere. Wording is a LOW unless it is factually false or contradicts another surface.
 - Whether the shipped internal-process meta-docs (`review/`, `AGENTS.md`) should be published.
+
+---
+
+## 11. Layout — accepted tradeoffs
+
+Deliberated and accepted by the maintainer. Re-reporting these as new defects is not useful;
+reporting that one has grown BEYOND its stated scope is.
+
+- **Discussion toolbar at ≤400px: empty space in the centre once Search folds.** The toolbar keeps
+  every control on ONE row at every width by degrading controls in a fixed priority order, with the
+  Search box as the flex filler that absorbs the slack. At the narrowest widths Search itself must
+  fold into the "…" menu — it folds LAST, by design — and once the filler is gone, the remaining
+  count-on-the-left / actions-on-the-right layout leaves a gap between them. This is a real tension
+  between two of the product's own rules ("Search folds last" and "no visible empty space") which
+  cannot both hold inside a one-row constraint at that width; count-left/actions-right is a standard
+  mobile bar layout. **Still in scope for a finding:** an empty centre ABOVE ~400px, a second row at
+  any width, a control folding out of the documented priority order, or anything folded becoming
+  unreachable from the "…" menu.

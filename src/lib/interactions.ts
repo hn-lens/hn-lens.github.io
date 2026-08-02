@@ -217,7 +217,7 @@ export async function computeAffinities(): Promise<Affinities> {
   // a bounce or a bare discussion glance must NOT accrue positive affinity, or a domain you only
   // bounce off ranks UP and the "why" chip falsely says "You often read X". (A bounce's separate
   // negative `dwell` event still applies; a bare glance nets 0.)
-  const { engaged } = classifyEngagement(events);
+  const { engaged, hidden } = classifyEngagement(events);
   // Muted domains/users are hard-filtered from the feed; don't let past
   // engagement with them leak back into learned affinity either.
   const { mutedDomains, mutedUsers } = usePrefs.getState();
@@ -273,6 +273,7 @@ export async function computeAffinities(): Promise<Affinities> {
     // of an interaction the reader had explicitly withdrawn. Undone engagement is not engagement.
     const counts = w > 0 && e.type !== 'unhide';
     if (e.type === 'unsave' && e.itemId) undone.add(e.itemId);
+
     const rec = e.itemId ? (perItem[e.itemId] ??= { dw: 0, aw: 0, counted: false }) : undefined;
     if (e.domain && !mutedD.has(e.domain)) {
       domains[e.domain] = (domains[e.domain] ?? 0) + w;
@@ -295,6 +296,17 @@ export async function computeAffinities(): Promise<Affinities> {
   // Drop items whose engagement was withdrawn AND that have no surviving positive weight. Checking
   // the residual weight matters: a story you saved, READ, then un-saved is still genuinely engaged,
   // so only the ones left with nothing are removed from the habit tally.
+  // An item the reader marked "Not interested" leaves the tally regardless of residual weight:
+  // unlike an undone save, that is an explicit negative judgement. `hidden` comes from
+  // `classifyEngagement`, the single source of truth for "did the user positively engage" — it
+  // resolves hide/unhide by latest timestamp, so this stays order-independent like every other
+  // caller. Deriving it again here would make the habit tally a fourth, disagreeing definition.
+  for (const id of hidden) {
+    for (const set of domainItems.values()) set.delete(id);
+    for (const set of authorItems.values()) set.delete(id);
+    const rec = perItem[id];
+    if (rec) rec.counted = false;
+  }
   for (const id of undone) {
     const rec = perItem[id];
     if (rec && rec.dw <= 0 && rec.aw <= 0) {

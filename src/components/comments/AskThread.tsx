@@ -139,7 +139,7 @@ export default function AskThread({ story, tree }: { story: HnItem; tree: Algoli
             <span className="font-medium text-fg">Q:</span> {asked}
           </p>
           <div
-            className="hn-html text-sm text-fg/90"
+            className="hn-html md-body text-sm text-fg/90"
             dangerouslySetInnerHTML={{ __html: mdLite(answer || (loading ? '…' : '')) }}
           />
           {/* The provenance/caveat/attribution row is shown ONLY when a model actually produced this

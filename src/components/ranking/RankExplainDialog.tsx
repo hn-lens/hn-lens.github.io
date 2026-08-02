@@ -119,8 +119,19 @@ export default function RankExplainDialog({
     dataPoints.push({ text: `${s.authorAffinity > 0 ? 'You engage with' : 'You skip'} ${s.author}`, val: fmt(s.authorAffinity) });
   const contentSuffix = fetchArticleText ? ' + article text' : '';
   if (s.relevance > 0.01) dataPoints.push({ text: `Embedding is similar to stories you read (title + HN text${contentSuffix})`, val: s.relevance.toFixed(2) });
+  // Unlike every other row here, term overlap is NOT one of the blend's terms: it reaches the score
+  // only as a feature of the learned model, so beside real contributions it read as "+0.39 helped
+  // this rank" while contributing exactly nothing — the DEFAULT state, since the model starts
+  // untrained. The text now says which of the two situations this is. The SIGN stays: the measure is
+  // contrastive (-1..1) and goes negative when a story's words match the profile built from stories
+  // you REJECTED, so dropping the sign made a negative score read as a positive match.
   if (Math.abs(s.termAffinity) > 0.01)
-    dataPoints.push({ text: `Title${contentSuffix ? ' + article' : ''} words overlap terms from titles + comments you engaged with`, val: fmt(s.termAffinity) });
+    dataPoints.push({
+      text:
+        `Title${contentSuffix ? ' + article' : ''} words ${s.termAffinity > 0 ? 'overlap terms from titles + comments you engaged with' : 'lean toward terms from stories you rejected'}` +
+        (learnedMovesRank ? ' (via the learned model)' : ' — feeds the learned model, which is not moving this rank yet'),
+      val: fmt(s.termAffinity),
+    });
 
   return createPortal(
     <div

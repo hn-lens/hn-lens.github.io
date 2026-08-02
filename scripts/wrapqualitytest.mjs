@@ -45,6 +45,62 @@ const b = await chromium.launch({ headless: true });
 const ctx = await b.newContext({ viewport: { width: 1280, height: 800 } });
 const page = ctx.pages()[0] || (await ctx.newPage());
 
+// Sweep the "…" overflow menu's placement across short viewports. Judged by HIT TEST, not just the
+// bounding box: the sticky TopNav paints above the menu, so a menu flipped up under it is invisible
+// AND unhittable (`elementFromPoint` returns the header); and a menu lifted over its own trigger puts
+// a menu ITEM under the dismissal tap. Runs under BOTH pointer types because touch sizing makes the
+// menu ~120px taller, which is the case that actually runs out of room.
+async function sweepMenuPlacement(pg, label) {
+  const offenders = [];
+  for (const [w, h] of [[390, 500], [320, 568], [568, 320], [360, 640], [640, 360], [844, 390]]) {
+    await pg.setViewportSize({ width: w, height: h });
+    await pg.waitForTimeout(180);
+    await pg.keyboard.press('Escape');
+    await pg.waitForTimeout(100);
+    const opened = await pg.evaluate(() => {
+      const t = document.querySelector('.disc-toolbar button[aria-label="More discussion tools"]');
+      if (!t) return false;
+      t.click();
+      return true;
+    });
+    if (!opened) continue; // nothing folded at this width — no menu to place
+    await pg.waitForTimeout(250);
+    const b = await pg.evaluate(() => {
+      const m = document.querySelector('.disc-toolbar [role="menu"]');
+      const t = document.querySelector('.disc-toolbar button[aria-label="More discussion tools"]');
+      if (!m || !t) return null;
+      const r = m.getBoundingClientRect();
+      const tr = t.getBoundingClientRect();
+      const atTrigger = document.elementFromPoint(tr.left + tr.width / 2, tr.top + tr.height / 2);
+      const items = [...m.querySelectorAll('[role="menuitem"], button')];
+      const unhittable = [];
+      for (const it of items) {
+        const ir = it.getBoundingClientRect();
+        if (ir.width === 0 || ir.height === 0) continue;
+        const at = document.elementFromPoint(ir.left + ir.width / 2, ir.top + ir.height / 2);
+        if (!at || !m.contains(at)) unhittable.push((it.textContent || '').trim().slice(0, 16) || '?');
+      }
+      return {
+        top: Math.round(r.top), bottom: Math.round(r.bottom),
+        left: Math.round(r.left), right: Math.round(r.right),
+        vw: window.innerWidth, vh: window.innerHeight,
+        coversTrigger: !!atTrigger && m.contains(atTrigger),
+        unhittable,
+        scrolls: m.scrollHeight > m.clientHeight + 1,
+      };
+    });
+    if (!b) { offenders.push(`${label} ${w}x${h}:no-menu`); continue; }
+    const over = Math.max(0, b.bottom - b.vh) + Math.max(0, -b.top);
+    const overX = Math.max(0, -b.left) + Math.max(0, b.right - b.vw);
+    if (over > 1 || overX > 1) offenders.push(`${label} ${w}x${h}:overY=${over},overX=${overX}`);
+    if (b.coversTrigger) offenders.push(`${label} ${w}x${h}:menu covers its own trigger`);
+    // A scrolling menu legitimately keeps items outside its scrollport; only judge reachability when
+    // the whole list is supposed to be visible at once.
+    if (!b.scrolls && b.unhittable.length) offenders.push(`${label} ${w}x${h}:unhittable=${b.unhittable.join(',')}`);
+  }
+  return offenders;
+}
+
 try {
   await page.route(/hacker-news\.firebaseio\.com/, (r) => {
     const u = r.request().url();
@@ -198,6 +254,19 @@ try {
   await page.waitForTimeout(200);
   const menuAfterResize = await page.evaluate(() => !!document.querySelector('.disc-toolbar [role="menu"]'));
   check('the "…" menu closes on a viewport resize while open (no off-screen drift)', !menuAfterResize, `menuStillOpen=${menuAfterResize}`);
+
+  // The menu must stay on-screen VERTICALLY too, at REAL phone heights. The clamp above only ever
+  // handled the horizontal axis while its comment claimed parity with the story-card menu, which
+  // clamps both and flips above the trigger. The check that was supposed to catch this ran every
+  // narrow width at height:800 — a height no phone has — so the whole axis went unmeasured: at
+  // 568x320 (landscape phone) the entire menu opened below the fold, and tapping "…" appeared to do
+  // nothing. Sweep short viewports and require the menu fully inside on BOTH axes.
+  const vOffenders = await sweepMenuPlacement(page, 'mouse');
+  check(
+    'the "…" overflow menu stays on-screen, off the header and clear of its trigger (fine pointer)',
+    vOffenders.length === 0,
+    vOffenders.join(' | ') || '6 short-viewport cells swept',
+  );
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.waitForTimeout(150);
 
@@ -242,6 +311,12 @@ try {
       return { coarse: matchMedia('(pointer: coarse)').matches, n: els.length, small };
     });
     check('touch: toolbar controls (Sort, Search, "…", "N new") are >=44px tap targets', touch.coarse && touch.n >= 4 && touch.small.length === 0, JSON.stringify(touch));
+    const tOffenders = await sweepMenuPlacement(tp, 'touch');
+    check(
+      'touch: the "…" menu stays on-screen, off the header and clear of its trigger at phone heights',
+      tOffenders.length === 0,
+      tOffenders.join(' | ') || '6 short-viewport touch cells swept',
+    );
     await tctx.close();
   }
 } finally {

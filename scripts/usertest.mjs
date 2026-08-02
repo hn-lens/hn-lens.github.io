@@ -46,6 +46,7 @@ const b = await chromium.launch({ headless: true });
 const ctx = await b.newContext({ viewport: { width: 1280, height: 1000 } });
 const page = ctx.pages()[0] || (await ctx.newPage());
 const json = (r, x) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(x) });
+let itemsDown = false;
 await page.route(/hacker-news\.firebaseio\.com/, (r) => {
   const u = r.request().url();
   const mu = u.match(/user\/([^.]+)\.json/);
@@ -53,7 +54,10 @@ await page.route(/hacker-news\.firebaseio\.com/, (r) => {
   if (mu && mu[1] === 'outageuser') return r.fulfill({ status: 503, contentType: 'text/plain', body: 'upstream error' });
   if (mu) return json(r, mu[1] === 'testuser' ? USER : mu[1] === 'thinuser' ? THIN_USER : mu[1] === 'raceuser' ? RACE_USER : mu[1] === 'erroruser' ? ERROR_USER : null); // unknown users → null (200)
   const mi = u.match(/item\/(\d+)\.json/);
-  if (mi) return json(r, ITEMS[mi[1]] ?? FEED[mi[1]] ?? null);
+  if (mi) {
+    if (itemsDown) return r.fulfill({ status: 503, contentType: 'text/plain', body: 'upstream error' });
+    return json(r, ITEMS[mi[1]] ?? FEED[mi[1]] ?? null);
+  }
   if (/topstories/.test(u)) return json(r, [501]);
   if (/stories/.test(u)) return json(r, []);
   return json(r, null);
@@ -221,6 +225,43 @@ await page.waitForTimeout(400);
 await page.locator('article a[href="#/user/testuser"]').first().click();
 await page.waitForFunction(() => /karma/i.test(document.body.innerText), null, { timeout: 15000 }).catch(() => {});
 check('clicking a card author name opens the in-app profile', /#\/user\/testuser/.test(page.url()) && /karma/i.test(await page.locator('main').innerText()), page.url());
+
+// ---- an item-endpoint outage must be distinguishable from "these ids are gone" ----
+// The profile's counts come from getItems over the user's submitted ids. If every one of those
+// fetches FAILS, reporting "Stories (0) · No story submissions to show." states a confident zero the
+// network invented. But ids that are legitimately absent (200 with a null body — a deleted story
+// still listed in an old submitted array) must NOT be treated as an outage, or the reader gets a
+// permanent Retry that can never succeed. Drive the real module for both cases.
+await page.evaluate(async () => {
+  const dbMod = await window.__hnlens.db();
+  await dbMod.db.items.clear();
+});
+itemsDown = true;
+const whenDown = await page.evaluate(async () => {
+  const client = await window.__hnlens.client();
+  try {
+    const items = await client.getItems([90001, 90002]);
+    return `resolved:${items.length}`;
+  } catch {
+    return 'threw';
+  }
+});
+itemsDown = false;
+check('every item fetch failing is reported as an outage, not an empty result', whenDown === 'threw', whenDown);
+
+const whenAbsent = await page.evaluate(async () => {
+  const dbMod = await window.__hnlens.db();
+  await dbMod.db.items.clear();
+  const client = await window.__hnlens.client();
+  try {
+    // 90001/90002 are unmocked ids: the route answers 200 with a null body, i.e. they do not exist.
+    const items = await client.getItems([90001, 90002]);
+    return `resolved:${items.length}`;
+  } catch {
+    return 'threw';
+  }
+});
+check('ids that simply do not exist are an empty result, not an outage', whenAbsent === 'resolved:0', whenAbsent);
 
 await b.close();
 console.log(`\n${fails.length === 0 ? 'RESULT: USER PROFILE PASS \u2713' : `RESULT: ${fails.length} FAILED`}`);

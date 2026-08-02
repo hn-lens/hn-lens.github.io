@@ -69,7 +69,9 @@ await page.route(/generativelanguage\.googleapis\.com/, (r) => {
     if (geminiFail) return r.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: { message: 'rate limited' } }) });
     // A thinking model can burn the token budget on reasoning and return no text part.
     if (geminiEmpty) return json(r, { candidates: [{ finishReason: 'MAX_TOKENS', content: {} }] });
-    return json(r, { candidates: [{ content: { parts: [{ text: 'GEMINI_SUMMARY raft' }] } }] });
+    // Bulleted, because the app's own default thread prompt asks the model for bullets — so the
+    // rendered result is what a real summary looks like, markers included.
+    return json(r, { candidates: [{ content: { parts: [{ text: 'GEMINI_SUMMARY raft\n- first point\n- second point' }] } }] });
   }
   // list models
   if (geminiListBad) return r.fulfill({ status: 401, contentType: 'application/json', body: JSON.stringify({ error: { message: 'bad key' } }) });
@@ -245,6 +247,24 @@ check('clicking Summarize renders the cloud provider\'s summary', /GEMINI_SUMMAR
 // already local, so this works with no reader proxy. (ListenButton renders null without
 // text, so its presence confirms the summary text was wired through.)
 check('the AI summary offers a Listen (read-aloud) control', (await page.getByRole('button', { name: /^Listen$/ }).count()) >= 1);
+// The default thread prompt ASKS the model for bullets, so a bulleted answer must render as a list a
+// reader can see. `.hn-html` inherits Tailwind's preflight `ul{list-style:none;padding:0}`, which
+// silently swallowed every marker and ran the points together. The markers must be restored for
+// AI output WITHOUT touching HN comment bodies, which share `.hn-html` (SPEC section 10 leaves
+// comment-body list styling deliberately unspecified) — so assert both halves.
+const listRender = await page.evaluate(() => {
+  const li = document.querySelector('.md-body li');
+  const commentUl = document.querySelector('.comment-body ul, .hn-html.comment-body ul');
+  const s = li ? getComputedStyle(li.parentElement) : null;
+  return {
+    hasLi: !!li,
+    marker: s?.listStyleType ?? null,
+    padLeft: s ? Math.round(parseFloat(s.paddingLeft)) : null,
+    commentMarker: commentUl ? getComputedStyle(commentUl).listStyleType : 'no-comment-list',
+  };
+});
+check('a bulleted AI summary renders visible list markers', listRender.hasLi && listRender.marker !== 'none' && (listRender.padLeft ?? 0) > 0, JSON.stringify(listRender));
+check('HN comment bodies keep their own list styling (unchanged by the AI-output rule)', listRender.commentMarker === 'none' || listRender.commentMarker === 'no-comment-list', JSON.stringify(listRender));
 
 // ---- (5) listModels() queries each provider and filters to chat models ----
 const models = await page.evaluate(async () => {

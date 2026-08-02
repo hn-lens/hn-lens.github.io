@@ -1,7 +1,10 @@
 name: Deploy to GitHub Pages
 
+# Publishing waits for the CI gate to pass on the SAME commit.
 on:
-  push:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
     branches: [main]
   workflow_dispatch:
 
@@ -16,9 +19,27 @@ concurrency:
 
 jobs:
   build:
+    # An automatic publish requires all three of the following; a manual dispatch bypasses them:
+    #  - conclusion == 'success': workflow_run fires for FAILED gate runs too.
+    #  - event == 'push': CI also runs on pull_request. A fork's default branch is called `main`, and
+    #    the workflow_run `branches` filter matches the TRIGGERING run's head branch, so a PR from
+    #    `fork:main` would otherwise satisfy the filter and publish the PR's tree from a job holding
+    #    `pages: write` — running the fork's lifecycle scripts and build config. See GitHub's
+    #    "Preventing pwn requests".
+    #  - head_repository == this repo: the same check, applied to a fork branch of any other name.
+    # A manual dispatch is the maintainer's deliberate override.
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch' ||
+          (github.event.workflow_run.conclusion == 'success' &&
+           github.event.workflow_run.event == 'push' &&
+           github.event.workflow_run.head_repository.full_name == github.repository) }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # workflow_run checks out the default branch's tip by default, which is not necessarily the
+          # commit the gate ran on. Publish exactly the tree that passed.
+          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22

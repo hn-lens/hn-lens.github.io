@@ -129,7 +129,7 @@ export default function ThreadSummary({ story, tree }: { story: HnItem; tree: Al
       )}
 
       {text !== null && (
-        <div className="hn-html text-sm text-fg/90" dangerouslySetInnerHTML={{ __html: mdLite(text || (loading ? '…' : '')) }} />
+        <div className="hn-html md-body text-sm text-fg/90" dangerouslySetInnerHTML={{ __html: mdLite(text || (loading ? '…' : '')) }} />
       )}
 
       {/* A FAILED generation (transient provider error) keeps a retry within reach — the error copy

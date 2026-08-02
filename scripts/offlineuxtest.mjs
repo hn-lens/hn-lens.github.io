@@ -63,6 +63,15 @@ await page.waitForSelector('article', { timeout: 15000 });
 check('no offline indicator while online', (await page.locator('[data-offline-indicator]').count()) === 0);
 const cardTopOnline = await page.locator('article').first().evaluate((el) => Math.round(el.getBoundingClientRect().top)).catch(() => null);
 
+// The M3 reload below can only work if the service worker is CONTROLLING this page — that is what
+// serves the app shell with the network down. Registration and activation are asynchronous and a
+// first load is not controlled until the worker claims it, so without waiting here the offline
+// reload sometimes hit the network instead, rendered nothing at all, and the M3 assertions failed as
+// though the outage UI were broken. Establish the precondition explicitly rather than racing it.
+await page.waitForFunction(() => !!navigator.serviceWorker?.controller, null, { timeout: 25000 }).catch(() => {});
+const swControlled = await page.evaluate(() => !!navigator.serviceWorker?.controller);
+check('PRECONDITION: the service worker controls the page (an offline reload will be served)', swControlled, `controlled=${swControlled}`);
+
 // --- go offline ---
 netUp = false;
 await ctx.setOffline(true);

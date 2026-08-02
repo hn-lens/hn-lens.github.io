@@ -1,4 +1,4 @@
-import { useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   ArrowBigUp,
@@ -34,6 +34,7 @@ import ArticleReader from './ArticleReader';
 import Favicon from '../ui/Favicon';
 import OfflineOutageHint from '../ui/OfflineOutageHint';
 import { IconButton, MenuItem } from '../ui/primitives';
+import { usePopoverClamp } from '../ui/usePopoverClamp';
 import { useOnline } from '../../hooks/useOnline';
 import type { AlgoliaComment } from '../../types';
 
@@ -313,15 +314,25 @@ export default function CommentsView({ id }: { id: number }) {
   // making the reader click the box afterwards wastes the interaction. Closing returns focus to the
   // button that opened it, so keyboard users are not dumped at the top of the document.
   //
-  // ONE dismissal path. `toggleTool` used to close WITHOUT clearing the query, so closing Search
-  // from its own toolbar button left the discussion filtered with no input on screen: the results
-  // still owned the page, the Search button reported `aria-expanded="false"` while controlling
-  // everything visible, and Escape was inert because its guard requires a non-null `tool`. Escape
-  // while the tray was open cleared correctly — two ways to dismiss one panel disagreed. Closing
-  // now always goes through `closeTool`, so state a tool owns cannot outlive it.
-  const closeTool = () => {
-    setTool(null);
+  // ONE dismissal path: every close and every tool switch goes through `leaveTool`, so no tool's
+  // state can outlive it. Two dismissal routes that cleared different things is what left the
+  // discussion filtered with no input on screen, and Escape inert (its guard needs a non-null tool).
+  // Leaving the search TOOL drops the filter; closing or switching an unrelated tool does not. The
+  // tray is the only search input at narrow widths, so carrying a filter out of it would leave the
+  // thread filtered with nothing on screen to clear. A filter typed into the always-visible inline
+  // box never opens the tool at all, so Summary/Ask leave it alone.
+  const leaveTool = (next: 'search' | 'summary' | 'ask' | null) => {
+    if (tool === 'search' && next !== 'search') setQuery('');
+    setTool(next);
+  };
+  // Drop the filter whatever is (or is not) open. The results' own Clear control and Escape both use
+  // this, so dismissing works even when no search input is on screen to have cleared it.
+  const clearFilter = () => {
     setQuery('');
+    setTool(null);
+  };
+  const closeTool = () => {
+    leaveTool(null);
     lastToolBtn.current?.focus?.();
   };
   const toggleTool = (t: 'search' | 'summary' | 'ask') => {
@@ -330,7 +341,7 @@ export default function CommentsView({ id }: { id: number }) {
       return;
     }
     lastToolBtn.current = document.activeElement as HTMLElement | null;
-    setTool(t);
+    leaveTool(t);
   };
   // Close the overflow menu on outside-click / Escape (mirrors the story-card ⋯ menu).
   useEffect(() => {
@@ -348,30 +359,8 @@ export default function CommentsView({ id }: { id: number }) {
       document.removeEventListener('keydown', onKey);
     };
   }, [toolMenuOpen]);
-  // Keep the "…" menu inside the viewport horizontally: it is right-anchored (w-56) and at the
-  // narrowest widths the ⋯ trigger is pinned to the column's right edge, so the menu would spill off
-  // the LEFT screen edge and clip its labels (measured -21px at 320px). Nudge it back after it opens
-  // (mirrors the story-card ⋯ clamp).
-  useLayoutEffect(() => {
-    const el = toolMenuContentRef.current;
-    if (!toolMenuOpen || !el) return;
-    el.style.transform = 'none';
-    const r = el.getBoundingClientRect();
-    const pad = 6;
-    let dx = 0;
-    if (r.left < pad) dx = pad - r.left;
-    else if (r.right > window.innerWidth - pad) dx = window.innerWidth - pad - r.right;
-    if (dx) el.style.transform = `translateX(${dx}px)`;
-    // Close on viewport change rather than re-clamp: after a resize/rotate the trigger has usually
-    // moved, so there is no correct position to re-clamp to (same as the story-card ⋯ menu).
-    const closeOnResize = () => setToolMenuOpen(false);
-    window.addEventListener('resize', closeOnResize);
-    window.addEventListener('orientationchange', closeOnResize);
-    return () => {
-      window.removeEventListener('resize', closeOnResize);
-      window.removeEventListener('orientationchange', closeOnResize);
-    };
-  }, [toolMenuOpen]);
+  const closeToolMenu = useCallback(() => setToolMenuOpen(false), []);
+  usePopoverClamp(toolMenuOpen, toolMenuContentRef, toolMenuRef, closeToolMenu);
   // Focus whatever the open tray's primary input is — not only Search's.
   //
   // Ask has an input and never received focus, so with focus left on BODY every letter went to the
@@ -401,6 +390,14 @@ export default function CommentsView({ id }: { id: number }) {
         closeTool();
         return;
       }
+      // A filter can outlive every tool: the inline box folds into the "…" menu on a narrow
+      // viewport, so a query typed while wide survives the resize with `tool` already null. Guarding
+      // Escape on `tool` alone left that state undismissable from the keyboard.
+      if (e.key === 'Escape' && query) {
+        e.preventDefault();
+        clearFilter();
+        return;
+      }
       if (typing) return;
       if (e.key === 'l') {
         e.preventDefault();
@@ -424,8 +421,11 @@ export default function CommentsView({ id }: { id: number }) {
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
+    // `query` is a dependency because the Escape branch below reads it: without it the listener
+    // holds the value from the render that installed it, and a filter typed after the last tool
+    // change is invisible to the handler — the exact case that branch exists for.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tool, aiSummaryActive]);
+  }, [tool, aiSummaryActive, query]);
 
   const jumpNextNew = () => {
     // Cycle through ALL new comments so the "N new" count and the reachable set agree.
@@ -806,12 +806,26 @@ export default function CommentsView({ id }: { id: number }) {
 
           {searching ? (
             <div className="space-y-2.5">
-              <p className="text-xs text-muted [overflow-wrap:anywhere]">
-                {allMatches.length} {allMatches.length === 1 ? 'match' : 'matches'} for &ldquo;{q}&rdquo;
-                {matchOverflow > 0 && (
-                  <span className="text-subtle"> · showing the first {matches.length}, keep typing to narrow</span>
-                )}
-              </p>
+              {/* The Clear control lives on the RESULTS, not only on the input. The input can be
+                  absent while the filter is active — it folds into the "…" menu below ~400px, so
+                  narrowing the window (or rotating) while a filter is applied leaves the results
+                  owning the page with nothing on screen to dismiss them. Anchoring it here makes
+                  "a filter always has a visible way out" true by construction, on every route. */}
+              <div className="flex items-start justify-between gap-2">
+                <p className="text-xs text-muted [overflow-wrap:anywhere]">
+                  {allMatches.length} {allMatches.length === 1 ? 'match' : 'matches'} for &ldquo;{q}&rdquo;
+                  {matchOverflow > 0 && (
+                    <span className="text-subtle"> · showing the first {matches.length}, keep typing to narrow</span>
+                  )}
+                </p>
+                <button
+                  type="button"
+                  onClick={clearFilter}
+                  className="disc-clear shrink-0 rounded-md border border-edge px-2 py-1 text-xs text-muted hover:text-fg"
+                >
+                  Clear
+                </button>
+              </div>
               {matches.length === 0 ? (
                 <p className="text-sm text-muted">No comments match your search.</p>
               ) : (

@@ -312,12 +312,12 @@ export function mdLite(md: string): string {
     const heading = line.match(/^(#{1,6})\s+(.*)/);
     // A NUMBERED line is deliberately left as a paragraph, so "1." reaches the reader as text.
     //
-    // Converting `1. x` to `<ol><li>x</li></ol>` looks obviously right and is worse: `.hn-html`
-    // inherits the Tailwind preflight reset `ol,ul,menu{list-style:none}`, so the markers never
-    // paint (measured: list-style-type "none", padding-left "0px") and the ordinals the reader used
-    // to see simply vanish — "1. first point" became "first point". Restoring markers in CSS is not
-    // a local fix either: `.hn-html` also renders every HN COMMENT body, so it would change comment
-    // rendering app-wide. Leave the digits in the text until someone wants that wider change.
+    // Converting `1. x` to `<ol><li>x</li></ol>` would DROP the ordinal: the digits live in the
+    // markup's structure rather than its text, and the reader already sees them fine as text.
+    // Bullets are different — `- x` carries no character worth keeping, so it becomes a real list,
+    // and `.md-body` (index.css) restores the markers that Tailwind's preflight
+    // `ol,ul,menu{list-style:none}` removes. That class is applied only where AI output is rendered,
+    // never to plain `.hn-html`, which also renders every HN comment body.
     if (bullet) {
       if (!inList) {
         html += '<ul>';

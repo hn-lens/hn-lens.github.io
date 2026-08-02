@@ -117,8 +117,8 @@ function reasonsFor(fs: FeatureSet, item: HnItem, terms: ScoreTerm[]): string[] 
     strong.push({ text: `You often engage with ${item.by}`, weight: 3.5 });
   if (fs.domainAffinity > 0.5 && fs.domainEngagedN >= 2 && fs.domain)
     strong.push({ text: `You often read ${fs.domain}`, weight: 3 });
-  // `relevance` and `termAffinity` reach the score only through the learned model, so they carry
-  // the same personal-drives guard as the soft block below.
+  // `termAffinity` reaches the score only through the learned model; `relevance` is its own blend
+  // term. Both carry the same personal-drives guard as the soft block below.
   const contentDrivesRank = () => {
     const t = [...terms].sort((a, b) => b.contribution - a.contribution)[0];
     return !!t && t.contribution > 0 && (t.key === 'relevance' || t.key === 'learned');

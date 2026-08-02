@@ -67,6 +67,9 @@ const TIERS = {
       // impossible, and c3r25 found the same claim surviving in a sibling file. This checks the
       // claim families proven false here, plus numbers stated in prose that must match the code.
       { name: 'no false claims in source comments', cmd: 'node', args: ['scripts/claimcheck.mjs'] },
+      // The gate only protects the public site if a red gate actually STOPS a publish, which is a
+      // property of the workflow wiring rather than of any code the other checks cover.
+      { name: 'a red gate cannot publish (deploy waits on CI)', cmd: 'node', args: ['scripts/releasegatecheck.mjs'] },
       // This repo is developed privately and published publicly, so an internal hostname/tool name
       // in a tracked file is a release blocker. `--require-notes` turns "the pattern list is
       // missing" from a warning into a failure — the only thing standing between a renamed or lost
@@ -96,6 +99,7 @@ const TIERS = {
       { name: 'personalizeliveupdatetest (mid-session personalize + explainer copy)', script: 'personalizeliveupdatetest' },
       { name: 'readstatetest (read transitions + monotonic)', script: 'readstatetest' },
       { name: 'feedstabilitytest (no wrong vanish)', script: 'feedstabilitytest' },
+      { name: 'previewcanceltest (previews stop when their cards unmount)', script: 'previewcanceltest' },
       { name: 'sessionsweeptest (read-sweep triggers on load/refresh, never nav)', script: 'sessionsweeptest' },
       { name: 'foryousourcetest (For-You from Algolia recent-stories + firebase fallback; jobs excluded)', script: 'foryousourcetest' },
       { name: 'offlinepwatest (service worker: app loads with the serving port down)', script: 'offlinepwatest' },

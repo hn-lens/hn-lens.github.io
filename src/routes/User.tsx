@@ -291,13 +291,15 @@ export default function User() {
             </div>
           )}
 
-          {/* Stories / Comments toggle (counts so both are discoverable). */}
+          {/* Stories / Comments toggle (counts so both are discoverable). The counts are OMITTED
+              while the activity fetch is failing: a "(0)" printed above the outage message below is
+              a result count the network invented, which SPEC section 6 forbids next to an error. */}
           <div className="seg mb-1" role="tablist" aria-label="Show stories or comments">
             <button type="button" role="tab" aria-selected={tab === 'stories'} onClick={() => setTab('stories')} className="seg-btn">
-              Stories ({stories.length})
+              Stories{activityQ.isError ? '' : ` (${stories.length})`}
             </button>
             <button type="button" role="tab" aria-selected={tab === 'comments'} onClick={() => setTab('comments')} className="seg-btn">
-              Comments ({comments.length})
+              Comments{activityQ.isError ? '' : ` (${comments.length})`}
             </button>
           </div>
           {/* The counts are a RECENT sample (capped), not lifetime totals — say so, and point
@@ -317,6 +319,20 @@ export default function User() {
           {activityQ.isLoading ? (
             <div className="flex items-center gap-2 p-4 text-sm text-muted">
               <Spinner /> Loading activity…
+            </div>
+          ) : activityQ.isError ? (
+            // An item-endpoint outage must not render as "Stories (0) · no submissions": that states
+            // a confident zero the network invented, and offers nothing to retry. `userQ.isError` is
+            // already handled above; this is the same treatment for the activity half.
+            <div className="rounded-xl border border-border bg-surface p-6 text-center">
+              <p className="text-sm text-muted">Couldn&rsquo;t load this user&rsquo;s activity.</p>
+              <button
+                type="button"
+                onClick={() => void activityQ.refetch()}
+                className="mt-3 rounded-lg border border-edge px-3 py-1.5 text-sm hover:text-fg"
+              >
+                Retry
+              </button>
             </div>
           ) : tab === 'stories' ? (
             stories.length === 0 ? (

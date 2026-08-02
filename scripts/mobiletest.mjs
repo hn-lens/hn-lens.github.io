@@ -354,6 +354,97 @@ check(
 
 await desk.close();
 
+// (f) SHARED CONTROL CLASSES must not render at two different touch sizes across surfaces.
+// Sizing rules are applied by SELECTOR LISTS, and a selector list is where one element type gets
+// forgotten: the `.seg-btn` rule was scoped to the discussion toolbar, so the other segmented
+// controls stayed 28px, and raising the discussion search input left the global nav input at 34px.
+// This checks the NAMED shared classes below on three surfaces; it is not an exhaustive sweep of
+// every interactive element in the app, so a control class absent from this list is not covered.
+{
+  const tctx = await b.newContext({ viewport: { width: 390, height: 780 }, hasTouch: true });
+  const tp = tctx.pages()[0] || (await tctx.newPage());
+  await tp.route(/hacker-news\.firebaseio\.com/, (r) => {
+    const u = r.request().url();
+    const j = (x) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(x) });
+    if (/(top|best|new)stories/.test(u)) return j(POOL);
+    if (/(ask|show|job)stories/.test(u)) return j([]);
+    const m = u.match(/item\/(\d+)/);
+    if (m) return j(byId.get(Number(m[1])) ?? item(Number(m[1])));
+    // The profile leg needs a real user or the route renders "User not found" and contributes no
+    // controls at all — the sweep would pass by measuring nothing.
+    const usr = u.match(/user\/([^.]+)\.json/);
+    if (usr) return j({ id: usr[1], created: now - 86400 * 400, karma: 1234, about: 'bio', submitted: POOL });
+    return j(null);
+  });
+  await tp.route(/hn\.algolia\.com/, (r) =>
+    r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ hits: [], children: [] }) }));
+
+  // The invariant is CLASS CONSISTENCY: one control class must not render at two different touch
+  // sizes in the same app. `.seg-btn` and the search `<input>` are single, shared control classes;
+  // both had one instance raised to 44px inside the discussion while their siblings elsewhere stayed
+  // 28px / 34px, so two identically-styled controls sat on screen at different heights. Whatever
+  // height a class adopts on touch, every instance of it adopts.
+  const CLASSES = {
+    'seg-btn': '.seg-btn',
+    'search-input': 'input[type="search"]',
+  };
+  const measureClasses = (surface) =>
+    tp.evaluate(({ classes, surface: s }) => {
+      const out = [];
+      for (const [key, sel] of Object.entries(classes)) {
+        for (const el of document.querySelectorAll(sel)) {
+          if (!el.offsetParent && getComputedStyle(el).position !== 'fixed') continue;
+          const r = el.getBoundingClientRect();
+          if (r.width === 0 || r.height === 0) continue;
+          out.push({
+            key,
+            surface: s,
+            name: (el.getAttribute('aria-label') || el.textContent || el.getAttribute('placeholder') || '').trim().slice(0, 24),
+            h: Math.round(r.height),
+          });
+        }
+      }
+      return out;
+    }, { classes: CLASSES, surface });
+
+  const measured = [];
+  await tp.goto(`${BASE}#/?feed=top`, { waitUntil: 'domcontentloaded' });
+  await tp.waitForSelector('article', { timeout: 15000 });
+  await tp.waitForTimeout(400);
+  measured.push(...(await measureClasses('feed')));
+
+  await tp.goto(`${BASE}#/item/1`, { waitUntil: 'domcontentloaded' });
+  await tp.waitForSelector('.discussion-header', { timeout: 15000 });
+  await tp.waitForTimeout(400);
+  measured.push(...(await measureClasses('discussion')));
+
+  await tp.goto(`${BASE}#/user/u1`, { waitUntil: 'domcontentloaded' });
+  await tp.waitForTimeout(600);
+  measured.push(...(await measureClasses('profile')));
+
+  const inconsistent = [];
+  const tooSmallClass = [];
+  for (const key of Object.keys(CLASSES)) {
+    const inst = measured.filter((m) => m.key === key);
+    if (inst.length === 0) continue;
+    const heights = [...new Set(inst.map((m) => m.h))];
+    if (heights.length > 1) inconsistent.push({ key, heights, inst });
+    const under = inst.filter((m) => m.h < 44);
+    if (under.length) tooSmallClass.push({ key, under });
+  }
+  check(
+    'a control class renders at ONE touch size app-wide (.seg-btn, search input)',
+    inconsistent.length === 0,
+    inconsistent.length ? JSON.stringify(inconsistent) : `${measured.length} instances across feed/discussion/profile agree`,
+  );
+  check(
+    'those shared control classes meet the 44px touch target everywhere',
+    tooSmallClass.length === 0,
+    tooSmallClass.length ? JSON.stringify(tooSmallClass) : 'all >=44px on touch',
+  );
+  await tctx.close();
+}
+
 await b.close();
 console.log(`\n${fails.length === 0 ? 'RESULT: MOBILE ACCESS PASS \u2713' : `RESULT: ${fails.length} FAILED`}`);
 process.exit(fails.length ? 1 : 0);
