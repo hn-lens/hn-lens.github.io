@@ -62,6 +62,11 @@ const TIERS = {
       // THIRD_PARTY_NOTICES.md is generated from package.json's runtime deps and carries a real
       // Apache-2.0 section 4(d) obligation, so a dependency bump must not be able to leave it stale.
       { name: 'third-party notices up to date', cmd: 'node', args: ['scripts/gen-notices.mjs', '--check'] },
+      // The check above is byte-exact, so every fact the generator writes is a fact each contributor
+      // must be able to reproduce — and a dependency bot has no checkout to reproduce one with. This
+      // holds the split: a version change alone leaves the file identical, while a dependency added,
+      // removed, relicensed or whose upstream NOTICE text changes still fails.
+      { name: 'notices are bump-tolerant but attribution-strict', cmd: 'node', args: ['scripts/noticesbumptest.mjs'] },
       // A comment is an unverified assertion, and a false one in the ranking code has now cost two
       // review rounds — c3r24 rated intended behaviour a HIGH because a comment said it was
       // impossible, and c3r25 found the same claim surviving in a sibling file. This checks the
