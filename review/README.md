@@ -3717,3 +3717,80 @@ closed. The design lens also closed the c3r41-accepted OP/"new"/reply-pill follo
 oversized batch and produced the worst self-inflicted rate yet measured. The cap that matters is not
 findings-per-batch, it is **changes between independent confirmations**. Next round: one batch, then a
 full round, then stop — regardless of how many findings are outstanding.
+
+---
+
+## c3r44 — R-02 (rejected-story affinity) and R-07 (flattened headings) (2026-08-03)
+
+Two register rows, both the **unfinished half of an earlier fix**. Neither was a new discovery; both
+were carried MEDIUM/LOW entries whose first half had shipped and whose second half had not.
+
+### R-02 — a rejected story still contributed positive affinity
+
+`classifyEngagement` is the single source of truth for "did the user positively engage", and it
+removes a hidden item outright. Three of the four derivations honour that. The fourth — the affinity
+SUM in `computeAffinities` — expressed the rejection as `SIGNAL_WEIGHT.hide = -2.5` **added beside**
+whatever the item had already accrued, so a rejection only ever OFFSET the history rather than
+replacing it. Measured on the real module, with the reader's opens already correctly suppressed
+(a hidden item is not in `engaged`, so its `open_link` credit is skipped):
+
+| history, then "Not interested" | domain affinity left behind | a SIBLING story's `domainAffinity` |
+|---|---|---|
+| read twice (two ≥BOUNCE dwells) | **+2.5** | **+0.462** |
+| saved and read | **+2.0** | **+0.380** |
+| nothing but the rejection | −2.5 | −0.462 |
+
+So rejecting a story left its domain and author *above* neutral, and a different story from that
+domain was scored on those totals — the reader's explicit downvote read as mild approval.
+
+**The correction, and why this one.** A currently-hidden item's contribution to its domain and
+author is now **replaced** by exactly one rejection, not offset by one. Two other candidates were
+considered and both are wrong here:
+
+- *Contribute zero (neutralise).* Ruled out by an existing guard, not by argument:
+  `feedstabilitytest`'s "a hide WITHOUT undo stays a negative affinity (control)" fails under it.
+  The repo already specifies that "Not interested" is a downvote of the same magnitude as an
+  upvote, not an erasure — `unsave`/`unhide` are the cancel-to-neutral shapes, and a hide is not
+  an undo of anything.
+- *Keep the offset and enlarge the weight.* That leaves the residual a function of how much the
+  reader happened to read first, which is the defect.
+
+`SIGNAL_WEIGHT.hide` remains the single statement of that magnitude, consumed once — there is no
+second constant and no second mechanism, so the rejection is not double-counted. The entry is still
+live for the not-currently-hidden case, where `hide(−2.5) + unhide(+2.5)` must net to zero.
+
+**Order independence.** The replacement is applied to a SUM (order-independent) over a set that
+comes from `classifyEngagement` (order-independent by latest-timestamp resolution), so the property
+holds by construction rather than by care. Verified anyway in both directions, since this module is
+fed newest-first and `train.ts` is fed oldest-first.
+
+**`perItem` moves with it.** `perItem[id].dw/aw` is the leave-one-out the ranker subtracts at
+training and serve time; it is set to the same replaced value, so the two cannot disagree.
+
+### R-07 — headings
+
+`mdLite` already emitted `<h3>`–`<h6>`. What flattened them was the same mechanism as the bullet
+markers: Tailwind's preflight resets `h1..h6 { font-size: inherit; font-weight: inherit }`, so an
+`<h4>` rendered at **14px/400** directly above a paragraph at **14px/400** — and because the
+converter has *consumed* the `#` characters, nothing was left to tell the reader a heading was
+there. Restored in `.md-body`, scoped exactly as the list rule is, so `.hn-html` (every HN comment
+body) is untouched; sized per level so `#`/`##`/`###` stay distinguishable from each other.
+
+Numbered lines are unchanged and still reach the reader as literal ordinals.
+
+### Guards (fail-first, demonstrated)
+
+- `reasonstest` m6 — six new checks driving the real `computeAffinities` plus the sibling's actual
+  ranking feature. Five failed pre-fix. Includes a PRECONDITION check that the same history without
+  a rejection *is* positive, so the fixture is known to reach the code under test.
+- `reasonstest` m6 opposite case — read+saved → hide → **UNDO** must restore the never-hidden totals
+  exactly. It passes pre-fix (correctly), so its discrimination was demonstrated separately against
+  a deliberately wrong build that derives the rejected set from `hide` events instead of from
+  `classifyEngagement`: it fails there (−2.5 where 5.5 is required), which is precisely the
+  mirror-image defect this class keeps producing.
+- `reasonstest` m6 order checks — same events fed newest-first and oldest-first, for both the
+  rejected and the undone shape, plus the classifier's own rejected set in both directions.
+- `aiguardtest` F2 — the heading is graded as RENDERED (computed size/weight vs the paragraph
+  beneath it), not as markup; failed pre-fix at 14/400 vs 14/400. Paired with an assertion that the
+  HN-comment container is not restyled, and with a sweep of every other construct `mdLite` touches
+  (link, quote, rule, emphasis, bold, code) proving each still reaches the reader.

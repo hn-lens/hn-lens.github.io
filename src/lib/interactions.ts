@@ -296,16 +296,32 @@ export async function computeAffinities(): Promise<Affinities> {
   // Drop items whose engagement was withdrawn AND that have no surviving positive weight. Checking
   // the residual weight matters: a story you saved, READ, then un-saved is still genuinely engaged,
   // so only the ones left with nothing are removed from the habit tally.
-  // An item the reader marked "Not interested" leaves the tally regardless of residual weight:
-  // unlike an undone save, that is an explicit negative judgement. `hidden` comes from
-  // `classifyEngagement`, the single source of truth for "did the user positively engage" — it
-  // resolves hide/unhide by latest timestamp, so this stays order-independent like every other
-  // caller. Deriving it again here would make the habit tally a fourth, disagreeing definition.
+  // An item the reader marked "Not interested" leaves the tally AND contributes exactly one
+  // rejection to its domain/author: its accrued weight is REPLACED, not offset by a negative term
+  // sitting beside it. `SIGNAL_WEIGHT.hide` is the single place that magnitude is stated, so the
+  // rejection is counted once. `hidden` comes from `classifyEngagement`, the one source of truth
+  // for "did the user positively engage" — it resolves hide/unhide by latest timestamp, and
+  // replacing a SUM is order-independent, so every caller agrees whichever way it feeds its log.
+  const rejection = SIGNAL_WEIGHT.hide ?? 0;
   for (const id of hidden) {
     for (const set of domainItems.values()) set.delete(id);
     for (const set of authorItems.values()) set.delete(id);
     const rec = perItem[id];
-    if (rec) rec.counted = false;
+    if (!rec) continue;
+    rec.counted = false;
+    // A rejection is a FLOOR, not a replacement. Replacing would discard evidence that is already
+    // negative — five bounces sit at -3.0 — so rejecting such a story would lift its domain to -2.5
+    // and make the source look better liked for having been rejected.
+    if (rec.domain !== undefined) {
+      const floored = Math.min(rec.dw, rejection);
+      domains[rec.domain] = (domains[rec.domain] ?? 0) - rec.dw + floored;
+      rec.dw = floored;
+    }
+    if (rec.author !== undefined) {
+      const floored = Math.min(rec.aw, rejection);
+      authors[rec.author] = (authors[rec.author] ?? 0) - rec.aw + floored;
+      rec.aw = floored;
+    }
   }
   for (const id of undone) {
     const rec = perItem[id];

@@ -385,6 +385,47 @@ try {
           host.remove();
           return { seen, usedOl: !!ol, marker };
         })(),
+        // Same grading for HEADINGS. `mdLite` CONSUMES the `#` characters, so the rendering is the
+        // only thing left that can carry "this is a heading" to the reader — and preflight resets
+        // h1..h6 to font-size/font-weight: inherit, which makes an <h4> pixel-identical to the
+        // paragraph beneath it. Measure both containers: the AI one must show a heading, the
+        // HN-comment one must be untouched by whatever does it.
+        headed: (() => {
+          const mk = (cls) => {
+            const host = document.createElement('div');
+            host.className = cls;
+            host.innerHTML = html.mdLite('## Key themes\nthe body under it');
+            document.body.appendChild(host);
+            const h = host.querySelector('h1,h2,h3,h4,h5,h6');
+            const p = host.querySelector('p');
+            const hs = h ? getComputedStyle(h) : null;
+            const ps = p ? getComputedStyle(p) : null;
+            const out = {
+              tag: h ? h.tagName : null,
+              seen: (host.textContent || '').replace(/\s+/g, ' ').trim(),
+              size: hs ? Math.round(parseFloat(hs.fontSize) * 100) / 100 : 0,
+              weight: hs ? Number(hs.fontWeight) : 0,
+              pSize: ps ? Math.round(parseFloat(ps.fontSize) * 100) / 100 : 0,
+              pWeight: ps ? Number(ps.fontWeight) : 0,
+            };
+            host.remove();
+            return out;
+          };
+          return {
+            ai: mk('hn-html md-body text-sm text-fg/90'), // ThreadSummary / AskThread
+            comment: mk('hn-html comment-body text-sm text-fg/90'), // every HN comment body
+          };
+        })(),
+        // Every OTHER construct mdLite touches, to bound the class: whatever it does not convert
+        // must reach the reader as its own literal characters, never be dropped.
+        others: {
+          link: html.mdLite('see [the docs](https://ex.com/d) for more'),
+          quote: html.mdLite('> their claim\nmy reply'),
+          rule: html.mdLite('---'),
+          italic: html.mdLite('*emphasis* here'),
+          bold: html.mdLite('**strong** here'),
+          code: html.mdLite('run `npm test` now'),
+        },
       };
     });
     check('highlighting a word that occurs inside an HTML entity does not corrupt it', !/&<mark>|<mark>amp<\/mark>/.test(got.entityQuery) && /Tom &amp; Jerry|Tom & Jerry/.test(got.entityQuery), JSON.stringify(got.entityQuery).slice(0, 110));
@@ -402,6 +443,32 @@ try {
       !got.ordered.usedOl || (got.ordered.marker !== 'none' && got.ordered.marker !== 'n/a'),
       JSON.stringify(got.ordered)
     );
+    // SPEC 5.2: headings must not be silently deleted. The text alone is not enough — the `#`
+    // characters are gone, so if the heading renders exactly like the paragraph, the reader has no
+    // way to tell one was there.
+    check(
+      'a heading in an AI answer keeps its text',
+      /Key themes/.test(got.headed.ai.seen),
+      JSON.stringify(got.headed.ai)
+    );
+    check(
+      'a heading in an AI answer is VISIBLY a heading, not flattened into the body',
+      got.headed.ai.size > got.headed.ai.pSize || got.headed.ai.weight > got.headed.ai.pWeight,
+      JSON.stringify(got.headed.ai)
+    );
+    check(
+      'HN comment bodies are NOT restyled by the AI-output heading rule',
+      got.headed.comment.size === got.headed.comment.pSize &&
+        got.headed.comment.weight === got.headed.comment.pWeight,
+      JSON.stringify(got.headed.comment)
+    );
+    // The rest of the class: a construct mdLite does not convert must survive as literal text.
+    check('a markdown link is not dropped', /the docs/.test(got.others.link) && /ex\.com\/d/.test(got.others.link), got.others.link);
+    check('a quote line is not dropped', /their claim/.test(got.others.quote) && /my reply/.test(got.others.quote), got.others.quote);
+    check('a horizontal rule is not dropped', /---/.test(got.others.rule), got.others.rule);
+    check('emphasis text is not dropped', /emphasis/.test(got.others.italic), got.others.italic);
+    check('bold renders as <strong>', /<strong>strong<\/strong>/.test(got.others.bold), got.others.bold);
+    check('inline code renders as <code>', /<code>npm test<\/code>/.test(got.others.code), got.others.code);
   }
 
   // ── Part E — untrusted text cannot issue instructions ──────────────────────────────────────

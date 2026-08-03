@@ -1904,6 +1904,30 @@ body {
   margin: 0.125rem 0;
 }
 
+/* Same scope, same reason, for headings: `mdLite` consumes the `#` characters, so the rendering is
+   all that carries "this is a heading", and preflight resets h1..h6 to font-size/font-weight:
+   inherit — which paints one as body text. The top levels share a size; the smaller ones step down. */
+.md-body :is(h1, h2, h3, h4, h5, h6) {
+  font-weight: 700;
+  line-height: 1.3;
+  margin: 0.75rem 0 0.25rem;
+}
+.md-body :is(h1, h2, h3, h4, h5, h6):first-child {
+  margin-top: 0;
+}
+.md-body :is(h1, h2, h3) {
+  font-size: 1.2em;
+}
+.md-body h4 {
+  font-size: 1.1em;
+}
+.md-body h5 {
+  font-size: 1.05em;
+}
+.md-body h6 {
+  font-size: 1em;
+}
+
 /* Story-card titles must break a long UNbreakable token (a long URL / package / hash /
    compound word) instead of overflowing the card — otherwise it spills the card on narrow
    phones, even in the default layout. */
