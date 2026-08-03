@@ -63,15 +63,6 @@ await page.waitForSelector('article', { timeout: 15000 });
 check('no offline indicator while online', (await page.locator('[data-offline-indicator]').count()) === 0);
 const cardTopOnline = await page.locator('article').first().evaluate((el) => Math.round(el.getBoundingClientRect().top)).catch(() => null);
 
-// The M3 reload below can only work if the service worker is CONTROLLING this page — that is what
-// serves the app shell with the network down. Registration and activation are asynchronous and a
-// first load is not controlled until the worker claims it, so without waiting here the offline
-// reload sometimes hit the network instead, rendered nothing at all, and the M3 assertions failed as
-// though the outage UI were broken. Establish the precondition explicitly rather than racing it.
-await page.waitForFunction(() => !!navigator.serviceWorker?.controller, null, { timeout: 25000 }).catch(() => {});
-const swControlled = await page.evaluate(() => !!navigator.serviceWorker?.controller);
-check('PRECONDITION: the service worker controls the page (an offline reload will be served)', swControlled, `controlled=${swControlled}`);
-
 // --- go offline ---
 netUp = false;
 await ctx.setOffline(true);
@@ -112,16 +103,29 @@ if (indCount) {
   check('M1: offline indicator does NOT intercept or overlap feed tabs', blocked.length === 0, `blocked=${JSON.stringify(blocked)}`);
 }
 
-// --- M3: switch to an UNCACHED feed while offline → outage says "offline" + points to Saved/Read ---
-// Load an UNCACHED feed FRESH while offline (a reload, NOT a tab-switch). A tab-switch keeps the prior
-// feed's data via keepPreviousData — and the app prefetches adjacent tabs — so in the slower CI runner
-// "Best" showed stale/prefetched content ("Updated just now …") instead of erroring, the outage never
-// rendered, and this assertion flaked. A fresh reload has an empty in-memory query cache: the service
-// worker serves the app shell offline, Best's list fetch then aborts, and the outage renders with no
-// stale data to mask it. The offline state is context-level, so it survives the reload.
+// --- M3: open an UNCACHED feed while offline → outage says "offline" + points to Saved/Read ---
+// The precondition is that NOTHING cached can stand in for the feed under test — in memory OR on
+// disk. Both stores are emptied here, with the network already down so neither can be refilled:
+//   - the shared QueryClient, which main.tsx exposes; and
+//   - db.lists, which survives a reload. `getFeedIds` serves a cached list without touching the
+//     network, and the app's startup For-You pool fetches top+best+new, so a `list:best` row exists
+//     whenever that fetch settles after clearAllData — likelier the slower the machine. Best then
+//     renders three cards offline and every M3 assertion below reads as a broken outage UI. The
+//     precondition is asserted, not assumed, so a setup change says so in its own words.
+// Deliberately not a reload: a document navigation while offline is served by the service worker,
+// and losing that race renders nothing at all — the same symptom from the other direction.
+const m3pre = await page.evaluate(async () => {
+  const { db } = await window.__hnlens.db();
+  window.__hnlens.queryClient.clear();
+  await db.lists.clear();
+  return {
+    list: (await db.lists.get('list:best')) ?? null,
+    ids: window.__hnlens.queryClient.getQueryData(['ids', 'best']) ?? null,
+  };
+});
+check('PRECONDITION: the feed under test has nothing cached to render instead of the outage',
+  m3pre.list === null && m3pre.ids === null, JSON.stringify(m3pre));
 await page.evaluate(() => { location.hash = '#/?feed=best'; });
-await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {});
-await page.waitForFunction(() => window.__hnlens, null, { timeout: 20000 }).catch(() => {});
 await page.waitForSelector('[data-offline-hint]', { timeout: 15000 }).catch(() => {});
 await page.waitForTimeout(300);
 const outage = await mainText();
@@ -156,7 +160,10 @@ check('M1: offline indicator clears when back online', (await page.locator('[dat
 // reconnect refetch (errored-only) skipped it. Use an uncached id (Settings/feed never fetched it). ---
 netUp = false;
 await ctx.setOffline(true);
-await page.goto(`${BASE}#/item/8123`, { waitUntil: 'domcontentloaded' });
+// In-page, never page.goto: a fragment-only goto is usually a same-document hop, but from a page
+// whose last navigation errored it becomes a full document load, which offline throws. Assigning
+// location.hash can only ever be a route change.
+await page.evaluate(() => { location.hash = '#/item/8123'; });
 // Wait for the outage branch to SETTLE (its Retry button, which only exists in that branch) rather
 // than reading a transient Loading state; read <main> so the TopNav theme-select options don't count.
 await page.getByRole('button', { name: /Retry/i }).first().waitFor({ timeout: 20000 }).catch(() => {});
@@ -175,7 +182,7 @@ check('HIGH: discussion story-outage AUTO-RECOVERS on reconnect (no manual Retry
 // (offline copy + Saved/Read hint), like the feed / search / discussion outages.
 netUp = false;
 await ctx.setOffline(true);
-await page.goto(`${BASE}#/user/someuser`, { waitUntil: 'domcontentloaded' });
+await page.evaluate(() => { location.hash = '#/user/someuser'; });
 await page.waitForFunction(() => /offline|Couldn.t load this profile/i.test(document.querySelector('main')?.innerText ?? ''), null, { timeout: 12000 }).catch(() => {});
 await page.waitForTimeout(200);
 const userOut = await page.evaluate(() => document.querySelector('main')?.innerText ?? '');
@@ -186,25 +193,30 @@ netUp = true;
 await ctx.setOffline(false);
 
 // FEED ERROR ISOLATION (HIGH): a non-For-You feed with its OWN local data must not inherit the
-// For-You POOL's offline error. Land on Home (For You) online, then CLEAR the cached feed lists (so
-// the pool genuinely errors offline rather than serving a stale list), go offline and RELOAD Home (a
-// fresh document → fresh in-memory query cache → the pool's first run is offline → it errors), then
-// switch to Read — Read must render its own cached card, not inherit the pool's outage.
+// For-You POOL's offline error. Land on Home online and seed a read story, then go offline and put
+// the pool into its first-fetch state — with no cached list to serve it — so it genuinely errors;
+// then switch to Read, which must render its own cached card rather than the pool's outage.
 await page.goto(`${BASE}`, { waitUntil: 'domcontentloaded' });
 await page.waitForFunction(() => window.__hnlens, null, { timeout: 20000 });
 await page.evaluate(async (nowMs) => {
   const { db } = await window.__hnlens.db();
-  await db.lists.clear(); // AFTER the online load, so it isn't re-cached
   await db.items.put({ id: 7777, item: { id: 7777, type: 'story', by: 'ra', title: 'A story I already read', url: 'https://ex.com/read', score: 50, descendants: 2, time: Math.floor(nowMs / 1000) - 3600 }, cachedAt: nowMs });
   await db.events.bulkAdd([{ type: 'dwell', itemId: 7777, domain: 'ex.com', value: 12000, ts: nowMs - 5000, meta: { where: 'comments' } }]);
-  window.__hnlens.prefs.getState().set({ defaultFeed: 'foryou', hideReadInFeed: false });
 }, Date.now());
 netUp = false;
 await ctx.setOffline(true);
-await page.reload({ waitUntil: 'domcontentloaded' }); // fresh offline load on Home → For-You pool errors
+// Everything that could satisfy the pool is removed AFTER the network is down, so no online fetch
+// can re-cache a list in between and no reload is needed to empty the in-memory cache. Selecting
+// For You last means its very first run is the offline one.
+await page.evaluate(async () => {
+  const { db } = await window.__hnlens.db();
+  await db.lists.clear();
+  window.__hnlens.queryClient.clear();
+  window.__hnlens.prefs.getState().set({ defaultFeed: 'foryou', hideReadInFeed: false });
+});
 await page.getByRole('button', { name: /Retry/i }).first().waitFor({ timeout: 15000 }).catch(() => {});
 const fyErrored = await page.evaluate(() => /You.?re offline|Couldn.t load stories/i.test(document.querySelector('main')?.innerText ?? ''));
-check('(precondition) For-You pool errors on a fresh offline load', fyErrored, `fyErrored=${fyErrored}`);
+check('(precondition) For-You pool errors on its first offline fetch', fyErrored, `fyErrored=${fyErrored}`);
 await page.getByRole('button', { name: 'Read', exact: true }).click();
 await page.waitForTimeout(1000);
 const readIso = await page.evaluate(() => {

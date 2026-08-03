@@ -67,6 +67,9 @@ void probeWebgpu();
   feedSession: () => import('./lib/feedSession'), // session stubs/pins — for harnesses
   localData: () => import('./hooks/useLocalData'), // hide/unhide/save plain fns — for harnesses
   prefs: usePrefs,
+  // The shared QueryClient. `.clear()` empties the in-memory cache in place, so a harness can put a
+  // surface into its first-fetch state without a document reload.
+  queryClient,
 };
 
 // The read sweep for For You's "hide already-read stories" (hideReadInFeed) — design #4 (see
