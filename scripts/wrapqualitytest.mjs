@@ -45,6 +45,38 @@ const b = await chromium.launch({ headless: true });
 const ctx = await b.newContext({ viewport: { width: 1280, height: 800 } });
 const page = ctx.pages()[0] || (await ctx.newPage());
 
+// One fixture bootstrap for every context (fine pointer, coarse pointer, and the max-content
+// 4-digit-count case), so the three can never drift into testing different toolbars.
+const STORY_META = (n) => ({ id: STORY, type: 'story', by: 'op', title: 'A discussion with a full toolbar', url: 'https://ex.com/x', score: 394, descendants: n, time: now - 43200 });
+async function bootstrap(pg, kidList) {
+  await pg.route(/hacker-news\.firebaseio\.com/, (r) => {
+    const u = r.request().url();
+    const j = (x) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(x) });
+    if (u.includes('item/')) return j(STORY_META(kidList.length));
+    if (/topstories|beststories|newstories|askstories|showstories|jobstories/.test(u)) return j([STORY]);
+    return j(null);
+  });
+  await pg.route(/hn\.algolia\.com/, (r) =>
+    r.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ id: STORY, story_id: STORY, title: 'A discussion with a full toolbar', url: 'https://ex.com/x', author: 'op', created_at_i: now - 43200, type: 'story', text: null, points: 394, children: kidList }),
+    }),
+  );
+  await pg.goto(`${BASE}#/item/${STORY}`, { waitUntil: 'domcontentloaded' });
+  await pg.waitForSelector('.disc-toolbar', { timeout: 30000 });
+  // A prior visit makes every comment "new" so the catch-up button renders; a cloud key makes Ask
+  // render. Without both, the row is two controls lighter than a real reader's.
+  await pg.evaluate(async (id) => {
+    const dbMod = await window.__hnlens.db();
+    await dbMod.db.seen.put({ id: Number(id), ts: Date.now() - 8000 * 1000 });
+    window.__hnlens.prefs.getState().set({ llmProvider: 'gemini', apiKeys: { gemini: 'probe-key' } });
+  }, STORY);
+  await pg.reload({ waitUntil: 'domcontentloaded' });
+  await pg.waitForSelector('.disc-toolbar', { timeout: 30000 });
+  await pg.waitForTimeout(1000);
+}
+
 // Sweep the "…" overflow menu's placement across short viewports. Judged by HIT TEST, not just the
 // bounding box: the sticky TopNav paints above the menu, so a menu flipped up under it is invisible
 // AND unhittable (`elementFromPoint` returns the header); and a menu lifted over its own trigger puts
@@ -102,80 +134,118 @@ async function sweepMenuPlacement(pg, label) {
 }
 
 try {
-  await page.route(/hacker-news\.firebaseio\.com/, (r) => {
-    const u = r.request().url();
-    const j = (x) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(x) });
-    if (u.includes('item/')) {
-      return j({ id: STORY, type: 'story', by: 'op', title: 'A discussion with a full toolbar', url: 'https://ex.com/x', score: 394, descendants: kids.length, time: now - 43200 });
-    }
-    if (/topstories|beststories|newstories|askstories|showstories|jobstories/.test(u)) return j([STORY]);
-    return j(null);
-  });
-  await page.route(/hn\.algolia\.com/, (r) =>
-    r.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ id: STORY, story_id: STORY, title: 'A discussion with a full toolbar', url: 'https://ex.com/x', author: 'op', created_at_i: now - 43200, type: 'story', text: null, points: 394, children: kids }),
-    })
-  );
-
-  await page.goto(`${BASE}#/item/${STORY}`, { waitUntil: 'domcontentloaded' });
-  await page.waitForSelector('.disc-toolbar', { timeout: 30000 });
-  await page.evaluate(async (id) => {
-    const dbMod = await window.__hnlens.db();
-    await dbMod.db.seen.put({ id: Number(id), ts: Date.now() - 8000 * 1000 });
-    window.__hnlens.prefs.getState().set({ llmProvider: 'gemini', apiKeys: { gemini: 'probe-key' } });
-  }, STORY);
-  await page.reload({ waitUntil: 'domcontentloaded' });
-  await page.waitForSelector('.disc-toolbar', { timeout: 30000 });
-  await page.waitForTimeout(1200);
+  await bootstrap(page, kids);
 
   // PRECONDITION: the row really is carrying its full complement of controls. The tools are icon-only
   // (a visible label can't fit the width-capped column), so detect Ask by its aria-label, not text.
-  const pre = await page.evaluate(() => {
-    const t = document.querySelector('.disc-toolbar')?.textContent ?? '';
-    return { hasNew: /\d+\s+new/.test(t), hasAsk: !!document.querySelector('.disc-toolbar [aria-label="Ask"]') };
-  });
-  check('precondition: the toolbar carries every control (jump + Ask)', pre.hasNew && pre.hasAsk, JSON.stringify(pre));
+  const pre = await page.evaluate(() => ({
+    hasNew: !!document.querySelector('.disc-tb-bar .disc-catchup'),
+    hasAsk: !!document.querySelector('.disc-toolbar [aria-label="Ask"]'),
+    hasToggle: !!document.querySelector('.disc-tb-bar .seg[aria-label="Read the discussion or the article"]'),
+  }));
+  check('precondition: the band carries every control (view toggle + jump + Ask)', pre.hasNew && pre.hasAsk && pre.hasToggle, JSON.stringify(pre));
 
-  // SINGLE ROW AT EVERY WIDTH. The old sweep stepped over the ~460-540 band and excused sub-768
-  // wraps as "can't fit" — the exact hole the ragged two-row toolbar shipped through. Sweep in
-  // small steps across the WHOLE range, phones included, and require exactly one rendered row with
-  // no page overflow. The overflow-into-menu collapse makes this true at every width.
-  const rowFn = () => {
+  // THE CONTROL BAND IS ONE ROW (SPEC 7.1). The unit of measurement is the chrome between the story
+  // header and the first comment AS A WHOLE — the Discussion/Article view toggle, the count, sort,
+  // the in-thread search, the "…" menu and the catch-up button. Two clusters that are each
+  // individually a tidy single row still cost the reader two rows of a small screen, so the toggle
+  // is counted in the SAME row budget as the toolbar, wherever in the DOM it is rendered.
+  const bandFn = () => {
     const bar = document.querySelector('.disc-tb-bar');
     if (!bar) return null;
-    const items = [...bar.children].filter((k) => k.getBoundingClientRect().width > 0);
+    const vis = (el) => {
+      const r = el && el.getBoundingClientRect();
+      return !!r && r.width > 0 && r.height > 0;
+    };
+    const toggle = document.querySelector('.seg[aria-label="Read the discussion or the article"]');
+    // A `display: contents` wrapper generates NO box: its own rect is 0x0 and its CHILD is the real
+    // flex item. Measuring `bar.children` alone therefore silently skips every control that is
+    // shown through one (the sort control and the Summary/Ask group), so both the row bucketing and
+    // the fill are computed from a fraction of the row.
+    const flat = [];
+    for (const k of bar.children) {
+      if (getComputedStyle(k).display === 'contents') flat.push(...[...k.children].filter(vis));
+      else if (vis(k)) flat.push(k);
+    }
+    const parts = flat;
+    if (vis(toggle) && !bar.contains(toggle)) parts.push(toggle);
+    const cs = getComputedStyle(bar);
+    const inner = bar.clientWidth - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0);
+    // The container query resolves against the `@container/tb` element's inline size — the bar's
+    // BORDER box — which is `inner` plus this row's padding and border. Reporting the content box
+    // as "cq" makes every measured fold point look ~18px lower than the threshold that caused it.
+    const cqEl = bar.parentElement;
+    // The flex GAPS are occupied width too. Summing only the boxes reports a full row as ~94%
+    // full and understates every row by (items-1) x gap, which is the difference between "the
+    // filler did its job" and "there is dead space here".
+    const gap = parseFloat(cs.columnGap || cs.gap) || 0;
     const buckets = [];
-    for (const k of items) {
-      const rect = k.getBoundingClientRect();
-      const cy = rect.top + rect.height / 2;
+    for (const k of parts) {
+      const r = k.getBoundingClientRect();
+      const cy = r.top + r.height / 2;
       const hit = buckets.find((x) => Math.abs(x.cy - cy) < 12);
-      if (hit) hit.w += rect.width;
-      else buckets.push({ cy, w: rect.width });
+      if (hit) {
+        hit.w += r.width + gap;
+      } else buckets.push({ cy, w: r.width });
     }
-    return { rows: buckets.length, pageOver: document.documentElement.scrollWidth - document.documentElement.clientWidth };
+    buckets.sort((a, b) => a.cy - b.cy);
+    return {
+      rows: buckets.length,
+      fills: buckets.map((x) => Math.round((x.w / inner) * 100)),
+      pageOver: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      searchInline: vis(bar.querySelector('input[type="search"]')),
+      cq: Math.round(cqEl ? cqEl.getBoundingClientRect().width : inner),
+    };
   };
-  // Swept in BOTH the default and the widest (monospace `terminal`) theme: the toolbar controls are
-  // ~10% wider in mono, so a wrap can appear in terminal while default just fits. And the wide widths
-  // (>=1024) matter because label/word visibility must be governed by the SAME axis as the fold — a
-  // viewport-driven label on a width-capped column inflates content past the column without folding.
-  const offenders = [];
-  for (const theme of ['reader', 'terminal']) {
-    await page.evaluate((id) => { const p = window.__hnlens.prefs; const s = p.getState ? p.getState() : p; if (s.setThemeName) s.setThemeName(id); }, theme);
-    for (const w of [1440, 1280, 1152, 1024, 900, 820, 768, 700, 640, 600, 560, 540, 520, 500, 480, 460, 430, 390, 360, 320]) {
-      await page.setViewportSize({ width: w, height: 800 });
-      await page.waitForTimeout(150);
-      const r = await page.evaluate(rowFn);
-      if (!r) continue;
-      if (r.rows !== 1 || r.pageOver > 0) offenders.push(`${theme}@${w}px: ${r.rows} row(s), pageOver=${r.pageOver}`);
+
+  // Four axes, because each one independently moves the fold points and each has hidden a defect:
+  // WIDTH (320-1440 in 40px steps — a coarser sweep stepped over the band where the row broke),
+  // THEME (mono `terminal` controls are ~10% wider than `reader`), READING TEXT SIZE (the axis
+  // scales the ROOT font-size, so every rem-sized control grows while the viewport stays put), and
+  // POINTER (a coarse pointer gets 44px targets, which is taller AND wider).
+  const WIDTHS = [];
+  for (let w = 1440; w >= 320; w -= 40) WIDTHS.push(w);
+  const setAxes = (pg, theme, ts) =>
+    pg.evaluate(
+      ([t, s]) => {
+        const st = window.__hnlens.prefs.getState();
+        st.setThemeName(t);
+        st.setTextSize(s);
+      },
+      [theme, ts],
+    );
+  async function sweepBand(pg, label) {
+    const bad = [];
+    for (const theme of ['reader', 'terminal']) {
+      for (const ts of ['md', 'lg']) {
+        await setAxes(pg, theme, ts);
+        for (const w of WIDTHS) {
+          await pg.setViewportSize({ width: w, height: 900 });
+          await pg.waitForTimeout(110);
+          const r = await pg.evaluate(bandFn);
+          if (!r) continue;
+          const cell = `${label}/${theme}/${ts}@${w}`;
+          if (r.rows !== 1) bad.push(`${cell}: ${r.rows} rows fill=${r.fills.join('/')}%`);
+          else if (r.pageOver > 0) bad.push(`${cell}: pageOver=${r.pageOver}`);
+          // OPPOSITE CASE — nothing may fold while another control still has slack. The Search box
+          // is the flex FILLER, so whenever it is inline it has by construction absorbed the row's
+          // spare width: a low fill there means something folded early and left a dead gap.
+          else if (r.searchInline && r.fills[0] < 96) bad.push(`${cell}: inline Search but row only ${r.fills[0]}% full (cq=${r.cq})`);
+        }
+      }
     }
+    await setAxes(pg, 'reader', 'md');
+    return bad;
   }
-  await page.evaluate(() => { const p = window.__hnlens.prefs; const s = p.getState ? p.getState() : p; if (s.setThemeName) s.setThemeName('reader'); });
-  check('the discussion toolbar is a SINGLE row at every width (320-1440) x {default, widest theme}', offenders.length === 0, offenders.join(' | ') || '40 cells swept');
+  const bandBad = await sweepBand(page, 'mouse');
+  check(
+    'SPEC 7.1: the control band (view toggle + toolbar) is ONE full row at every width x {reader, terminal} x {default, large text}',
+    bandBad.length === 0,
+    bandBad.length ? `${bandBad.length} bad cells: ${bandBad.slice(0, 5).join(' | ')}${bandBad.length > 5 ? ` | +${bandBad.length - 5} more` : ''}` : `${WIDTHS.length * 4} cells swept`,
+  );
 
   // DEGRADATION ORDER (monotonic): as the toolbar narrows, Summary/Ask fold into "…" FIRST; the flat
-  // Sort control degrades 4 segments → 2 buttons → 1 toggle (never folding fully — its options stay in
+  // Sort control sheds ONE segment at a time, 4 → 3 → 2 → 1 (never folding fully — its options stay in
   // "…"); the Search box flex-fills then folds into "…" LAST. Measured by the visible sort-button count
   // + whether the inline Search box and the Summary/Ask group are present.
   const stateAt = async (w) => {
@@ -184,20 +254,112 @@ try {
     return page.evaluate(() => {
       const bar = document.querySelector('.disc-tb-bar');
       const vis = (el) => !!(el && el.getBoundingClientRect().width > 0);
-      const sortBtns = [...bar.querySelectorAll('.seg')].filter(vis).flatMap((s) => [...s.querySelectorAll('button')]).filter(vis).length;
-      return { sortBtns, search: vis(bar.querySelector('input[type="search"]')), tools: vis(bar.querySelector('.seg-act')) };
+      // Scoped to the SORT control by name: the view toggle is a `.seg` too, so a bare `.seg`
+      // query counts its segments as sort buttons and reports a degradation that never happened.
+      const sortBtns = [...bar.querySelectorAll('.seg[aria-label="Sort comments"]')].filter(vis).flatMap((s) => [...s.querySelectorAll('button')]).filter(vis).length;
+      const toggle = document.querySelector('.seg[aria-label="Read the discussion or the article"]');
+      return {
+        sortBtns,
+        search: vis(bar.querySelector('input[type="search"]')),
+        tools: vis(bar.querySelector('.seg-act')),
+        toggleSegs: toggle ? [...toggle.querySelectorAll('button')].filter(vis).length : 0,
+        toggleNames: toggle ? [...toggle.querySelectorAll('button')].filter(vis).map((x) => x.getAttribute('aria-label') || (x.textContent || '').trim()) : [],
+        // innerText, NOT textContent: a `display: none` label still contributes to textContent, so
+        // a text match reports the word as present at every width and the fold is never observed.
+        // Gated on the button being rendered, because innerText falls back to textContent for an
+        // element that is not — which reports the word as present after the whole control folds.
+        catchupWord: (() => {
+          const el = document.querySelector('.disc-tb-bar .disc-catchup');
+          return vis(el) && /new/i.test(el.innerText || '');
+        })(),
+        catchup: vis(document.querySelector('.disc-tb-bar .disc-catchup')),
+        // True while ANY sort variant shows words: the 4- and 2-segment variants carry their text
+        // as direct nodes, the single toggle carries it in a span that folds. Matching only spans
+        // reports the labelled 4-segment state as unlabelled and the sequence reads non-monotone.
+        sortLabelled: (() => {
+          const seg = [...bar.querySelectorAll('.seg[aria-label="Sort comments"]')].find(vis);
+          if (!seg) return false;
+          return [...seg.querySelectorAll('button')].filter(vis).some(
+            (btn) =>
+              [...btn.childNodes].some((n) => n.nodeType === 3 && (n.textContent || '').trim()) ||
+              [...btn.querySelectorAll('span')].some((x) => vis(x) && (x.textContent || '').trim()),
+          );
+        })(),
+        inBar: !!toggle && !!bar && bar.contains(toggle),
+      };
     });
   };
-  const s720 = await stateAt(720);
-  const s660 = await stateAt(660);
-  const s560 = await stateAt(560);
-  const s440 = await stateAt(440);
-  const s380 = await stateAt(380);
-  check('wide (720px): full Sort (4 segments) + inline Search + Summary/Ask inline', s720.sortBtns === 4 && s720.search && s720.tools, JSON.stringify(s720));
-  check('660px: Summary/Ask folded FIRST; full Sort still inline + Search inline', s660.sortBtns === 4 && s660.search && !s660.tools, JSON.stringify(s660));
-  check('560px: Sort degrades to 2 buttons; Search still inline', s560.sortBtns === 2 && s560.search, JSON.stringify(s560));
-  check('440px: Sort degrades to 1 toggle; Search still inline', s440.sortBtns === 1 && s440.search, JSON.stringify(s440));
-  check('380px: Sort stays a toggle; Search folds into the menu LAST', s380.sortBtns === 1 && !s380.search, JSON.stringify(s380));
+
+  // The band's controls degrade in a PRIORITY ORDER, and the order is the assertion — not a table of
+  // pixel thresholds, which shifts every time a control joins the row. Swept descending, each
+  // control's state must be monotone (never un-fold as the row gets narrower) and the widths at
+  // which each degradation first appears must respect the order.
+  const seq = [];
+  for (const w of WIDTHS) {
+    seq.push({ w, ...(await stateAt(w)) });
+  }
+  const firstAt = (pred) => {
+    const hit = seq.find(pred);
+    return hit ? hit.w : 0;
+  };
+  const nonMono = [];
+  for (let i = 1; i < seq.length; i++) {
+    const a = seq[i - 1];
+    const c = seq[i]; // narrower
+    if (c.sortBtns > a.sortBtns) nonMono.push(`sort ${a.w}->${c.w}: ${a.sortBtns}->${c.sortBtns}`);
+    if (c.tools && !a.tools) nonMono.push(`tools unfolded ${a.w}->${c.w}`);
+    if (c.search && !a.search) nonMono.push(`search unfolded ${a.w}->${c.w}`);
+    if (c.catchupWord && !a.catchupWord) nonMono.push(`catch-up word returned ${a.w}->${c.w}`);
+    if (c.sortLabelled && !a.sortLabelled) nonMono.push(`sort re-labelled ${a.w}->${c.w}`);
+    if (c.catchup && !a.catchup) nonMono.push(`catch-up unfolded ${a.w}->${c.w}`);
+  }
+  check('degradation is MONOTONE in width (nothing un-folds as the band narrows)', nonMono.length === 0, nonMono.slice(0, 5).join(' | ') || `${seq.length} widths`);
+
+  // Every intermediate sort state must actually OCCUR. A monotone count alone would be satisfied by
+  // a control that jumped 4 -> 1, which is the collapse this ladder exists to avoid.
+  const sortStates = [...new Set(seq.map((s) => s.sortBtns))].sort((a, b) => b - a);
+  check(
+    'the sort sheds ONE segment at a time: 4, 3, 2 and 1 segments all occur',
+    [4, 3, 2, 1].every((n) => sortStates.includes(n)),
+    `observed segment counts: ${sortStates.join(', ')}`,
+  );
+
+  const wTools = firstAt((s) => !s.tools);
+  const wSort2 = firstAt((s) => s.sortBtns < 4);
+  const wSort1 = firstAt((s) => s.sortBtns < 2);
+  const wSearch = firstAt((s) => !s.search);
+  const wCatchWord = firstAt((s) => !s.catchupWord);
+  const wSortLabel = firstAt((s) => !s.sortLabelled);
+  const wCatchup = firstAt((s) => !s.catchup);
+  const orderOk =
+    wTools >= wSort2 && wSort2 >= wSort1 && wSort1 >= wCatchWord && wCatchWord >= wSortLabel && wSortLabel >= wCatchup && wCatchup >= wSearch && wSearch > 0;
+  check(
+    'fold ORDER: Summary/Ask, Sort 4->3->2->1, catch-up word, sort label, catch-up — and the Search filler LAST',
+    orderOk,
+    `tools@${wTools} sort4->2@${wSort2} sort2->1@${wSort1} catchupWord@${wCatchWord} sortLabel@${wSortLabel} catchup@${wCatchup} search@${wSearch}`,
+  );
+  // The view toggle is the surface's MODE switch: both segments stay visible at every width —
+  // folding it into "…" would hide the Article view entirely, and in article view it is the only
+  // control the band has. Drawn as icons, so its ACCESSIBLE NAMES carry the meaning.
+  const toggleGone = seq.filter((s) => s.toggleSegs !== 2).map((s) => `${s.w}:${s.toggleSegs}`);
+  check('the Discussion/Article toggle keeps BOTH segments visible at every width', toggleGone.length === 0, toggleGone.slice(0, 6).join(' | ') || `${seq.length} widths`);
+  const badNames = seq.filter((s) => s.toggleNames.join('|') !== 'Discussion|Article').map((s) => `${s.w}:${s.toggleNames.join('|')}`);
+  check('the view toggle keeps the accessible names "Discussion" and "Article" at every width', badNames.length === 0, badNames.slice(0, 4).join(' | ') || `${seq.length} widths`);
+  check('the Discussion/Article toggle shares the toolbar row (it is inside the bar)', seq.every((s) => s.inBar), `inBar at ${seq.filter((s) => s.inBar).length}/${seq.length} widths`);
+  // Two concrete anchors so the order check above can't be satisfied by a band that degraded
+  // everything (or nothing) everywhere.
+  const sWide = await stateAt(1440);
+  const sNarrow = await stateAt(320);
+  check(
+    'widest (1440px): nothing is degraded — full Sort, inline Search, Summary/Ask inline, catch-up worded',
+    sWide.sortBtns === 4 && sWide.search && sWide.tools && sWide.catchupWord,
+    JSON.stringify(sWide),
+  );
+  check(
+    'narrowest (320px): fully degraded — Sort is one toggle, Search folded, catch-up wordless, both view segments still there',
+    sNarrow.sortBtns === 1 && !sNarrow.search && !sNarrow.catchupWord && sNarrow.toggleSegs === 2,
+    JSON.stringify(sNarrow),
+  );
 
   // REACHABILITY: nothing folded is lost — at 360px the "..." menu holds every tool + every sort option.
   await page.setViewportSize({ width: 360, height: 800 });
@@ -217,7 +379,7 @@ try {
   // M4 — below ~400px CQ the inline Search folds into the "…" menu. The remaining controls must form a
   // LEFT/RIGHT toolbar (right actions pinned), NOT clump at the left leaving a dead TRAILING gap on the
   // right. Assert the rightmost visible control sits at the bar's inner-right edge once Search has folded.
-  await page.setViewportSize({ width: 380, height: 800 });
+  await page.setViewportSize({ width: 320, height: 800 });
   await page.waitForTimeout(200);
   const narrowGap = await page.evaluate(() => {
     const bar = document.querySelector('.disc-tb-bar');
@@ -230,7 +392,11 @@ try {
     const si = bar.querySelector('input[type="search"]');
     return { searchInline: !!si && si.getBoundingClientRect().width > 0, trailing: Math.round(br.right - padRight - rightmost) };
   });
-  check('narrow (<400px): Search has folded and the right actions are pinned — no dead trailing gap', !narrowGap.searchInline && narrowGap.trailing <= 12, JSON.stringify(narrowGap));
+  check('narrowest: Search has folded and the right actions are pinned — no dead trailing gap', !narrowGap.searchInline && narrowGap.trailing <= 12, JSON.stringify(narrowGap));
+  // SPEC 11 bounds the accepted empty centre to the widths where the Search filler has folded. It
+  // must not creep upward: measure the WIDEST width at which the inline Search is gone.
+  const emptyCentreFrom = firstAt((s) => !s.search);
+  check('the accepted empty centre stays at the narrow end (Search folds at or below 400px)', emptyCentreFrom > 0 && emptyCentreFrom <= 400, `Search folds at ${emptyCentreFrom}px`);
 
   // SR2 regression — the "…" overflow menu must stay fully on-screen at the narrowest width. It is
   // right-anchored (w-56) and the ⋯ trigger is pinned to the column's right edge, so without a viewport
@@ -277,33 +443,14 @@ try {
   {
     const tctx = await b.newContext({ viewport: { width: 560, height: 900 }, hasTouch: true });
     const tp = await tctx.newPage();
-    await tp.route(/hacker-news\.firebaseio\.com/, (r) => {
-      const u = r.request().url();
-      const j = (x) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(x) });
-      if (u.includes('item/')) return j({ id: STORY, type: 'story', by: 'op', title: 'A discussion with a full toolbar', url: 'https://ex.com/x', score: 394, descendants: kids.length, time: now - 43200 });
-      if (/topstories|beststories|newstories|askstories|showstories|jobstories/.test(u)) return j([STORY]);
-      return j(null);
-    });
-    await tp.route(/hn\.algolia\.com/, (r) =>
-      r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: STORY, story_id: STORY, title: 'A discussion with a full toolbar', url: 'https://ex.com/x', author: 'op', created_at_i: now - 43200, type: 'story', text: null, points: 394, children: kids }) })
-    );
-    await tp.goto(`${BASE}#/item/${STORY}`, { waitUntil: 'domcontentloaded' });
-    await tp.waitForSelector('.disc-toolbar', { timeout: 30000 });
-    await tp.evaluate(async (id) => {
-      const dbMod = await window.__hnlens.db();
-      await dbMod.db.seen.put({ id: Number(id), ts: Date.now() - 8000 * 1000 });
-      window.__hnlens.prefs.getState().set({ llmProvider: 'gemini', apiKeys: { gemini: 'probe-key' } });
-    }, STORY);
-    await tp.reload({ waitUntil: 'domcontentloaded' });
-    await tp.waitForSelector('.disc-toolbar', { timeout: 30000 });
-    await tp.waitForTimeout(800);
+    await bootstrap(tp, kids);
     const touch = await tp.evaluate(() => {
       const bar = document.querySelector('.disc-tb-bar');
       const els = [
         ...bar.querySelectorAll('.seg-btn'),
         ...bar.querySelectorAll('button[aria-label="More discussion tools"]'),
         ...bar.querySelectorAll('input[type="search"]'),
-        ...[...bar.children].filter((k) => k.tagName === 'BUTTON' && /\d+\s+new/.test(k.textContent || '')),
+        ...bar.querySelectorAll('.disc-catchup'),
       ].filter((e) => e.getBoundingClientRect().width > 0);
       const small = els
         .filter((e) => e.getBoundingClientRect().height < 44)
@@ -317,7 +464,47 @@ try {
       tOffenders.length === 0,
       tOffenders.join(' | ') || '6 short-viewport touch cells swept',
     );
+    // The whole width x theme x text-size matrix again under a COARSE pointer, where every control
+    // is both taller and wider.
+    const tBand = await sweepBand(tp, 'touch');
+    check(
+      'touch: the control band is ONE full row across the same width x theme x text-size matrix',
+      tBand.length === 0,
+      tBand.length ? `${tBand.length} bad cells: ${tBand.slice(0, 5).join(' | ')}${tBand.length > 5 ? ` | +${tBand.length - 5} more` : ''}` : `${WIDTHS.length * 4} touch cells swept`,
+    );
     await tctx.close();
+  }
+
+  // MAX CONTENT — a long-running thread revisited days later gives BOTH the comment count and the
+  // catch-up count four digits. The count is data, so the band cannot rely on it being short: the
+  // rendered catch-up label has to be bounded no matter how large the number gets.
+  {
+    const bigKids = Array.from({ length: 1400 }, (_, i) => ({
+      id: STORY * 10 + i,
+      author: `commenter${i}`,
+      text: `<p>Comment ${i}.</p>`,
+      created_at_i: now - 600 + i,
+      parent_id: STORY,
+      story_id: STORY,
+      points: null,
+      type: 'comment',
+      children: [],
+    }));
+    const bctx = await b.newContext({ viewport: { width: 1280, height: 900 } });
+    const bp = await bctx.newPage();
+    await bootstrap(bp, bigKids);
+    const label = await bp.evaluate(() => {
+      const el = document.querySelector('.disc-tb-bar .disc-catchup') || [...document.querySelectorAll('.disc-tb-bar button')].find((k) => /\d/.test(k.textContent || '') && /new/.test(k.textContent || ''));
+      return el ? { text: (el.innerText || '').trim(), w: Math.round(el.getBoundingClientRect().width) } : null;
+    });
+    check('a 4-digit catch-up count renders a BOUNDED label (the number is capped, not laid out in full)', !!label && label.text.replace(/\D/g, '').length <= 3, JSON.stringify(label));
+    const bBand = await sweepBand(bp, 'bigcount');
+    check(
+      'max-content (4-digit count + 4-digit catch-up): the band is ONE full row across the same matrix',
+      bBand.length === 0,
+      bBand.length ? `${bBand.length} bad cells: ${bBand.slice(0, 5).join(' | ')}${bBand.length > 5 ? ` | +${bBand.length - 5} more` : ''}` : `${WIDTHS.length * 4} max-content cells swept`,
+    );
+    await bctx.close();
   }
 } finally {
   await ctx.close().catch(() => {});

@@ -168,7 +168,9 @@ await page.waitForTimeout(500);
 const feedOpenNew = await page.evaluate(() => {
   const main = document.querySelector('main');
   if (!main) return -1;
-  return [...main.querySelectorAll('span')].filter((s) => s.textContent.trim() === 'new').length;
+  // Comment badges only. The control band's catch-up button also says "new", and it lives in
+  // <main> too, so an unscoped span sweep counts it as a third badge on a two-fresh-comment fixture.
+  return [...main.querySelectorAll('span')].filter((s) => !s.closest('.disc-toolbar') && s.textContent.trim() === 'new').length;
 });
 check('feed→page path: comments newer than last visit show a "new" badge', feedOpenNew >= 2, `${feedOpenNew} badge(s) (expected 2)`);
 check('feed→page path: the OLD comment is NOT flagged new', feedOpenNew === 2, `${feedOpenNew} badge(s) — should be exactly the 2 fresh ones`);
@@ -181,7 +183,7 @@ await page.evaluate(async (t) => {
 await page.goto(`${BASE}#/item/1001`, { waitUntil: 'domcontentloaded' });
 await page.waitForFunction(() => /comment/i.test(document.body.innerText), null, { timeout: 15000 });
 await page.waitForTimeout(500);
-const itemNew = await page.evaluate(() => [...document.querySelectorAll('main span')].filter((s) => s.textContent.trim() === 'new').length);
+const itemNew = await page.evaluate(() => [...document.querySelectorAll('main span')].filter((s) => !s.closest('.disc-toolbar') && s.textContent.trim() === 'new').length);
 check('/item path: still shows the "new" badge for fresh comments', itemNew >= 2, `${itemNew} badge(s)`);
 
 // ===== [C] Save from the discussion view header =====
@@ -373,10 +375,12 @@ console.log('\n[F] toolbar keyboard + jump interaction');
   }));
   check('`/` focuses the inline discussion search on /item (not the global nav search)', afterSlash.inInlineBar && !afterSlash.inTopNav, JSON.stringify(afterSlash));
 
-  // F3b (SR1 regression) — at a NARROW width the inline search folds into the "…" menu (display:none
-  // but still in the DOM). `/` must fall back to the VISIBLE global nav search, not target the hidden
-  // inline box and no-op. (A null-coalesce on mere presence, not visibility, made `/` a dead key here.)
-  await page.setViewportSize({ width: 380, height: 800 });
+  // F3b (SR1 regression) — at the narrowest width the inline search folds into the "…" menu
+  // (display:none but still in the DOM). `/` must fall back to the VISIBLE global nav search, not
+  // target the hidden inline box and no-op. (A null-coalesce on mere presence, not visibility, made
+  // `/` a dead key here.) The width is the narrowest supported one, because the Search box is the
+  // flex filler and is the LAST control to fold.
+  await page.setViewportSize({ width: 320, height: 800 });
   await page.waitForTimeout(300);
   await page.evaluate(() => document.activeElement instanceof HTMLElement && document.activeElement.blur());
   await page.evaluate(() => document.body.click());

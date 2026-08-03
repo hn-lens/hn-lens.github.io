@@ -9,6 +9,7 @@ import {
   BookmarkCheck,
   Check,
   ExternalLink,
+  FileText,
   ListTree,
   MessageCircleQuestion,
   MessageSquare,
@@ -42,6 +43,11 @@ type Sort = 'default' | 'new' | 'old' | 'replies';
 
 // HN's public API does NOT expose per-comment scores, so we can't offer a "top by
 // points" sort. What we can offer: HN's own returned order, time, and reply count.
+// Reduced sort sets, dropping the least-used option first: `Default` is HN's own ordering, which is
+// the state a reader arrives in, then `Oldest`.
+const SORTS_3: Sort[] = ['new', 'old', 'replies'];
+const SORTS_2: Sort[] = ['new', 'replies'];
+
 const SORTS: Array<[Sort, string]> = [
   ['default', 'Default'],
   ['new', 'Newest'],
@@ -489,6 +495,9 @@ export default function CommentsView({ id }: { id: number }) {
   // self/Ask post or a comment permalink).
   const canReadArticle = !!href && !isComment;
   const showArticle = view === 'article' && canReadArticle;
+  // The comment half of the control band. The view toggle can be the band's only occupant (a link
+  // story whose discussion is empty, or the article view), so the band's own render gate is wider.
+  const hasCommentControls = !!tree && (topLevel.length > 0 || searching || newIds.length > 0);
 
   return (
     <div className="space-y-2">
@@ -586,37 +595,59 @@ export default function CommentsView({ id }: { id: number }) {
           />
         )}
 
-        {/* Discussion | Article toggle (link stories only). Inside the header block so its top gap is a
-            direct margin, not the outer space-y (a child mt can't override space-y's `> * + *` rule). */}
-        {canReadArticle && (
-          <div className="seg mt-2" role="tablist" aria-label="Read the discussion or the article">
-            <button type="button" role="tab" aria-selected={view === 'discussion'} onClick={() => setView('discussion')} className="seg-btn">
-              Discussion
-            </button>
-            <button type="button" role="tab" aria-selected={view === 'article'} onClick={() => setView('article')} className="seg-btn">
-              Article
-            </button>
-          </div>
-        )}
       </div>
 
-      {showArticle ? (
-        <ArticleReader item={story} />
-      ) : (
-        <>
-          {/* ONE compact sticky toolbar + an on-demand tray, replacing four stacked blocks.
-              The tray lives INSIDE the sticky region so a tool invoked from the bottom of a long
-              thread opens where the reader already is, with its input focused. */}
-          {tree && (topLevel.length > 0 || searching || newIds.length > 0) && (
-            <div className="disc-toolbar">
-              {/* Container-query context (`/tb`): the bar is FULL-WIDTH and its controls DEGRADE as the
-                  column narrows so the row is always ONE line with no dead gap. Priority (widest→narrowest):
-                  Summary/Ask fold into "…" first; the flat SORT degrades 4 segments → 2 buttons
-                  (Newest|Replies) → a single ⇅ toggle (the full option set stays in "…" the whole time);
-                  the SEARCH box flex-fills the leftover space, then moves into "…" at the very narrowest.
-                  count + "N new" never fold. */}
-              <div className="@container/tb">
-                <div className="disc-tb-bar flex w-full flex-wrap items-center gap-2 rounded-xl border border-border bg-surface-2 px-2 py-1.5">
+      {/* THE CONTROL BAND — everything between the story header and the content, in ONE row (SPEC
+          7.1). The Discussion/Article toggle shares this row's budget rather than owning a private
+          one, and the bar renders in BOTH views so the toggle keeps its position when the view
+          changes. The tray lives INSIDE the sticky region so a tool invoked from the bottom of a
+          long thread opens where the reader already is, with its input focused. */}
+      {(canReadArticle || hasCommentControls) && (
+        <div className="disc-toolbar">
+          {/* Container-query context (`/tb`): the bar is FULL-WIDTH and its controls DEGRADE as the
+              column narrows so the row is always ONE line with no dead gap. Priority
+              (widest→narrowest): Summary/Ask fold into "…" first; the flat SORT sheds one segment at
+              a time — 4 → 3 (Newest|Oldest|Replies) → 2 (Newest|Replies) → a single ⇅ toggle, with
+              the full option set in "…" the whole time; the catch-up button sheds its word; the SEARCH box flex-fills the
+              leftover space, then moves into "…" at the very narrowest. The thresholds are in REM,
+              so the reading-text-size axis — which scales the root font-size, and with it every
+              control in this row — moves the fold points by the same factor it grows the content.
+              The view toggle and the comment count never fold. */}
+          <div className="@container/tb">
+            <div className="disc-tb-bar flex w-full flex-wrap items-center gap-2 rounded-xl border border-border bg-surface-2 px-2 py-1.5">
+              {canReadArticle && (
+                <div className="seg shrink-0" role="tablist" aria-label="Read the discussion or the article">
+                  {/* Icons carry the two views; `aria-label` carries the accessible name, and the
+                      segment's selected styling carries which one is active. The words do not fit
+                      this row's budget at any shipped column width alongside the sort control, the
+                      search filler and the tools. */}
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={view === 'discussion'}
+                    aria-label="Discussion"
+                    title="Discussion"
+                    onClick={() => setView('discussion')}
+                    className="seg-btn inline-flex items-center"
+                  >
+                    <MessageSquare className="size-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={view === 'article'}
+                    aria-label="Article"
+                    title="Article"
+                    onClick={() => setView('article')}
+                    className="seg-btn inline-flex items-center"
+                  >
+                    <FileText className="size-3.5" />
+                  </button>
+                </div>
+              )}
+
+              {!showArticle && hasCommentControls && (
+                <>
                   <span className="shrink-0 text-sm font-semibold">
                     {story.descendants ?? topLevel.length}
                     {/* Word is screen-reader-only (kept inside the count so it adds no visual width). */}
@@ -624,8 +655,8 @@ export default function CommentsView({ id }: { id: number }) {
                   </span>
 
                   {/* SORT — flat, degrades with width; the full option set is always reachable (here or in "…"). */}
-                  {/* full 4-segment (>=560) */}
-                  <span className="hidden shrink-0 @min-[600px]/tb:contents">
+                  {/* full 4-segment */}
+                  <span className="hidden shrink-0 @min-[43rem]/tb:contents">
                     <div
                       className="seg"
                       role="group"
@@ -639,15 +670,29 @@ export default function CommentsView({ id }: { id: number }) {
                       ))}
                     </div>
                   </span>
-                  {/* 2 buttons Newest|Replies (460-559); Default/Oldest remain in the "…" menu */}
-                  <span className="hidden shrink-0 @min-[460px]/tb:contents @min-[600px]/tb:hidden">
+                  {/* 3 buttons Newest|Oldest|Replies; Default remains in the "…" menu */}
+                  <span className="hidden shrink-0 @min-[40rem]/tb:contents @min-[43rem]/tb:hidden">
                     <div className="seg" role="group" aria-label="Sort comments">
-                      <button type="button" aria-pressed={sort === 'new'} onClick={() => setSort('new')} className="seg-btn">Newest</button>
-                      <button type="button" aria-pressed={sort === 'replies'} onClick={() => setSort('replies')} className="seg-btn">Replies</button>
+                      {SORTS_3.map((sk) => (
+                        <button key={sk} type="button" aria-pressed={sort === sk} onClick={() => setSort(sk)} className="seg-btn">
+                          {SORTS.find(([k]) => k === sk)?.[1]}
+                        </button>
+                      ))}
                     </div>
                   </span>
-                  {/* single ⇅ toggle (<460); flips Newest/Replies, full options in "…" */}
-                  <span className="hidden shrink-0 @max-[459.98px]/tb:contents">
+                  {/* 2 buttons Newest|Replies; Default/Oldest remain in the "…" menu */}
+                  <span className="hidden shrink-0 @min-[34rem]/tb:contents @min-[40rem]/tb:hidden">
+                    <div className="seg" role="group" aria-label="Sort comments">
+                      {SORTS_2.map((sk) => (
+                        <button key={sk} type="button" aria-pressed={sort === sk} onClick={() => setSort(sk)} className="seg-btn">
+                          {SORTS.find(([k]) => k === sk)?.[1]}
+                        </button>
+                      ))}
+                    </div>
+                  </span>
+                  {/* single ⇅ toggle; flips Newest/Replies, full options in "…". A default that
+                      HIDES above the threshold, so the variants swap at exactly one boundary. */}
+                  <span className="contents shrink-0 @min-[34rem]/tb:hidden">
                     <div className="seg" role="group" aria-label="Sort comments">
                       <button
                         type="button"
@@ -656,13 +701,14 @@ export default function CommentsView({ id }: { id: number }) {
                         title="Cycle sort order — full options also in the ⋯ menu"
                         aria-label={`Sort: ${sortLabel}. Tap to cycle sort order; full options in the more-actions menu.`}
                       >
-                        <ArrowUpDown className="size-3.5" /> {sortLabel}
+                        <ArrowUpDown className="size-3.5" />
+                        <span className="hidden @min-[29rem]/tb:inline">{sortLabel}</span>
                       </button>
                     </div>
                   </span>
 
-                  {/* SEARCH — flex filler; typing filters the thread inline. Moves into "…" below ~360. */}
-                  <span className="relative hidden min-w-[6rem] flex-1 items-center @min-[400px]/tb:flex">
+                  {/* SEARCH — flex filler; typing filters the thread inline. Moves into "…" LAST. */}
+                  <span className="relative hidden min-w-[5rem] flex-1 items-center @min-[20rem]/tb:flex">
                     <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-subtle" />
                     <input
                       type="search"
@@ -670,7 +716,11 @@ export default function CommentsView({ id }: { id: number }) {
                       onChange={(e) => setQuery(e.target.value)}
                       placeholder="Search this discussion…"
                       aria-label="Search comments in this discussion"
-                      className="w-full rounded-lg border border-edge bg-surface-2 py-1.5 pl-8 pr-8 text-sm outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                      // The right inset only has to clear the Clear button, which needs a query to exist.
+                      className={cn(
+                        'w-full rounded-lg border border-edge bg-surface-2 py-1.5 pl-8 text-sm outline-none focus-visible:ring-2 focus-visible:ring-accent',
+                        query ? 'pr-8' : 'pr-2',
+                      )}
                     />
                     {query && (
                       <button type="button" aria-label="Clear search" onClick={() => setQuery('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-subtle hover:text-fg">
@@ -679,8 +729,8 @@ export default function CommentsView({ id }: { id: number }) {
                     )}
                   </span>
 
-                  {/* SUMMARY / ASK — icon buttons; fold into "…" FIRST, below ~640. */}
-                  <span className="hidden shrink-0 @min-[660px]/tb:contents">
+                  {/* SUMMARY / ASK — icon buttons; fold into "…" FIRST. */}
+                  <span className="hidden shrink-0 @min-[45rem]/tb:contents">
                     <div className="seg-act" role="group" aria-label="Discussion tools">
                       {/* "Summary" (the panel), not "Summarize" (the act, inside the tray): two controls
                           sharing one accessible name on one page is ambiguous for screen readers. */}
@@ -695,9 +745,9 @@ export default function CommentsView({ id }: { id: number }) {
                     </div>
                   </span>
 
-                  {/* Overflow menu — shown once anything has folded (below ~640). Holds Summary/Ask, then
-                      Search (only when its inline box has dropped, <360), then the full Sort options (<560). */}
-                  <span ref={toolMenuRef} className="relative shrink-0 @max-[399.98px]/tb:ml-auto @min-[660px]/tb:hidden">
+                  {/* Overflow menu — shown once anything has folded. Holds Summary/Ask, then Search
+                      (only when its inline box has dropped), then the full Sort options. */}
+                  <span ref={toolMenuRef} className="relative ml-auto shrink-0 @min-[20rem]/tb:ml-0 @min-[45rem]/tb:hidden">
                     <IconButton label="More discussion tools" active={toolMenuOpen} onClick={() => setToolMenuOpen((v) => !v)}>
                       <MoreHorizontal className="size-4" />
                     </IconButton>
@@ -711,14 +761,22 @@ export default function CommentsView({ id }: { id: number }) {
                             <MessageCircleQuestion className="size-3.5" /> Ask
                           </MenuItem>
                         )}
-                        {/* Search — only when the inline box has dropped (below ~360). */}
-                        <div className="@min-[400px]/tb:hidden">
+                        {/* Catch-up — only when its button has dropped. */}
+                        {newIds.length > 0 && (
+                          <div className="@min-[24.75rem]/tb:hidden">
+                            <MenuItem onClick={() => { jumpNextNew(); setToolMenuOpen(false); }}>
+                              <ArrowDown className="size-3.5 text-accent" /> {newIds.length > 999 ? '999+' : newIds.length} new
+                            </MenuItem>
+                          </div>
+                        )}
+                        {/* Search — only when the inline box has dropped. */}
+                        <div className="@min-[20rem]/tb:hidden">
                           <MenuItem onClick={() => { toggleTool('search'); setToolMenuOpen(false); }}>
                             <Search className="size-3.5" /> Search this discussion
                           </MenuItem>
                         </div>
-                        {/* Full Sort options — whenever the inline Sort is degraded (below ~560). */}
-                        <div className="@min-[600px]/tb:hidden">
+                        {/* Full Sort options — whenever the inline Sort is degraded. */}
+                        <div className="@min-[43rem]/tb:hidden">
                           <div className="my-1 border-t border-border" />
                           <div className="px-3 py-1 text-[11px] font-medium uppercase tracking-wide text-subtle">Sort</div>
                           {SORTS.map(([sk, label]) => (
@@ -735,15 +793,23 @@ export default function CommentsView({ id }: { id: number }) {
                     <button
                       type="button"
                       onClick={jumpNextNew}
-                      className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-edge bg-accent/10 px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-accent/15"
+                      // Four-digit counts are real, so the LABEL is capped; the accessible name is not.
+                      aria-label={`Jump to the next of ${newIds.length} new ${newIds.length === 1 ? 'comment' : 'comments'}`}
+                      className="disc-catchup hidden shrink-0 items-center gap-1 rounded-lg border border-edge bg-accent/10 px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-accent/15 @min-[24.75rem]/tb:inline-flex"
                     >
-                      <ArrowDown className="size-3.5 text-accent" /> {newIds.length} new
+                      <ArrowDown className="size-3.5 text-accent" />
+                        <span>
+                        {newIds.length > 999 ? '999+' : newIds.length}
+                        <span className="hidden @min-[30.5rem]/tb:inline"> new</span>
+                      </span>
                     </button>
                   )}
-                </div>
-              </div>
+                </>
+              )}
+            </div>
+          </div>
 
-              {tool && (
+          {!showArticle && tool && tree && (
                 <div className="disc-tray mt-1.5" role="region" aria-label={`${tool} panel`}>
                   <div className="disc-tray-head sticky top-0 z-10 flex items-center gap-2 border-b border-border px-3 py-2">
                     <strong className="text-xs font-semibold text-accent">
@@ -797,11 +863,15 @@ export default function CommentsView({ id }: { id: number }) {
                     )}
                     {tool === 'ask' && aiSummaryActive && <AskThread story={story} tree={tree} />}
                   </div>
-                </div>
-              )}
             </div>
           )}
+        </div>
+      )}
 
+      {showArticle ? (
+        <ArticleReader item={story} />
+      ) : (
+        <>
           {commentsQ.isLoading && <div className="text-sm text-muted">Loading comments…</div>}
 
           {searching ? (

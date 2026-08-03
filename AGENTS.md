@@ -246,6 +246,39 @@ in the browser; deploys to GitHub Pages.
   policy-locked Chrome can stall on external fetches. For WebGPU add
   `--enable-unsafe-webgpu --enable-features=Vulkan --use-angle=metal` and load over `localhost`
   (WebGPU needs a secure context).
+- **A MOCKUP IS AN INTERACTIVE PAGE THE MAINTAINER CAN RESIZE, NEVER A STATIC IMAGE.** Anything whose
+  answer depends on WIDTH — a responsive row, a fold order, a control that degrades — cannot be judged
+  from screenshots at two or three widths, because the interesting behaviour is the transitions
+  BETWEEN them and which control gives way first. Ship a self-contained HTML page with a
+  drag-to-resize container (a `resize: horizontal` wrapper, or a width slider) that re-runs the real
+  fold logic live and shows the current width, so the maintainer can sweep the range themselves and
+  watch each fold happen. Static contact sheets are for RECORDING a decision already made, not for
+  making one. NEVER ask the maintainer to choose between UI options without a workable mock of EVERY
+  option on offer — presenting one option and describing the others in prose is not a choice.
+  **SCREENSHOT THE MOCK, AND HAVE SOMEONE ELSE JUDGE THE PICTURE. Both halves are mandatory.**
+  Capture it at several widths across its range; a mock is a throwaway page written fast, so it is
+  MORE likely to be broken than the product, and handing over a broken one wastes the maintainer's
+  time and destroys the credibility of the whole comparison.
+
+  **Looking at it yourself is necessary and NOT sufficient — that has now failed twice in a row on
+  the same mock.** The author looks for the defects on their own checklist and sees a pass. A row was
+  handed over with a search label wrapped across two lines and overlapping the next control, then
+  handed over again with a segmented control stretched so wide that most of it was empty padding. The
+  second one was screenshotted, and read, and approved. So:
+  - **A metric the mock computes about ITSELF is not evidence, and it actively poisons your reading of
+    the image.** "1 row · fill 95% · overlaps 0" printed under the picture is why the dead space did
+    not register — the number said the row was full, so a full row is what got seen. Three
+    self-measures in a row were wrong here: rows bucketed by top edge (counted 5 for one row), fill
+    counting a stretched container's box as content, and overflow measured on children but never on
+    the container itself. Whatever the mock reports, ALSO check `scrollWidth > clientWidth` on the
+    CONTAINER and on every child, and that no two children's rectangles intersect.
+  - **Hand the images to an INDEPENDENT reviewer, and give it only the image and the expected end
+    result** — never your metrics, never what you changed, never what you want confirmed. Ask the
+    open question: *"what is wrong with this picture?"* A reviewer told what to verify will verify
+    exactly that and nothing else. This is the same rule as never reviewing your own code; a mock is
+    not exempt because it is throwaway.
+  - **Do not describe a mock as correct, working or ready on your own reading.** Say what was
+    measured and that an independent pass agreed, or say it is unreviewed.
 - **Show the user visual MOCKUPS by hosting them on the user's RUNNING server — NOT the Artifacts
   panel, inline images, or any external file host (the user can't see any of those in the TUI).**
   CONFIRM which server
