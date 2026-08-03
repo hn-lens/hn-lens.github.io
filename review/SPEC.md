@@ -217,6 +217,21 @@ meet WCAG 1.4.11 (≥3:1) for their boundary against the adjacent surface, and a
 makes "there are N segments and this one is selected" obvious. Decorative elements, disabled
 controls and logotypes are exempt and are LOW at most.
 
+### 7.1 A surface's control band is ONE row
+
+Chrome above the content of a reading surface is measured as a WHOLE, not per component. On the
+discussion page the control band is everything between the story header and the first comment — the
+Discussion/Article view toggle, the comment count, the sort control, the in-thread search, the
+overflow menu and the catch-up button. Together they occupy **ONE row at every width**, and controls
+DEGRADE — shrink, shorten their labels, drop to icons, or fold into the overflow menu — rather than
+taking a second row.
+
+This is an end result about the reading surface, not about any one component: two clusters that are
+each individually a tidy single row still cost the reader two rows of a small screen, and the whole
+point of collapsing this chrome was the vertical budget before the first comment. A finding here is
+any width at which the band occupies more than one row, or at which a control has folded while
+another still has slack to give.
+
 ---
 
 ## 8. Privacy
