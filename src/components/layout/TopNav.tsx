@@ -68,7 +68,7 @@ export default function TopNav() {
             aria-label="Theme design"
             title="Switch theme design"
             onChange={(e) => setThemeName(e.target.value)}
-            className="hidden max-w-[9rem] truncate rounded-lg border border-edge bg-surface py-1.5 pl-2 pr-6 text-xs text-muted outline-none hover:text-fg focus:border-accent md:block lg:max-w-[17rem]"
+            className="hidden max-w-[9rem] truncate rounded-lg border border-edge bg-surface py-1.5 pl-2 pr-6 text-xs text-muted outline-none hover:text-fg focus:border-accent md:block lg:max-w-[15rem]"
           >
             {THEMES.map((t) => (
               <option key={t.id} value={t.id}>
@@ -81,7 +81,7 @@ export default function TopNav() {
             aria-label="Layout"
             title="Switch layout (structure)"
             onChange={(e) => setLayout(e.target.value)}
-            className="hidden max-w-[8rem] truncate rounded-lg border border-edge bg-surface py-1.5 pl-2 pr-6 text-xs text-muted outline-none hover:text-fg focus:border-accent lg:block lg:max-w-[15rem]"
+            className="hidden max-w-[8rem] truncate rounded-lg border border-edge bg-surface py-1.5 pl-2 pr-6 text-xs text-muted outline-none hover:text-fg focus:border-accent lg:block lg:max-w-[13rem]"
           >
             {LAYOUTS.map((l) => (
               <option key={l.id} value={l.id}>
