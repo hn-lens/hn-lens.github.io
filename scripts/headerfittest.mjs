@@ -53,7 +53,13 @@ try {
         const textW = probe.getBoundingClientRect().width;
         probe.remove();
         const avail = el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
-        return { text: text.slice(0, 26), textW: Math.round(textW), avail: Math.round(avail), clipped: textW > avail };
+        // Headroom, not a bare fit. The CI runner has different fonts from a developer machine and
+        // measures the same string several pixels wider, so a label that merely fits locally ships
+        // clipped. Demand a margin that absorbs that difference.
+        return {
+          text: text.slice(0, 26), textW: Math.round(textW), avail: Math.round(avail),
+          headroom: Math.round(avail - textW), clipped: avail - textW < 12,
+        };
       };
       const input = document.querySelector('header input');
       const inner = document.querySelector('header')?.firstElementChild;
@@ -70,12 +76,12 @@ try {
     // Without this the loop can pass at a width where the header rendered nothing to measure.
     check(`PRECONDITION: the header search field is present and measurable at ${w}px`, r.search !== null, JSON.stringify(r.search));
     if (r.search) {
-      check(`the search placeholder fits its field at ${w}px (not cut mid-word)`, !r.search.clipped, JSON.stringify(r.search));
+      check(`the search placeholder fits its field with room to spare at ${w}px`, !r.search.clipped, JSON.stringify(r.search));
     }
     if (w >= WIDE) {
       check(`PRECONDITION: the header shows its selects at ${w}px`, r.selects.length >= 2, `visible=${r.selects.length}`);
       for (const s of r.selects) {
-        check(`the selected value fits its control at ${w}px, where the header has room`, !s.clipped, JSON.stringify(s));
+        check(`the selected value fits its control with room to spare at ${w}px`, !s.clipped, JSON.stringify(s));
       }
     }
     // Bounds the widening: a cap raised too far would simply move the defect into an overflow.

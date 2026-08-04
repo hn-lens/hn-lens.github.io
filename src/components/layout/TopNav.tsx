@@ -55,7 +55,7 @@ export default function TopNav() {
             // Sized to fit the narrowest supported viewport. An input cannot ellipsise its own
             // placeholder, so anything longer is cut mid-word and reads as a typo rather than as
             // truncation; the accessible name below carries the full wording.
-            placeholder="Search HN…"
+            placeholder="Search…"
             aria-label="Search Hacker News"
             type="search"
             className="w-full rounded-lg border border-edge bg-surface py-1.5 pl-8 pr-3 text-sm outline-none placeholder:text-subtle focus:border-accent focus:ring-1 focus:ring-ring"
