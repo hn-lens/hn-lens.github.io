@@ -219,8 +219,24 @@ await page.goto(`${BASE}#/settings`, { waitUntil: 'domcontentloaded' });
 await page.waitForSelector('nav[aria-label="Settings sections"] ul', { timeout: 15000 });
 await page.waitForTimeout(300);
 const lastAdd = page.getByRole('button', { name: 'Add', exact: true }).last();
+// The page must be long enough for the FAB's 800px threshold to be reachable at all, or both
+// checks below would be judging a page that simply cannot scroll that far.
+const settingsScrollable = await page.evaluate(() => document.documentElement.scrollHeight - window.innerHeight);
+check('PRECONDITION: the Settings page is long enough to pass the FAB threshold', settingsScrollable > 900, `scrollable=${Math.round(settingsScrollable)}px`);
 await lastAdd.scrollIntoViewIfNeeded();
-await page.waitForTimeout(400); // let the scroll handler reveal the FAB
+// `scroll-behavior: smooth` is global, so the scroll is ANIMATED: a fixed wait races it, and on a
+// slower machine the measurement lands mid-animation at scrollY 0. Wait for it to settle instead.
+await page.waitForFunction(
+  () => {
+    const w = window;
+    const prev = w.__lastY;
+    w.__lastY = w.scrollY;
+    return prev !== undefined && Math.abs(prev - w.scrollY) < 2 && w.scrollY > 0;
+  },
+  null,
+  { timeout: 15000, polling: 120 },
+).catch(() => {});
+await page.waitForTimeout(300); // let the scroll handler reveal the FAB
 const fabCheck = await page.evaluate(() => {
   const fab = document.querySelector('button[aria-label="Scroll to top"]');
   const adds = [...document.querySelectorAll('button')].filter((b) => b.textContent?.trim() === 'Add');
