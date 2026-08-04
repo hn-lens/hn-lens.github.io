@@ -110,10 +110,33 @@ in the browser; deploys to GitHub Pages.
    pre-fix state. Two guards written here passed pre-fix because the fixture never reached the code
    under test, and both would have certified a live defect as fixed.
 
-   **TERMINATION.** "Zero findings" is unreachable — a thorough lens always finds something. A round
-   CONVERGES when, **measured against an unchanged instrument**: zero open BLOCKER/HIGH in
-   `review/REGISTER.md`, zero self-inflicted findings, and every MEDIUM either fixed or accepted in
-   writing with a rationale. The self-inflicted rate is the real signal.
+   **TERMINATION — WATCH SEVERITY, NOT COUNT.** "Zero findings" is unreachable, and so is "every
+   MEDIUM resolved": a thorough lens always finds something, and a growing artifact grows its own
+   surface. Requiring the COUNT to fall is what made this loop feel endless — measured here, the
+   count sat flat at 8-10 per round for four rounds while severity fell 1 BLOCKER + 3 HIGH -> 2 HIGH
+   -> 0 HIGH. Count was the wrong instrument.
+
+   A round CONVERGES when, **measured against an unchanged instrument**: the gate suite is green, an
+   independent pass over the CURRENT artifact returns no verified BLOCKER/HIGH, and no finding of any
+   severity is self-inflicted by the interval being certified. A low-severity tail is accepted as
+   backlog — it lives in `review/REGISTER.md` and does not block shipping.
+
+   Two things this does NOT relax. **The self-inflicted rate is still a gate**, because severity
+   alone would let a round ship while injecting defects (measured: 3 -> 2 -> 6 -> 13 across four
+   rounds; three of the last four rounds found a defect introduced by the previous round's fix). And
+   **the backlog must be re-measured, not merely stored** — LOWs here have re-graded UPWARD on
+   contact (one filed as an 8px spread measured 12px; one LOW turned out to carry a false comment and
+   became MEDIUM).
+
+   **CLOSING A FINDING MEANS CLOSING ITS CLASS.** A fix removes one symptom; a check in the gate
+   removes the generator. So a finding is closed when there is an executable check that FAILS on the
+   pre-fix state — not when the symptom is gone. Where no mechanical check is possible, say so
+   explicitly in the register and accept that the class will recur; that is a decision, not an
+   oversight. For anything judged by eye, a gate check is NECESSARY BUT NOT SUFFICIENT: every
+   self-computed metric written here has at some point read green over a visibly broken result (rows
+   bucketed by top edge; fill counting a stretched container as content; overflow measured on
+   children but never the container; gaps measured between children but never after the last one).
+   The undecidable remainder goes to an independent visual pass, never to backlog.
 
 8. **A DEVELOPER-REPORTED DEFECT IS EVIDENCE A LENS IS BLIND — BUT IT DOES NOT LICENSE MOVING THE
    TARGET.** Do not fix it directly: a hand-patch carries no independent signal that the problem is
