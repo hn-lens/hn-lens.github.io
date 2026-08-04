@@ -195,6 +195,20 @@ try {
       pageOver: document.documentElement.scrollWidth - document.documentElement.clientWidth,
       searchInline: vis(bar.querySelector('input[type="search"]')),
       cq: Math.round(cqEl ? cqEl.getBoundingClientRect().width : inner),
+      // HEADROOM: how many px the non-elastic controls could grow before this row must wrap. The
+      // search is the flex filler, so the slack is whatever it holds ABOVE its own minimum; when it
+      // is folded there is no filler and the slack is the row's unused width.
+      headroom: (() => {
+        const kids = [...bar.children].filter((e) => e.offsetParent !== null);
+        const inp = bar.querySelector('input[type="search"]');
+        const box = inp && inp.offsetParent !== null ? inp.closest('span,div') || inp : null;
+        if (box) {
+          const minPx = parseFloat(getComputedStyle(box).minWidth) || 0;
+          return Math.round(box.getBoundingClientRect().width - minPx);
+        }
+        const used = kids.reduce((a, k) => a + k.getBoundingClientRect().width, 0);
+        return Math.round(inner - used);
+      })(),
     };
   };
 
@@ -203,6 +217,8 @@ try {
   // THEME (mono `terminal` controls are ~10% wider than `reader`), READING TEXT SIZE (the axis
   // scales the ROOT font-size, so every rem-sized control grows while the viewport stays put), and
   // POINTER (a coarse pointer gets 44px targets, which is taller AND wider).
+  // Absorbs the font-metric spread between machines; the observed spread was 8px.
+  const MIN_HEADROOM = 12;
   const WIDTHS = [];
   for (let w = 1440; w >= 320; w -= 40) WIDTHS.push(w);
   const setAxes = (pg, theme, ts) =>
@@ -214,7 +230,7 @@ try {
       },
       [theme, ts],
     );
-  async function sweepBand(pg, label) {
+  async function sweepBand(pg, label, requireHeadroom = true) {
     const bad = [];
     for (const theme of ['reader', 'terminal']) {
       for (const ts of ['md', 'lg']) {
@@ -231,6 +247,15 @@ try {
           // is the flex FILLER, so whenever it is inline it has by construction absorbed the row's
           // spare width: a low fill there means something folded early and left a dead gap.
           else if (r.searchInline && r.fills[0] < 96) bad.push(`${cell}: inline Search but row only ${r.fills[0]}% full (cq=${r.cq})`);
+          // A cell that merely FITS is not safe: the same content measures wider on another machine
+          // (a hosted runner rendered "999+ new" 8px wider than here, flipping a passing cell to two
+          // rows and blocking a publish). Require slack so a metric difference cannot flip it.
+          // Headroom is required on the REALISTIC sweeps. The max-content sweep stacks a 4-digit
+          // comment count, a 4-digit unread count and the widest theme at once; it must still fit,
+          // but demanding slack there too would need the tools to fold by theme, which a container
+          // query cannot express (it measures the container, and the theme changes the CONTENT).
+          // That remainder is recorded in review/REGISTER.md rather than silently dropped.
+          else if (requireHeadroom && r.headroom < MIN_HEADROOM) bad.push(`${cell}: only ${r.headroom}px headroom before it wraps (need ${MIN_HEADROOM})`);
         }
       }
     }
@@ -498,7 +523,7 @@ try {
       return el ? { text: (el.innerText || '').trim(), w: Math.round(el.getBoundingClientRect().width) } : null;
     });
     check('a 4-digit catch-up count renders a BOUNDED label (the number is capped, not laid out in full)', !!label && label.text.replace(/\D/g, '').length <= 3, JSON.stringify(label));
-    const bBand = await sweepBand(bp, 'bigcount');
+    const bBand = await sweepBand(bp, 'bigcount', false);
     check(
       'max-content (4-digit count + 4-digit catch-up): the band is ONE full row across the same matrix',
       bBand.length === 0,

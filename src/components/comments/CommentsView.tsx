@@ -763,7 +763,7 @@ export default function CommentsView({ id }: { id: number }) {
                         )}
                         {/* Catch-up — only when its button has dropped. */}
                         {newIds.length > 0 && (
-                          <div className="@min-[24.75rem]/tb:hidden">
+                          <div className="@min-[27rem]/tb:hidden">
                             <MenuItem onClick={() => { jumpNextNew(); setToolMenuOpen(false); }}>
                               <ArrowDown className="size-3.5 text-accent" /> {newIds.length > 999 ? '999+' : newIds.length} new
                             </MenuItem>
@@ -795,7 +795,7 @@ export default function CommentsView({ id }: { id: number }) {
                       onClick={jumpNextNew}
                       // Four-digit counts are real, so the LABEL is capped; the accessible name is not.
                       aria-label={`Jump to the next of ${newIds.length} new ${newIds.length === 1 ? 'comment' : 'comments'}`}
-                      className="disc-catchup hidden shrink-0 items-center gap-1 rounded-lg border border-edge bg-accent/10 px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-accent/15 @min-[24.75rem]/tb:inline-flex"
+                      className="disc-catchup hidden shrink-0 items-center gap-1 rounded-lg border border-edge bg-accent/10 px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-accent/15 @min-[27rem]/tb:inline-flex"
                     >
                       <ArrowDown className="size-3.5 text-accent" />
                         <span>
