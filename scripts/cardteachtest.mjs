@@ -11,8 +11,15 @@ const STORIES = [
   { id: 902, type: 'story', by: 'bob', title: 'Story B', url: 'https://b.com/x', score: 110, descendants: 5, time: now - 3600 },
   { id: 903, type: 'story', by: 'carol', title: 'Story C', url: 'https://c.com/x', score: 100, descendants: 5, time: now - 3600 },
 ];
-const byId = new Map(STORIES.map((s) => [s.id, s]));
-const POOL = STORIES.map((s) => s.id);
+// Filler cards on their own domains/authors: the popover-drift check below needs a feed TALLER than
+// a phone viewport, and three cards do not scroll at 360x640. They are inert for every other check.
+const FILLER = Array.from({ length: 10 }, (_, i) => ({
+  id: 910 + i, type: 'story', by: `filler${i}`, title: `Filler ${i}`,
+  url: `https://f${i}.example/x`, score: 90 - i, descendants: 2, time: now - 3600,
+}));
+const ALL = [...STORIES, ...FILLER];
+const byId = new Map(ALL.map((s) => [s.id, s]));
+const POOL = ALL.map((s) => s.id);
 
 const fails = [];
 const check = (name, pass, detail = '') => {
@@ -110,6 +117,101 @@ check('Mute author removes the story from the feed', !(await shows('Story C')), 
 // --- the menu toggles labels: re-open A shows Unfollow ---
 await openMenu('Story A');
 check('follow state reflected in the menu (Unfollow a.com shown)', await page.getByRole('menuitem', { name: 'Unfollow a.com' }).isVisible());
+
+// --- an open menu must not ride up over the pinned header when the reader scrolls ---
+// When the anchor sits low in the viewport the clamp flips the menu FULLY ABOVE it, so the menu
+// extends upward; a placement computed only at open time then walks off the top of the screen on
+// the next downward scroll, several times faster than the anchor leaves it, and the menu's items
+// land on top of the top-nav controls while still being hittable.
+await page.keyboard.press('Escape');
+await page.evaluate(() => window.__hnlens.prefs.getState().set({ mutedDomains: [], mutedUsers: [] }));
+await page.setViewportSize({ width: 360, height: 640 });
+await page.evaluate(() => window.scrollTo(0, 0));
+await page.waitForTimeout(600);
+
+// Open the ⋯ of whichever card currently sits LOW in the viewport — that is the anchor position
+// that makes the clamp flip the menu upward, which is the state that drifts.
+const flipped = await page.evaluate(async () => {
+  const btns = [...document.querySelectorAll('button')].filter((b) => /More actions/.test(b.getAttribute('aria-label') || ''));
+  // Deep enough in the viewport that a full menu cannot fit BELOW the anchor, which is what makes
+  // the clamp flip it upward. A mid-page anchor still fits and never enters the drifting state.
+  const target = btns.find((b) => b.getBoundingClientRect().top > window.innerHeight - 190);
+  if (!target) return { noTarget: true, tops: btns.map((b) => Math.round(b.getBoundingClientRect().top)), vh: window.innerHeight };
+  target.click();
+  await new Promise((r) => setTimeout(r, 300));
+  const menu = document.querySelector('[role="menu"]');
+  if (!menu) return { noMenu: true };
+  const m = menu.getBoundingClientRect();
+  const a = target.getBoundingClientRect();
+  return { menuTop: Math.round(m.top), anchorTop: Math.round(a.top), above: m.top < a.top, vh: window.innerHeight };
+});
+check(
+  'PRECONDITION: the anchor is low enough that the clamp flips the menu ABOVE it (the state that drifts)',
+  flipped !== null && flipped.above === true,
+  JSON.stringify(flipped),
+);
+
+// Every top-nav control's centre, hit-tested. The lens measured the defect this way because a
+// bounding-box overlap does not prove the menu actually STEALS the control's clicks.
+const headerTheft = async () =>
+  await page.evaluate(() => {
+    const header = document.querySelector('header.sticky');
+    if (!header) return null;
+    const controls = [...header.querySelectorAll('button, a, input')];
+    const menu = document.querySelector('[role="menu"]');
+    if (!menu) return { menuGone: true, stolen: [] };
+    const stolen = [];
+    for (const c of controls) {
+      const r = c.getBoundingClientRect();
+      if (r.width === 0 || r.height === 0) continue;
+      const hit = document.elementFromPoint(Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2));
+      if (hit && menu.contains(hit)) {
+        stolen.push({ control: c.getAttribute('aria-label') || c.textContent?.trim()?.slice(0, 20) || c.tagName, hits: hit.textContent?.trim()?.slice(0, 24) || hit.tagName });
+      }
+    }
+    const m = menu.getBoundingClientRect();
+    const h = header.getBoundingClientRect();
+    return {
+      menuGone: false, stolen, controls: controls.length,
+      menuTop: Math.round(m.top),
+      overHeader: Math.round(Math.min(m.bottom, h.bottom) - Math.max(m.top, h.top)),
+    };
+  });
+const theftBefore = await headerTheft();
+check(
+  'PRECONDITION: with the menu open and the page unscrolled, no top-nav control is covered',
+  theftBefore !== null && theftBefore.stolen.length === 0,
+  JSON.stringify(theftBefore),
+);
+const scrolledBy = await page.evaluate(async () => {
+  const before = window.scrollY;
+  window.scrollBy(0, 350);
+  await new Promise((r) => setTimeout(r, 350));
+  return window.scrollY - before;
+});
+await page.waitForTimeout(300);
+const theftAfter = await headerTheft();
+check(
+  'PRECONDITION: the page actually scrolled (else nothing below is measured)',
+  scrolledBy > 300,
+  `dy=${scrolledBy}`,
+);
+// Two measures of one invariant. The hit test is what the reader actually experiences (a stolen
+// click), but it only fires once an item's centre lands on a control's centre, so it under-reports
+// a menu that has intruded partway. The geometric overlap catches that earlier.
+check(
+  'scrolling with the menu open never lets it overlap the pinned header',
+  theftAfter !== null && (theftAfter.menuGone || theftAfter.overHeader <= 0),
+  JSON.stringify(theftAfter),
+);
+check(
+  'scrolling with the menu open never lets it cover a top-nav control',
+  theftAfter !== null && (theftAfter.menuGone || theftAfter.stolen.length === 0),
+  JSON.stringify(theftAfter),
+);
+await page.keyboard.press('Escape');
+await page.setViewportSize({ width: 1280, height: 1000 });
+await page.waitForTimeout(200);
 
 await b.close();
 console.log(`\n${fails.length === 0 ? 'RESULT: CARD TEACHING PASS \u2713' : `RESULT: ${fails.length} FAILED`}`);
