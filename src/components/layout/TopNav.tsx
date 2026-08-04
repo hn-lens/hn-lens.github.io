@@ -39,7 +39,7 @@ export default function TopNav() {
 
   return (
     <header className="sticky top-0 z-30 border-b border-border bg-bg/85 backdrop-blur">
-      <div className="mx-auto flex h-14 max-w-6xl items-center gap-1.5 px-2 sm:gap-3 sm:px-4">
+      <div className="mx-auto flex h-14 max-w-6xl items-center gap-1 px-1.5 sm:gap-3 sm:px-4">
         <Link to="/" className="flex shrink-0 items-center gap-2 font-semibold tracking-tight">
           <Logo className="size-6 shrink-0" />
           <span className="hidden sm:inline">Hacker Lens</span>
@@ -68,7 +68,7 @@ export default function TopNav() {
             aria-label="Theme design"
             title="Switch theme design"
             onChange={(e) => setThemeName(e.target.value)}
-            className="hidden max-w-[9rem] truncate rounded-lg border border-edge bg-surface py-1.5 pl-2 pr-6 text-xs text-muted outline-none hover:text-fg focus:border-accent md:block lg:max-w-[15rem]"
+            className="hidden max-w-[9rem] truncate rounded-lg border border-edge bg-surface py-1.5 pl-2 pr-6 text-xs text-muted outline-none hover:text-fg focus:border-accent md:block lg:max-w-[17rem]"
           >
             {THEMES.map((t) => (
               <option key={t.id} value={t.id}>
@@ -81,7 +81,7 @@ export default function TopNav() {
             aria-label="Layout"
             title="Switch layout (structure)"
             onChange={(e) => setLayout(e.target.value)}
-            className="hidden max-w-[8rem] truncate rounded-lg border border-edge bg-surface py-1.5 pl-2 pr-6 text-xs text-muted outline-none hover:text-fg focus:border-accent lg:block lg:max-w-[13rem]"
+            className="hidden max-w-[8rem] truncate rounded-lg border border-edge bg-surface py-1.5 pl-2 pr-6 text-xs text-muted outline-none hover:text-fg focus:border-accent lg:block lg:max-w-[15rem]"
           >
             {LAYOUTS.map((l) => (
               <option key={l.id} value={l.id}>
