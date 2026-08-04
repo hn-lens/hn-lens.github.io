@@ -37,6 +37,7 @@ import OfflineOutageHint from '../ui/OfflineOutageHint';
 import { IconButton, MenuItem } from '../ui/primitives';
 import { usePopoverClamp } from '../ui/usePopoverClamp';
 import { useOnline } from '../../hooks/useOnline';
+import { useModalBehavior } from '../../hooks/useModalBehavior';
 import type { AlgoliaComment } from '../../types';
 
 type Sort = 'default' | 'new' | 'old' | 'replies';
@@ -98,6 +99,15 @@ export default function CommentsView({ id }: { id: number }) {
   // so the tray can never stack and reintroduce the wall of chrome this replaced.
   const [tool, setTool] = useState<null | 'search' | 'summary' | 'ask'>(null);
   const [toolMenuOpen, setToolMenuOpen] = useState(false);
+  // Below this height the toolbar, its tray and an anchored menu cannot all fit, so the menu is
+  // presented as a dialog instead.
+  const [shortScreen, setShortScreen] = useState(() => typeof window !== 'undefined' && window.innerHeight < 420);
+  useEffect(() => {
+    const onResize = () => setShortScreen(window.innerHeight < 420);
+    onResize();
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
   const toolMenuRef = useRef<HTMLSpanElement>(null);
   const toolMenuContentRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
@@ -380,7 +390,47 @@ export default function CommentsView({ id }: { id: number }) {
     };
   }, [toolMenuOpen]);
   const closeToolMenu = useCallback(() => setToolMenuOpen(false), []);
-  usePopoverClamp(toolMenuOpen, toolMenuContentRef, toolMenuRef, closeToolMenu);
+  usePopoverClamp(toolMenuOpen && !shortScreen, toolMenuContentRef, toolMenuRef, closeToolMenu);
+  useModalBehavior(toolMenuContentRef, toolMenuOpen && shortScreen);
+
+  // One list, rendered by whichever presentation is in use, so the two cannot drift.
+  const toolMenuItems = (
+    <>
+        <MenuItem onClick={() => { toggleTool('summary'); setToolMenuOpen(false); }}>
+          {aiSummaryActive ? <Sparkles className="size-3.5" /> : <ListTree className="size-3.5" />} Summary
+        </MenuItem>
+        {aiSummaryActive && (
+          <MenuItem onClick={() => { toggleTool('ask'); setToolMenuOpen(false); }}>
+            <MessageCircleQuestion className="size-3.5" /> Ask
+          </MenuItem>
+        )}
+        {/* Catch-up — only when its button has dropped. */}
+        {newIds.length > 0 && (
+          <div className="@min-[27rem]/tb:hidden">
+            <MenuItem onClick={() => { jumpNextNew(); setToolMenuOpen(false); }}>
+              <ArrowDown className="size-3.5 text-accent" /> {newIds.length > 999 ? '999+' : newIds.length} new
+            </MenuItem>
+          </div>
+        )}
+        {/* Search — only when the inline box has dropped. */}
+        <div className="@min-[20rem]/tb:hidden">
+          <MenuItem onClick={() => { toggleTool('search'); setToolMenuOpen(false); }}>
+            <Search className="size-3.5" /> Search this discussion
+          </MenuItem>
+        </div>
+        {/* Full Sort options — whenever the inline Sort is degraded. */}
+        <div className="@min-[43rem]/tb:hidden">
+          <div className="my-1 border-t border-border" />
+          <div className="px-3 py-1 text-[11px] font-medium uppercase tracking-wide text-subtle">Sort</div>
+          {SORTS.map(([sk, label]) => (
+            <MenuItem key={sk} onClick={() => { setSort(sk); setToolMenuOpen(false); }}>
+              <Check className={cn('size-3.5', sort === sk ? 'text-accent' : 'invisible')} /> {label}
+            </MenuItem>
+          ))}
+        </div>
+    </>
+  );
+
   // Focus whatever the open tray's primary input is — not only Search's.
   //
   // Ask has an input and never received focus, so with focus left on BODY every letter went to the
@@ -738,9 +788,7 @@ export default function CommentsView({ id }: { id: number }) {
                       type="search"
                       value={query}
                       onChange={(e) => setQuery(e.target.value)}
-                      // Sized to fit the narrowest field this inline box gets. An input cannot
-                      // ellipsise its own placeholder, so a longer one is cut mid-word; the
-                      // accessible name carries the full wording.
+                      // An input cannot ellipsise its placeholder, so this fits the narrowest field.
                       placeholder="Find"
                       aria-label="Search comments in this discussion"
                       // The right inset only has to clear the Clear button, which needs a query to exist.
@@ -778,40 +826,26 @@ export default function CommentsView({ id }: { id: number }) {
                     <IconButton label="More discussion tools" active={toolMenuOpen} onClick={() => setToolMenuOpen((v) => !v)}>
                       <MoreHorizontal className="size-4" />
                     </IconButton>
-                    {toolMenuOpen && (
+                    {/* Two presentations of one menu: anchored normally, a dialog on a short screen. */}
+                    {toolMenuOpen && shortScreen && (
+                      <div
+                        className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4"
+                        onClick={(e) => { if (e.target === e.currentTarget) closeToolMenu(); }}
+                      >
+                        <div
+                          ref={toolMenuContentRef}
+                          role="menu"
+                          aria-modal="true"
+                          aria-label="Discussion tools"
+                          className="max-h-[80vh] w-56 overflow-y-auto rounded-lg border border-border bg-surface py-1 shadow-xl"
+                        >
+                          {toolMenuItems}
+                        </div>
+                      </div>
+                    )}
+                    {toolMenuOpen && !shortScreen && (
                       <div ref={toolMenuContentRef} role="menu" className="absolute right-0 top-full z-20 mt-1 w-56 overflow-hidden rounded-lg border border-border bg-surface py-1 shadow-xl">
-                        <MenuItem onClick={() => { toggleTool('summary'); setToolMenuOpen(false); }}>
-                          {aiSummaryActive ? <Sparkles className="size-3.5" /> : <ListTree className="size-3.5" />} Summary
-                        </MenuItem>
-                        {aiSummaryActive && (
-                          <MenuItem onClick={() => { toggleTool('ask'); setToolMenuOpen(false); }}>
-                            <MessageCircleQuestion className="size-3.5" /> Ask
-                          </MenuItem>
-                        )}
-                        {/* Catch-up — only when its button has dropped. */}
-                        {newIds.length > 0 && (
-                          <div className="@min-[27rem]/tb:hidden">
-                            <MenuItem onClick={() => { jumpNextNew(); setToolMenuOpen(false); }}>
-                              <ArrowDown className="size-3.5 text-accent" /> {newIds.length > 999 ? '999+' : newIds.length} new
-                            </MenuItem>
-                          </div>
-                        )}
-                        {/* Search — only when the inline box has dropped. */}
-                        <div className="@min-[20rem]/tb:hidden">
-                          <MenuItem onClick={() => { toggleTool('search'); setToolMenuOpen(false); }}>
-                            <Search className="size-3.5" /> Search this discussion
-                          </MenuItem>
-                        </div>
-                        {/* Full Sort options — whenever the inline Sort is degraded. */}
-                        <div className="@min-[43rem]/tb:hidden">
-                          <div className="my-1 border-t border-border" />
-                          <div className="px-3 py-1 text-[11px] font-medium uppercase tracking-wide text-subtle">Sort</div>
-                          {SORTS.map(([sk, label]) => (
-                            <MenuItem key={sk} onClick={() => { setSort(sk); setToolMenuOpen(false); }}>
-                              <Check className={cn('size-3.5', sort === sk ? 'text-accent' : 'invisible')} /> {label}
-                            </MenuItem>
-                          ))}
-                        </div>
+                        {toolMenuItems}
                       </div>
                     )}
                   </span>

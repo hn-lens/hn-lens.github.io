@@ -80,10 +80,8 @@ export function usePopoverClamp(
       const vh = window.innerHeight;
       const vw = window.innerWidth;
       const gap = 4;
-      // A popover anchored INSIDE a pinned bar must clear that whole bar, not just the row holding
-      // its trigger: the bar can carry further controls below that row, and a dropdown starting at
-      // its trigger lands on top of them. Folded into the band rather than applied afterwards, so
-      // the height cap below is computed against the space that is actually left.
+      // Clear the whole bar the anchor sits in, not just its trigger's row; folded into the band so
+      // the height cap below accounts for it.
       let ownBarBottom = 0;
       for (let el = anchorRef.current?.parentElement; el; el = el.parentElement) {
         const acs = getComputedStyle(el);
@@ -94,10 +92,8 @@ export function usePopoverClamp(
         }
       }
       const bandBottom = vh - pad;
-      // Clearing the bars is a preference, not an absolute: a tall bar (a toolbar with its tray
-      // open, or a landscape phone) can reach the bottom of the screen, and a band computed from it
-      // alone would be empty or inverted -- which collapses the popover to nothing or parks it off
-      // the bottom. Keep a usable strip no matter what, preferring to clear the bars when possible.
+      // A tall bar can reach the bottom of the screen, which would leave an empty or inverted band.
+      // Keep a usable strip regardless, preferring to clear the bars.
       const MIN_BAND = 120;
       const bandTop = Math.max(pad, Math.min(Math.max(pinnedHeaderBottom(), ownBarBottom) + pad, bandBottom - MIN_BAND));
 
