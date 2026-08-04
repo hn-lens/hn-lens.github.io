@@ -354,8 +354,14 @@ function StoryCard({
     });
   };
   const onSave = () => {
+    const wasSaved = saved;
     void toggleSaved(item);
-    toast({ message: saved ? 'Removed from saved' : 'Saved' });
+    toast({
+      message: wasSaved ? 'Removed from saved' : 'Saved',
+      // Removing is the destructive direction and on the Saved page it also takes the row away, so
+      // it gets the same Undo every other membership change has.
+      ...(wasSaved ? { actionLabel: 'Undo', onAction: () => void toggleSaved(item) } : {}),
+    });
   };
 
   const doTldr = async (force = false) => {

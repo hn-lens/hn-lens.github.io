@@ -546,6 +546,56 @@ console.log('\n[F] toolbar keyboard + jump interaction');
   }
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.waitForTimeout(200);
+
+  // F9 — one Escape dismisses ONE layer. The overflow menu is topmost, so closing it must not also
+  // clear the in-thread filter underneath it.
+  await page.setViewportSize({ width: 700, height: 800 });
+  await page.waitForTimeout(300);
+  const box9 = page.locator('.disc-tb-bar input[type="search"]:visible').first();
+  if (await box9.count()) {
+    await box9.fill('the');
+    await page.waitForTimeout(300);
+    const pre9 = await page.evaluate(() => document.querySelector('.disc-tb-bar input[type="search"]')?.value ?? '');
+    check('PRECONDITION: the filter is actually set before the menu is opened', pre9 === 'the', `value=${JSON.stringify(pre9)}`);
+    await page.evaluate(() => document.querySelector('.disc-toolbar button[aria-label="More discussion tools"]')?.click());
+    await page.waitForTimeout(250);
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(300);
+    const layers = await page.evaluate(() => ({
+      menuOpen: !!document.querySelector('.disc-toolbar [role="menu"]'),
+      q: document.querySelector('.disc-tb-bar input[type="search"]')?.value ?? '',
+    }));
+    check(
+      'one Escape closes the overflow menu WITHOUT clearing the in-thread filter',
+      !layers.menuOpen && layers.q === 'the',
+      JSON.stringify(layers),
+    );
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(250);
+  }
+
+  // F10 — the view is reused across ids, so a filter must not follow the reader to a DIFFERENT
+  // discussion and render "0 matches" over a thread that has comments.
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.waitForTimeout(250);
+  const box10 = page.locator('.disc-tb-bar input[type="search"]:visible').first();
+  if (await box10.count()) {
+    await box10.fill('zzzzz');
+    await page.waitForTimeout(350);
+    await page.evaluate(() => { window.location.hash = '#/item/2'; });
+    await page.waitForTimeout(900);
+    const carried = await page.evaluate(() => ({
+      q: document.querySelector('.disc-tb-bar input[type="search"]')?.value ?? '',
+      saysNoMatch: /no comments match/i.test(document.body.innerText),
+    }));
+    check(
+      'a filter does not follow the reader to a different discussion',
+      carried.q === '' && !carried.saysNoMatch,
+      JSON.stringify(carried),
+    );
+  }
+  await page.evaluate(() => { window.location.hash = '#/item/1'; });
+  await page.waitForTimeout(700);
 }
 
 await b.close();

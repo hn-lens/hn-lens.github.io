@@ -105,11 +105,26 @@ export function usePopoverClamp(
     };
     const onOrientation = () => closeRef.current();
 
+    // Scrolling moves the anchor under a pinned header, so a placement computed at open time goes
+    // stale: the popover keeps its transform and can end up painting over the header it was placed
+    // to avoid. Re-place on scroll, coalesced to one frame.
+    let queued = false;
+    const onScroll = () => {
+      if (queued) return;
+      queued = true;
+      requestAnimationFrame(() => {
+        queued = false;
+        if (contentRef.current) place();
+      });
+    };
+
     window.addEventListener('resize', onViewportChange);
     window.addEventListener('orientationchange', onOrientation);
+    window.addEventListener('scroll', onScroll, { passive: true, capture: true });
     return () => {
       window.removeEventListener('resize', onViewportChange);
       window.removeEventListener('orientationchange', onOrientation);
+      window.removeEventListener('scroll', onScroll, { capture: true });
     };
   }, [open, contentRef, anchorRef, pad]);
 }

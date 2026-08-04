@@ -190,6 +190,26 @@ await page.evaluate(async () => {
   (await window.__hnlens.registry()).useModelStore.getState().setWebgpu('available');
 });
 await page.waitForTimeout(400);
+// The open tool belongs to the discussion it was opened on, so arriving here opens none — open
+// Summary on THIS thread rather than inheriting the one opened for a different id above. Without
+// the click both checks below would pass on an empty panel and prove nothing.
+const openSummary = async () => {
+  const direct = page.getByRole('button', { name: /^Summary$/ });
+  if (await direct.count()) {
+    await direct.first().click();
+  } else {
+    await page.evaluate(() => document.querySelector('.disc-toolbar button[aria-label="More discussion tools"]')?.click());
+    await page.waitForTimeout(200);
+    await page.getByRole('menuitem', { name: /Summary/ }).first().click();
+  }
+  await page.waitForTimeout(350);
+};
+await openSummary();
+check(
+  'PRECONDITION: a summary panel is actually open (else the gist-hidden check below is vacuous)',
+  await page.locator('[data-testid="thread-gist"], [data-summary-panel]').count() > 0 ||
+    (await page.getByText('AI discussion summary').isVisible().catch(() => false))
+);
 check('AI ON (WebGPU ok): the non-AI gist is hidden (no duplicate summary block)', !(await page.getByTestId('thread-gist').isVisible().catch(() => false)));
 check('AI ON: the AI summary block is shown instead', await page.getByText('AI discussion summary').isVisible().catch(() => false));
 

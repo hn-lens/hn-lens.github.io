@@ -136,6 +136,14 @@ export default function CommentsView({ id }: { id: number }) {
     showAiSummaries && (hasCloudKey({ llmProvider, apiKeys }) || (llmEnabled && webgpu !== 'unavailable'));
   const saved = useIsSaved(id); // for the Save toggle in the header (stories only)
 
+  // Reused across ids: without this a filter or an open tool follows the reader to a DIFFERENT
+  // discussion, which then renders "0 matches" over a thread that has comments.
+  useEffect(() => {
+    setQuery('');
+    setTool(null);
+    setToolMenuOpen(false);
+  }, [id]);
+
   useEffect(() => {
     let mounted = true;
     (async () => {
@@ -356,7 +364,13 @@ export default function CommentsView({ id }: { id: number }) {
       if (toolMenuRef.current && !toolMenuRef.current.contains(e.target as Node)) setToolMenuOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setToolMenuOpen(false);
+      if (e.key === 'Escape') {
+        // preventDefault matters here: a focused `input[type=search]` is cleared by the BROWSER on
+        // Escape, so without this the key closes the menu AND wipes the filter underneath it — two
+        // layers dismissed by one press, with the second one not even our code.
+        e.preventDefault();
+        setToolMenuOpen(false);
+      }
     };
     document.addEventListener('mousedown', onDown);
     document.addEventListener('keydown', onKey);
@@ -391,6 +405,10 @@ export default function CommentsView({ id }: { id: number }) {
       // any modal closed the dialog AND the tray behind it — discarding a typed in-thread search
       // query the reader never asked to lose.
       if (document.querySelector('[aria-modal="true"]')) return;
+      if (e.key === 'Escape' && toolMenuOpen) {
+        e.preventDefault();
+        return;
+      }
       if (e.key === 'Escape' && tool) {
         e.preventDefault();
         closeTool();
@@ -431,7 +449,7 @@ export default function CommentsView({ id }: { id: number }) {
     // holds the value from the render that installed it, and a filter typed after the last tool
     // change is invisible to the handler — the exact case that branch exists for.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tool, aiSummaryActive, query]);
+  }, [tool, aiSummaryActive, query, toolMenuOpen]);
 
   const jumpNextNew = () => {
     // Cycle through ALL new comments so the "N new" count and the reachable set agree.
@@ -614,7 +632,13 @@ export default function CommentsView({ id }: { id: number }) {
               control in this row — moves the fold points by the same factor it grows the content.
               The view toggle and the comment count never fold. */}
           <div className="@container/tb">
-            <div className="disc-tb-bar flex w-full flex-wrap items-center gap-2 rounded-xl border border-border bg-surface-2 px-2 py-1.5">
+            <div
+              className={`disc-tb-bar flex flex-wrap items-center gap-2 rounded-xl border border-border bg-surface-2 px-2 py-1.5 ${
+                // Article view leaves only the toggle in the band; a full-width bar would then be
+                // mostly empty, so it hugs its content instead of framing a gap.
+                showArticle || !hasCommentControls ? 'w-fit' : 'w-full'
+              }`}
+            >
               {canReadArticle && (
                 <div className="seg shrink-0" role="tablist" aria-label="Read the discussion or the article">
                   {/* Icons carry the two views; `aria-label` carries the accessible name, and the
