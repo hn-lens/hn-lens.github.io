@@ -451,7 +451,10 @@ function StoryCard({
         // When the Personalize menu is open, raise this card's stacking context so its
         // (opaque) dropdown paints ABOVE the next card's chips/Why-button instead of
         // being overlapped by them (a later sibling would otherwise paint on top).
-        menuOpen && 'z-30'
+        // z-20 clears those (they sit at z-10) while staying BELOW the pinned header at z-30:
+        // matching the header would let the card, which comes later in the document, paint over
+        // the whole bar and take the taps meant for its controls.
+        menuOpen && 'z-20'
       )}
     >
       <div className="sc-row flex gap-3">

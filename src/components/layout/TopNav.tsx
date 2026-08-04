@@ -39,7 +39,7 @@ export default function TopNav() {
 
   return (
     <header className="sticky top-0 z-30 border-b border-border bg-bg/85 backdrop-blur">
-      <div className="mx-auto flex h-14 max-w-6xl items-center gap-3 px-3 sm:px-4">
+      <div className="mx-auto flex h-14 max-w-6xl items-center gap-1.5 px-2 sm:gap-3 sm:px-4">
         <Link to="/" className="flex shrink-0 items-center gap-2 font-semibold tracking-tight">
           <Logo className="size-6 shrink-0" />
           <span className="hidden sm:inline">Hacker Lens</span>

@@ -23,9 +23,14 @@ const check = (name, pass, detail = '') => {
 // most header space goes unused.
 const WIDTHS = [320, 360, 375, 390, 430, 768, 1024, 1280, 1920];
 const WIDE = 1024;
+// Reading text size is a root font-size axis, and the header's controls are rem-sized: raising it
+// grows the icon buttons and SHRINKS the flexible search field while the string inside it grows.
+// Sweeping widths alone therefore misses the worst case entirely.
+const TEXT_SIZES = ['md', 'lg'];
 
 const b = await chromium.launch({ headless: true });
 try {
+  for (const ts of TEXT_SIZES) {
   for (const w of WIDTHS) {
     const ctx = await b.newContext({ viewport: { width: w, height: 900 }, isMobile: w < 768, hasTouch: w < 768 });
     const page = await ctx.newPage();
@@ -38,7 +43,10 @@ try {
     });
     await page.goto(BASE, { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('header', { timeout: 20000 });
+    await page.evaluate((size) => window.__hnlens.prefs.getState().setTextSize(size), ts);
     await page.waitForTimeout(600);
+    const applied = await page.evaluate(() => document.documentElement.dataset.textsize);
+    check(`PRECONDITION: reading text size ${ts} is actually applied at ${w}px`, applied === ts, `applied=${applied}`);
 
     const r = await page.evaluate(() => {
       // Measure the rendered text against the space inside the control's own padding box. A
@@ -74,20 +82,21 @@ try {
     });
 
     // Without this the loop can pass at a width where the header rendered nothing to measure.
-    check(`PRECONDITION: the header search field is present and measurable at ${w}px`, r.search !== null, JSON.stringify(r.search));
+    check(`PRECONDITION: the header search field is present and measurable at ${w}px/${ts}`, r.search !== null, JSON.stringify(r.search));
     if (r.search) {
-      check(`the search placeholder fits its field with room to spare at ${w}px`, !r.search.clipped, JSON.stringify(r.search));
+      check(`the search placeholder fits its field with room to spare at ${w}px/${ts}`, !r.search.clipped, JSON.stringify(r.search));
     }
     if (w >= WIDE) {
-      check(`PRECONDITION: the header shows its selects at ${w}px`, r.selects.length >= 2, `visible=${r.selects.length}`);
+      check(`PRECONDITION: the header shows its selects at ${w}px/${ts}`, r.selects.length >= 2, `visible=${r.selects.length}`);
       for (const s of r.selects) {
-        check(`the selected value fits its control with room to spare at ${w}px`, !s.clipped, JSON.stringify(s));
+        check(`the selected value fits its control with room to spare at ${w}px/${ts}`, !s.clipped, JSON.stringify(s));
       }
     }
     // Bounds the widening: a cap raised too far would simply move the defect into an overflow.
-    check(`the header does not overflow at ${w}px`, r.docOverflow <= 0 && r.headerOverflow <= 0, JSON.stringify({ docOverflow: r.docOverflow, headerOverflow: r.headerOverflow }));
+    check(`the header does not overflow at ${w}px/${ts}`, r.docOverflow <= 0 && r.headerOverflow <= 0, JSON.stringify({ docOverflow: r.docOverflow, headerOverflow: r.headerOverflow }));
 
     await ctx.close();
+  }
   }
 } finally {
   await b.close();

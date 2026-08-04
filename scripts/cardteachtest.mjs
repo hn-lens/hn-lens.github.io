@@ -160,14 +160,22 @@ for (const [w, h] of [[360, 640], [390, 844]]) {
       const hdr = document.querySelector('header');
       const mr = m.getBoundingClientRect();
       const hr = hdr.getBoundingClientRect();
+      // Ask whether the HEADER CONTROL still receives its own tap, not merely whether the menu is
+      // the thing on top of it. Asking the narrower question misses every other element that can
+      // cover the bar -- the raised CARD behind the menu, for one, which is a different node
+      // entirely and would leave this reporting zero while the whole bar is dead.
       let stolen = 0;
+      const stolenBy = [];
       for (const c of hdr.querySelectorAll('button, a, input')) {
         const rr = c.getBoundingClientRect();
         if (!rr.width || !rr.height) continue;
         const e = document.elementFromPoint(Math.round(rr.left + rr.width / 2), Math.round(rr.top + rr.height / 2));
-        if (e && m.contains(e)) stolen += 1;
+        if (!e || !(c === e || c.contains(e) || e.contains(c))) {
+          stolen += 1;
+          stolenBy.push((e && (e.tagName + (e.className ? `.${String(e.className).slice(0, 18)}` : ''))) || 'nothing');
+        }
       }
-      return { moved, closed: false, menuTop: Math.round(mr.top), over: Math.round(Math.min(mr.bottom, hr.bottom) - Math.max(mr.top, hr.top)), stolen };
+      return { moved, closed: false, menuTop: Math.round(mr.top), over: Math.round(Math.min(mr.bottom, hr.bottom) - Math.max(mr.top, hr.top)), stolen, stolenBy: stolenBy.slice(0, 4) };
     }, y);
     check(`PRECONDITION: the page really scrolled to ${y} at ${w}x${h}`, r.moved > y - 60, JSON.stringify(r));
     check(
