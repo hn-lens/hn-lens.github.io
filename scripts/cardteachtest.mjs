@@ -157,29 +157,60 @@ for (const [w, h] of [[360, 640], [390, 844]]) {
       const moved = window.scrollY - y0;
       const m = document.querySelector('[role="menu"]');
       if (!m) return { moved, closed: true, over: 0, stolen: 0 };
-      const hdr = document.querySelector('header');
+      // Enumerate EVERY bar pinned to the top, not just the page header. Naming one bar is how the
+      // previous version of this check passed while a second pinned strip was completely buried.
+      const bars = [...document.querySelectorAll('header, [class*="sticky"]')].filter((el) => {
+        const cs = getComputedStyle(el);
+        if (cs.position !== 'sticky' && cs.position !== 'fixed') return false;
+        const r = el.getBoundingClientRect();
+        // A bar stacked under another is pinned at ITS OWN offset, not at zero.
+        const offset = parseFloat(cs.top);
+        const stuck = r.top <= (Number.isFinite(offset) ? offset : 0) + 0.5;
+        return stuck && r.height > 0 && r.bottom < window.innerHeight / 2;
+      });
       const mr = m.getBoundingClientRect();
-      const hr = hdr.getBoundingClientRect();
+      const hr = bars.length
+        ? { top: Math.min(...bars.map((x) => x.getBoundingClientRect().top)), bottom: Math.max(...bars.map((x) => x.getBoundingClientRect().bottom)) }
+        : { top: 0, bottom: 0 };
       // Ask whether the HEADER CONTROL still receives its own tap, not merely whether the menu is
       // the thing on top of it. Asking the narrower question misses every other element that can
       // cover the bar -- the raised CARD behind the menu, for one, which is a different node
       // entirely and would leave this reporting zero while the whole bar is dead.
       let stolen = 0;
       const stolenBy = [];
-      for (const c of hdr.querySelectorAll('button, a, input')) {
+      const controls = bars.flatMap((bar) => [...bar.querySelectorAll('button, a, input')]);
+      for (const c of controls) {
         const rr = c.getBoundingClientRect();
         if (!rr.width || !rr.height) continue;
-        const e = document.elementFromPoint(Math.round(rr.left + rr.width / 2), Math.round(rr.top + rr.height / 2));
+        // The tab strip scrolls horizontally, so some of its tabs sit outside the viewport. A hit
+        // test there returns null for reasons that have nothing to do with anything covering it.
+        // Bound-check the SAME rounded coordinates that get hit-tested: a centre at 389.5 passes a
+        // check against 390 but rounds up to an unaddressable pixel.
+        const cx = Math.round(rr.left + rr.width / 2);
+        const cy = Math.round(rr.top + rr.height / 2);
+        // Strictly inside: a centre landing exactly on the right edge is not an addressable
+        // coordinate, and hit-testing it returns null for a control that is merely half-scrolled.
+        if (cx < 0 || cy < 0 || cx >= window.innerWidth || cy >= window.innerHeight) continue;
+        const e = document.elementFromPoint(cx, cy);
         if (!e || !(c === e || c.contains(e) || e.contains(c))) {
           stolen += 1;
           stolenBy.push((e && (e.tagName + (e.className ? `.${String(e.className).slice(0, 18)}` : ''))) || 'nothing');
         }
       }
-      return { moved, closed: false, menuTop: Math.round(mr.top), over: Math.round(Math.min(mr.bottom, hr.bottom) - Math.max(mr.top, hr.top)), stolen, stolenBy: stolenBy.slice(0, 4) };
+      return {
+        moved, closed: false, menuTop: Math.round(mr.top), bars: bars.length, controls: controls.length,
+        over: Math.round(Math.min(mr.bottom, hr.bottom) - Math.max(mr.top, hr.top)),
+        stolen, stolenBy: stolenBy.slice(0, 4),
+      };
     }, y);
     check(`PRECONDITION: the page really scrolled to ${y} at ${w}x${h}`, r.moved > y - 60, JSON.stringify(r));
     check(
-      `an open menu never covers the pinned header after scrolling ${y} at ${w}x${h}`,
+      `PRECONDITION: pinned bars with controls were found to test at ${w}x${h}`,
+      r.closed || (r.bars >= 1 && r.controls >= 3),
+      JSON.stringify(r),
+    );
+    check(
+      `an open menu never covers a pinned bar after scrolling ${y} at ${w}x${h}`,
       r.closed || (r.over <= 0 && r.stolen === 0),
       JSON.stringify(r),
     );

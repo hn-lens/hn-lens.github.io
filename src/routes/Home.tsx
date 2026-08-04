@@ -53,9 +53,12 @@ export default function Home() {
             </button>
           ) : (
             // Pinned below the sticky TopNav (h-14 = top-14) so the reader can switch feeds without
-            // scrolling back up. z-20 keeps it BELOW the header (z-30); the backdrop lets content
-            // scroll underneath cleanly. Sticky is in-flow, so it does not reflow the page.
-            <div className="sticky top-14 z-20 bg-bg/90 py-2 backdrop-blur">
+            // scrolling back up; the backdrop lets content scroll underneath cleanly, and sticky is
+            // in-flow so it does not reflow the page. The pinned bars sit on their own layers ABOVE
+            // any content: header 40, this strip 30, a card with its menu open 20, card contents 10.
+            // Sharing a level with content lets the content, which comes later in the document,
+            // paint over the bar and take the taps meant for it.
+            <div className="sticky top-14 z-30 bg-bg/90 py-2 backdrop-blur">
               <FeedTabs value={feed} onSelect={setFeed} />
             </div>
           )}

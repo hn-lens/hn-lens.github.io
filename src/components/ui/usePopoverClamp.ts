@@ -21,14 +21,29 @@ import { useLayoutEffect, useRef, type RefObject } from 'react';
  *
  * Both popovers in the app use this.
  */
-/** Bottom edge of a sticky/fixed header currently pinned to the top of the viewport, else 0. */
+/**
+ * Bottom edge of the lowest bar currently pinned to the top of the viewport, else 0.
+ *
+ * Every such bar has to be accounted for, not just the page header: a second pinned strip below it
+ * is just as opaque and just as unhittable to sit under, and naming only one of them leaves the
+ * popover parked on whichever ones were not named.
+ */
 function pinnedHeaderBottom(): number {
-  const h = document.querySelector('header');
-  if (!h) return 0;
-  const pos = getComputedStyle(h).position;
-  if (pos !== 'sticky' && pos !== 'fixed') return 0;
-  const r = h.getBoundingClientRect();
-  return r.top <= 0.5 ? Math.max(0, r.bottom) : 0;
+  let bottom = 0;
+  for (const el of document.querySelectorAll<HTMLElement>('header, [class*="sticky"], [class*="fixed"]')) {
+    const cs = getComputedStyle(el);
+    if (cs.position !== 'sticky' && cs.position !== 'fixed') continue;
+    const r = el.getBoundingClientRect();
+    // A bar is pinned when it has reached its own offset -- which for a second bar stacked under
+    // the first is NOT zero. Testing against zero finds only the topmost one and leaves the
+    // popover free to sit on every bar below it.
+    const offset = parseFloat(cs.top);
+    const stuck = r.top <= (Number.isFinite(offset) ? offset : 0) + 0.5;
+    if (stuck && r.height > 0 && r.bottom > bottom && r.bottom < window.innerHeight / 2) {
+      bottom = r.bottom;
+    }
+  }
+  return bottom;
 }
 export function usePopoverClamp(
   open: boolean,
@@ -139,10 +154,19 @@ export function usePopoverClamp(
       });
     };
 
+    // A theme or layout change re-lays the page out without resizing the window or scrolling, so
+    // neither handler above fires and the popover keeps a placement computed for the old geometry
+    // -- which can strand it off-screen, or leave a horizontal offset that widens the document.
+    const ro = new ResizeObserver(() => {
+      if (contentRef.current) place();
+    });
+    ro.observe(document.documentElement);
+
     window.addEventListener('resize', onViewportChange);
     window.addEventListener('orientationchange', onOrientation);
     window.addEventListener('scroll', onScroll, { passive: true, capture: true });
     return () => {
+      ro.disconnect();
       window.removeEventListener('resize', onViewportChange);
       window.removeEventListener('orientationchange', onOrientation);
       window.removeEventListener('scroll', onScroll, { capture: true });
