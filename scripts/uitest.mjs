@@ -83,19 +83,19 @@ for (const tab of TABS) {
 }
 
 await step('search', async () => {
-  await page.getByPlaceholder('Search Hacker News…').fill('rust');
-  await page.getByPlaceholder('Search Hacker News…').press('Enter');
+  await page.getByRole('searchbox', { name: 'Search Hacker News' }).fill('rust');
+  await page.getByRole('searchbox', { name: 'Search Hacker News' }).press('Enter');
   await page.waitForSelector('article', { timeout: 40000 });
   await page.getByText(/results for/i).waitFor({ timeout: 40000 });
   await snap('search');
 });
 
 await step('search edge cases (empty + special chars)', async () => {
-  await page.getByPlaceholder('Search Hacker News…').fill('');
-  await page.getByPlaceholder('Search Hacker News…').press('Enter');
+  await page.getByRole('searchbox', { name: 'Search Hacker News' }).fill('');
+  await page.getByRole('searchbox', { name: 'Search Hacker News' }).press('Enter');
   await page.waitForTimeout(500); // empty => back to feed
-  await page.getByPlaceholder('Search Hacker News…').fill('c++ <script> "quotes"');
-  await page.getByPlaceholder('Search Hacker News…').press('Enter');
+  await page.getByRole('searchbox', { name: 'Search Hacker News' }).fill('c++ <script> "quotes"');
+  await page.getByRole('searchbox', { name: 'Search Hacker News' }).press('Enter');
   await page.waitForTimeout(2500);
   await snap('search-special');
 });

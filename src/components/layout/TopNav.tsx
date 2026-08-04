@@ -52,7 +52,10 @@ export default function TopNav() {
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Search Hacker News…"
+            // Sized to fit the narrowest supported viewport. An input cannot ellipsise its own
+            // placeholder, so anything longer is cut mid-word and reads as a typo rather than as
+            // truncation; the accessible name below carries the full wording.
+            placeholder="Search HN…"
             aria-label="Search Hacker News"
             type="search"
             className="w-full rounded-lg border border-edge bg-surface py-1.5 pl-8 pr-3 text-sm outline-none placeholder:text-subtle focus:border-accent focus:ring-1 focus:ring-ring"
@@ -65,7 +68,7 @@ export default function TopNav() {
             aria-label="Theme design"
             title="Switch theme design"
             onChange={(e) => setThemeName(e.target.value)}
-            className="hidden max-w-[9rem] truncate rounded-lg border border-edge bg-surface py-1.5 pl-2 pr-6 text-xs text-muted outline-none hover:text-fg focus:border-accent md:block lg:max-w-[13rem]"
+            className="hidden max-w-[9rem] truncate rounded-lg border border-edge bg-surface py-1.5 pl-2 pr-6 text-xs text-muted outline-none hover:text-fg focus:border-accent md:block lg:max-w-[15rem]"
           >
             {THEMES.map((t) => (
               <option key={t.id} value={t.id}>
@@ -78,7 +81,7 @@ export default function TopNav() {
             aria-label="Layout"
             title="Switch layout (structure)"
             onChange={(e) => setLayout(e.target.value)}
-            className="hidden max-w-[8rem] truncate rounded-lg border border-edge bg-surface py-1.5 pl-2 pr-6 text-xs text-muted outline-none hover:text-fg focus:border-accent lg:block lg:max-w-[11rem]"
+            className="hidden max-w-[8rem] truncate rounded-lg border border-edge bg-surface py-1.5 pl-2 pr-6 text-xs text-muted outline-none hover:text-fg focus:border-accent lg:block lg:max-w-[13rem]"
           >
             {LAYOUTS.map((l) => (
               <option key={l.id} value={l.id}>

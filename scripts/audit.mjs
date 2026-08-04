@@ -197,7 +197,7 @@ await page.screenshot({ path: join(OUT, 'comments.png') });
 console.log('\n[E] search');
 await page.goto(BASE, { waitUntil: 'domcontentloaded' });
 await page.waitForSelector('article', { timeout: 15000 }).catch(() => {});
-const box = page.getByPlaceholder(/Search Hacker News/i);
+const box = page.getByRole('searchbox', { name: 'Search Hacker News' });
 await box.fill('rust');
 await box.press('Enter');
 await page.waitForTimeout(900);

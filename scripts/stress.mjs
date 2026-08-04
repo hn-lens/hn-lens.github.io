@@ -88,7 +88,7 @@ await scenario('S4 nasty search inputs', async () => {
     '   ',
   ];
   for (const q of inputs) {
-    const box = page.getByPlaceholder('Search Hacker News…');
+    const box = page.getByRole('searchbox', { name: 'Search Hacker News' });
     await box.fill(q);
     await box.press('Enter');
     await page.waitForTimeout(1200);

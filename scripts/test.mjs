@@ -149,6 +149,7 @@ const TIERS = {
       // Page overflow is 0 for a control row that wraps while a line sits half empty, so no
       // overflow guard can see it. This measures the SHAPE of the row instead.
       { name: 'wrapqualitytest (control rows do not wrap raggedly)', script: 'wrapqualitytest' },
+      { name: 'headerfittest (header labels fit, never cut mid-word)', script: 'headerfittest' },
       { name: 'articleproxytest (reader-proxy attribution + prefetch)', script: 'articleproxytest' },
       { name: 'articlerankingtest (article body in ranking)', script: 'articlerankingtest' },
       { name: 'articlelinktest (full-text link on click)', script: 'articlelinktest' },

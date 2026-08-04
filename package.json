@@ -70,6 +70,7 @@
     "test:mobile": "node scripts/mobiletest.mjs",
     "test:onboarding": "node scripts/onboardingtest.mjs",
     "test:gist": "node scripts/gisttest.mjs",
+    "test:headerfit": "node scripts/headerfittest.mjs",
     "test:themecontrast": "node scripts/themecontrasttest.mjs",
     "test:switch": "node scripts/switchtest.mjs",
     "test:visual": "node scripts/visualtest.mjs",

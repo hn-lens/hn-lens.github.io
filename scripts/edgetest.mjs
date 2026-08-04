@@ -116,7 +116,7 @@ check('Retry recovers after the error', (await page.locator('article').count()) 
 searchHits = [];
 await page.goto(BASE, { waitUntil: 'domcontentloaded' });
 await page.waitForTimeout(400);
-const sbox = page.getByPlaceholder(/Search Hacker News/i);
+const sbox = page.getByRole('searchbox', { name: 'Search Hacker News' });
 await sbox.fill('zzxxqq');
 await sbox.press('Enter');
 await page.waitForTimeout(800);
