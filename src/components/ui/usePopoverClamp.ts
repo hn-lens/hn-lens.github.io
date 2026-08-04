@@ -29,18 +29,27 @@ import { useLayoutEffect, useRef, type RefObject } from 'react';
  * popover parked on whichever ones were not named.
  */
 function pinnedHeaderBottom(): number {
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
   let bottom = 0;
-  for (const el of document.querySelectorAll<HTMLElement>('header, [class*="sticky"], [class*="fixed"]')) {
-    const cs = getComputedStyle(el);
-    if (cs.position !== 'sticky' && cs.position !== 'fixed') continue;
-    const r = el.getBoundingClientRect();
-    // A bar is pinned when it has reached its own offset -- which for a second bar stacked under
-    // the first is NOT zero. Testing against zero finds only the topmost one and leaves the
-    // popover free to sit on every bar below it.
-    const offset = parseFloat(cs.top);
-    const stuck = r.top <= (Number.isFinite(offset) ? offset : 0) + 0.5;
-    if (stuck && r.height > 0 && r.bottom > bottom && r.bottom < window.innerHeight / 2) {
-      bottom = r.bottom;
+  // Probe what is ACTUALLY painted along the top edge rather than guessing from class names: a bar
+  // can be pinned by a stylesheet rule with no telltale class, and one missed bar is a bar the
+  // popover will sit on top of. Sampling a few points is cheap enough to run on a scroll frame,
+  // which walking the whole document would not be.
+  for (const x of [vw * 0.25, vw * 0.5, vw * 0.75]) {
+    for (const y of [2, 24, 48, 72, 96]) {
+      for (const el of document.elementsFromPoint(Math.round(x), y)) {
+        if (!(el instanceof HTMLElement)) continue;
+        const cs = getComputedStyle(el);
+        if (cs.position !== 'sticky' && cs.position !== 'fixed') continue;
+        const r = el.getBoundingClientRect();
+        // Ignore anything occupying most of the screen: that is an overlay or a scroll container,
+        // not a bar, and treating it as one would leave nowhere to put the popover.
+        if (r.height > vh * 0.6 || r.height <= 0) continue;
+        const offset = parseFloat(cs.top);
+        const stuck = r.top <= (Number.isFinite(offset) ? offset : 0) + 0.5;
+        if (stuck && r.bottom > bottom) bottom = r.bottom;
+      }
     }
   }
   return bottom;
@@ -71,7 +80,20 @@ export function usePopoverClamp(
       const vh = window.innerHeight;
       const vw = window.innerWidth;
       const gap = 4;
-      const bandTop = pinnedHeaderBottom() + pad;
+      // A popover anchored INSIDE a pinned bar must clear that whole bar, not just the row holding
+      // its trigger: the bar can carry further controls below that row, and a dropdown starting at
+      // its trigger lands on top of them. Folded into the band rather than applied afterwards, so
+      // the height cap below is computed against the space that is actually left.
+      let ownBarBottom = 0;
+      for (let el = anchorRef.current?.parentElement; el; el = el.parentElement) {
+        const acs = getComputedStyle(el);
+        if (acs.position === 'sticky' || acs.position === 'fixed') {
+          const ar = el.getBoundingClientRect();
+          if (ar.height > 0 && ar.height <= window.innerHeight * 0.6) ownBarBottom = ar.bottom;
+          break;
+        }
+      }
+      const bandTop = Math.max(pinnedHeaderBottom(), ownBarBottom) + pad;
       const bandBottom = vh - pad;
 
       const natural = el.getBoundingClientRect();
