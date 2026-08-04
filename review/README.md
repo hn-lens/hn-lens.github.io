@@ -1,6 +1,6 @@
 # HN Lens — independent review system
 
-HN Lens is reviewed by **seven independent, read-only agent "lenses"** each round. This directory
+HN Lens is reviewed by **eight independent, read-only agent "lenses"** each round. This directory
 holds their **base prompts** — the persistent, version-controlled instructions that define each
 lens. They are stable across rounds and improved over time; git history is how we iterate on
 reviewer quality itself.
@@ -9,7 +9,7 @@ reviewer quality itself.
 > knows where it "should" work). Fresh, unbiased, read-only agents review; only the primary fixes.
 > See golden rule #7 in `AGENTS.md`.
 
-## The seven lenses
+## The eight lenses
 
 | Lens | Base prompt | Finds |
 |---|---|---|
@@ -20,6 +20,7 @@ reviewer quality itself.
 | Bug / correctness | `base/bug-correctness.md` | Behavioral discrepancies vs. spec, root-caused |
 | Performance | `base/performance.md` | Latency + resource use; architectural vs. fixable |
 | OSS release audit | `base/oss-release.md` | Secrets, license, lockfile registry, internal-reference leakage, doc accuracy, deploy safety |
+| Device matrix | `base/device-matrix.md` | One page at every device size, judged blind from screenshots alone |
 
 Every lens also inherits `base/_common.md` (shared rules: read-only, repo-scoped, how to drive the
 app, mindset, deliverable format).
@@ -66,10 +67,10 @@ persona or matrix goal; AI / bug / performance get a factual spec + how to drive
 ## The loop (until convergence)
 
 1. Rebuild `dist` from HEAD so the preview reflects the code under review.
-2. Compose the seven prompts (base + fresh appendix) and dispatch all seven as **durable** jobs
+2. Compose the eight prompts (base + fresh appendix) and dispatch all eight as **durable** jobs
    (foreground `task`, blocking, or `session_spawn` — **never a background task**, which gets torn
    down at a context boundary and silently kills a hunt).
-3. The primary **combines all seven reports, validates each finding against the code** (a report can
+3. The primary **combines all eight reports, validates each finding against the code** (a report can
    be wrong — confirm first), applies **root-cause fixes + regression tests**, and runs the gate
    (`npm run verify`). **Every fix must clear the four checks below before it counts as done** — they
    exist because measured rounds showed the primary's own fixes were a leading source of the next
@@ -134,6 +135,26 @@ of *what class to hunt / what invariant to check / what technique to use* — a 
 a specific past bug stops teaching and starts leaking.
 
 ### Changelog — findings folded into these prompts
+
+- **2026-08-04 (instrument-only): added the EIGHTH lens, `device-matrix.md`, plus
+  `scripts/devicematrix.mjs`.** Rationale, and the evidence that it is not redundant with the seven:
+  the maintainer asked for one page to be captured at every device size and judged blind by a
+  reviewer holding nothing but the images and a statement of what the page is for. Run that way over
+  six pages x eight sizes, it returned findings that the existing seven had not produced across many
+  rounds, and ten of them survived independent verification against the source — among them a hard
+  clip of a field's placeholder below a certain width, a control label truncated by a fixed cap while
+  most of the bar beside it was empty, a page whose header and content column do not share a left
+  edge (two different offsets on two different pages, both measured), a fixed-size block sitting in a
+  frame more than twice its height at every desktop size, and a per-story control drawn with the
+  application's own brand mark. It also independently rediscovered an item already open in the
+  register, which is the corroboration signal.
+  Why it finds what the others miss: it is the only lens that is BLIND (no source, no diff, no
+  hypothesis, so it cannot confirm what it was told), and the only one that sees ONE page at ALL
+  widths simultaneously, which turns "is this width broken?" into "which of these is the odd one out?".
+  Several verified findings are visible ONLY as a difference between sizes. The brief carries the
+  read-only-the-scaled-copies rule because an oversized image can fail an entire message rather than
+  just that one attachment. Mechanical residue from its findings belongs in the harnesses, not here,
+  so each round spends judgement on what only judgement can see.
 
 - **2026-07-23 (rev1–rev3, first cycle on these prompts):**
   - `ai-ml.md` — promoted the one-line dwell/label check into an explicit **training-label matrix**
