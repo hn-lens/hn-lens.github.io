@@ -45,6 +45,10 @@ export function usePopoverClamp(
     if (!open || !el) return;
 
     const place = () => {
+      // Re-placing rebuilds the height cap from scratch, and dropping the cap re-lays the element
+      // out at full height, which makes the browser clamp scrollTop to 0. Carry the reader's
+      // position across the recompute.
+      const keepScroll = el.scrollTop;
       el.style.transform = 'none';
       el.style.maxHeight = '';
       el.style.overflowY = '';
@@ -68,10 +72,14 @@ export function usePopoverClamp(
         // pushed below the fold (a height-only shrink re-places rather than closes), its raw top
         // would offer room that is off-screen, and the flip would land there.
         const anchorTop = Math.min(anchor.top, bandBottom);
-        const roomBelow = bandBottom - natural.top;
+        // Measure the room BELOW from inside the band too. Scrolling carries the popover's natural
+        // top above the band — negative, once it is off the top of the screen — and measuring from
+        // there reports more room than exists, so the "fits" branch leaves it parked on the header.
+        const topInBand = Math.max(natural.top, bandTop);
+        const roomBelow = bandBottom - topInBand;
         const roomAbove = anchorTop - gap - bandTop;
         if (natural.height <= roomBelow) {
-          dy = 0; // fits where it naturally sits
+          dy = topInBand - natural.top; // fits below, pushed down into the band if it was above it
         } else if (natural.height <= roomAbove) {
           dy = anchorTop - gap - natural.bottom; // flip fully above the anchor
         } else if (roomAbove > roomBelow) {
@@ -81,7 +89,7 @@ export function usePopoverClamp(
         } else {
           el.style.maxHeight = `${Math.max(0, roomBelow)}px`;
           el.style.overflowY = 'auto';
-          dy = 0;
+          dy = topInBand - natural.top;
         }
       } else if (natural.bottom > bandBottom) {
         el.style.maxHeight = `${Math.max(0, bandBottom - Math.max(natural.top, bandTop))}px`;
@@ -90,6 +98,7 @@ export function usePopoverClamp(
       }
 
       el.style.transform = dx || dy ? `translate(${dx}px, ${dy}px)` : 'none';
+      if (el.style.overflowY === 'auto' && keepScroll) el.scrollTop = keepScroll;
     };
 
     place();
@@ -109,12 +118,24 @@ export function usePopoverClamp(
     // stale: the popover keeps its transform and can end up painting over the header it was placed
     // to avoid. Re-place on scroll, coalesced to one frame.
     let queued = false;
-    const onScroll = () => {
+    const onScroll = (e: Event) => {
+      // Capture catches scroll events from ANY element, including the popover's own overflow when
+      // it has been capped. Re-placing on those would fight the reader for the scrollbar.
+      const target = e.target;
+      if (target instanceof Node && el.contains(target)) return;
       if (queued) return;
       queued = true;
       requestAnimationFrame(() => {
         queued = false;
-        if (contentRef.current) place();
+        if (!contentRef.current) return;
+        const a = anchorRef.current?.getBoundingClientRect();
+        // Once the trigger has left the usable band entirely there is nothing to stay attached to,
+        // and a popover pinned to the header outlives the row it belongs to.
+        if (a && (a.bottom < pinnedHeaderBottom() || a.top > window.innerHeight)) {
+          closeRef.current();
+          return;
+        }
+        place();
       });
     };
 

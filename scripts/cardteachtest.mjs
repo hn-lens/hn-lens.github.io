@@ -118,98 +118,110 @@ check('Mute author removes the story from the feed', !(await shows('Story C')), 
 await openMenu('Story A');
 check('follow state reflected in the menu (Unfollow a.com shown)', await page.getByRole('menuitem', { name: 'Unfollow a.com' }).isVisible());
 
-// --- an open menu must not ride up over the pinned header when the reader scrolls ---
-// When the anchor sits low in the viewport the clamp flips the menu FULLY ABOVE it, so the menu
-// extends upward; a placement computed only at open time then walks off the top of the screen on
-// the next downward scroll, several times faster than the anchor leaves it, and the menu's items
-// land on top of the top-nav controls while still being hittable.
+// --- an open menu must stay usable and stay off the pinned header ---
+// Two halves of one invariant, because fixing either alone re-creates the other:
+//   (a) while the menu is open and the page scrolls, it must never overlap or steal clicks from
+//       the pinned header. Closing is an acceptable outcome; drifting on top of the nav is not.
+//   (b) when the menu is taller than the room available it is capped and scrolls internally, and
+//       that internal scrolling must actually work — every item has to be reachable.
 await page.keyboard.press('Escape');
 await page.evaluate(() => window.__hnlens.prefs.getState().set({ mutedDomains: [], mutedUsers: [] }));
-await page.setViewportSize({ width: 360, height: 640 });
-await page.evaluate(() => window.scrollTo(0, 0));
-await page.waitForTimeout(600);
+await page.waitForTimeout(400);
 
-// Open the ⋯ of whichever card currently sits LOW in the viewport — that is the anchor position
-// that makes the clamp flip the menu upward, which is the state that drifts.
-const flipped = await page.evaluate(async () => {
-  const btns = [...document.querySelectorAll('button')].filter((b) => /More actions/.test(b.getAttribute('aria-label') || ''));
-  // Deep enough in the viewport that a full menu cannot fit BELOW the anchor, which is what makes
-  // the clamp flip it upward. A mid-page anchor still fits and never enters the drifting state.
-  const target = btns.find((b) => b.getBoundingClientRect().top > window.innerHeight - 190);
-  if (!target) return { noTarget: true, tops: btns.map((b) => Math.round(b.getBoundingClientRect().top)), vh: window.innerHeight };
-  target.click();
-  await new Promise((r) => setTimeout(r, 300));
-  const menu = document.querySelector('[role="menu"]');
-  if (!menu) return { noMenu: true };
-  const m = menu.getBoundingClientRect();
-  const a = target.getBoundingClientRect();
-  return { menuTop: Math.round(m.top), anchorTop: Math.round(a.top), above: m.top < a.top, vh: window.innerHeight };
-});
-check(
-  'PRECONDITION: the anchor is low enough that the clamp flips the menu ABOVE it (the state that drifts)',
-  flipped !== null && flipped.above === true,
-  JSON.stringify(flipped),
-);
+const openLowMenu = async () =>
+  await page.evaluate(async () => {
+    const btns = [...document.querySelectorAll('button')].filter((b) => /More actions/.test(b.getAttribute('aria-label') || ''));
+    // Low in the viewport: that is the anchor position where the menu flips upward, which is the
+    // state that drifts and the state that gets capped.
+    const t = btns.find((b) => b.getBoundingClientRect().top > window.innerHeight * 0.5) || btns[btns.length - 1];
+    if (!t) return null;
+    t.click();
+    await new Promise((r) => setTimeout(r, 350));
+    const m = document.querySelector('[role="menu"]');
+    return m ? { menuTop: Math.round(m.getBoundingClientRect().top) } : null;
+  });
 
-// Every top-nav control's centre, hit-tested. The lens measured the defect this way because a
-// bounding-box overlap does not prove the menu actually STEALS the control's clicks.
-const headerTheft = async () =>
-  await page.evaluate(() => {
-    const header = document.querySelector('header.sticky');
-    if (!header) return null;
-    const controls = [...header.querySelectorAll('button, a, input')];
-    const menu = document.querySelector('[role="menu"]');
-    if (!menu) return { menuGone: true, stolen: [] };
-    const stolen = [];
-    for (const c of controls) {
-      const r = c.getBoundingClientRect();
-      if (r.width === 0 || r.height === 0) continue;
-      const hit = document.elementFromPoint(Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2));
-      if (hit && menu.contains(hit)) {
-        stolen.push({ control: c.getAttribute('aria-label') || c.textContent?.trim()?.slice(0, 20) || c.tagName, hits: hit.textContent?.trim()?.slice(0, 24) || hit.tagName });
+// (a) scroll sweep across phone geometries
+for (const [w, h] of [[360, 640], [390, 844]]) {
+  for (const y of [350, 500, 650, 800]) {
+    await page.setViewportSize({ width: w, height: h });
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.waitForTimeout(450);
+    const opened = await openLowMenu();
+    check(`PRECONDITION: a menu is open low in the viewport at ${w}x${h} before scrolling to ${y}`, opened !== null, JSON.stringify(opened));
+    if (!opened) continue;
+    const r = await page.evaluate(async (sy) => {
+      const y0 = window.scrollY;
+      window.scrollTo(0, sy);
+      await new Promise((res) => setTimeout(res, 450));
+      const moved = window.scrollY - y0;
+      const m = document.querySelector('[role="menu"]');
+      if (!m) return { moved, closed: true, over: 0, stolen: 0 };
+      const hdr = document.querySelector('header');
+      const mr = m.getBoundingClientRect();
+      const hr = hdr.getBoundingClientRect();
+      let stolen = 0;
+      for (const c of hdr.querySelectorAll('button, a, input')) {
+        const rr = c.getBoundingClientRect();
+        if (!rr.width || !rr.height) continue;
+        const e = document.elementFromPoint(Math.round(rr.left + rr.width / 2), Math.round(rr.top + rr.height / 2));
+        if (e && m.contains(e)) stolen += 1;
       }
-    }
-    const m = menu.getBoundingClientRect();
-    const h = header.getBoundingClientRect();
+      return { moved, closed: false, menuTop: Math.round(mr.top), over: Math.round(Math.min(mr.bottom, hr.bottom) - Math.max(mr.top, hr.top)), stolen };
+    }, y);
+    check(`PRECONDITION: the page really scrolled to ${y} at ${w}x${h}`, r.moved > y - 60, JSON.stringify(r));
+    check(
+      `an open menu never covers the pinned header after scrolling ${y} at ${w}x${h}`,
+      r.closed || (r.over <= 0 && r.stolen === 0),
+      JSON.stringify(r),
+    );
+    await page.keyboard.press('Escape');
+  }
+}
+
+// (b) a capped menu must scroll to its last item; an uncapped one must show every item outright.
+// 360x430 is here to force the CAPPED branch: at the taller geometries this fixture's menu fits
+// outright, so without a short viewport the capped half of the check never executes.
+let sawCapped = false;
+for (const [w, h] of [[360, 430], [360, 640], [390, 844]]) {
+  await page.setViewportSize({ width: w, height: h });
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.waitForTimeout(450);
+  const opened = await openLowMenu();
+  check(`PRECONDITION: a menu is open for the reachability check at ${w}x${h}`, opened !== null);
+  if (!opened) continue;
+  const r = await page.evaluate(async () => {
+    const m = document.querySelector('[role="menu"]');
+    const items = [...m.querySelectorAll('[role="menuitem"]')];
+    const capped = m.scrollHeight > m.clientHeight + 1;
+    m.scrollTop = 9999;
+    m.dispatchEvent(new Event('scroll', { bubbles: true }));
+    await new Promise((res) => setTimeout(res, 300));
+    const last = items[items.length - 1];
+    const lr = last.getBoundingClientRect();
+    const hit = document.elementFromPoint(Math.round(lr.left + lr.width / 2), Math.round(lr.top + lr.height / 2));
     return {
-      menuGone: false, stolen, controls: controls.length,
-      menuTop: Math.round(m.top),
-      overHeader: Math.round(Math.min(m.bottom, h.bottom) - Math.max(m.top, h.top)),
+      items: items.length, capped, scrollTop: Math.round(m.scrollTop),
+      scrollH: Math.round(m.scrollHeight), clientH: Math.round(m.clientHeight),
+      lastLabel: last.textContent.trim().slice(0, 24),
+      lastInViewport: lr.top >= 0 && lr.bottom <= window.innerHeight,
+      lastHitsOwnItem: hit ? last === hit || last.contains(hit) : false,
     };
   });
-const theftBefore = await headerTheft();
-check(
-  'PRECONDITION: with the menu open and the page unscrolled, no top-nav control is covered',
-  theftBefore !== null && theftBefore.stolen.length === 0,
-  JSON.stringify(theftBefore),
-);
-const scrolledBy = await page.evaluate(async () => {
-  const before = window.scrollY;
-  window.scrollBy(0, 350);
-  await new Promise((r) => setTimeout(r, 350));
-  return window.scrollY - before;
-});
-await page.waitForTimeout(300);
-const theftAfter = await headerTheft();
-check(
-  'PRECONDITION: the page actually scrolled (else nothing below is measured)',
-  scrolledBy > 300,
-  `dy=${scrolledBy}`,
-);
-// Two measures of one invariant. The hit test is what the reader actually experiences (a stolen
-// click), but it only fires once an item's centre lands on a control's centre, so it under-reports
-// a menu that has intruded partway. The geometric overlap catches that earlier.
-check(
-  'scrolling with the menu open never lets it overlap the pinned header',
-  theftAfter !== null && (theftAfter.menuGone || theftAfter.overHeader <= 0),
-  JSON.stringify(theftAfter),
-);
-check(
-  'scrolling with the menu open never lets it cover a top-nav control',
-  theftAfter !== null && (theftAfter.menuGone || theftAfter.stolen.length === 0),
-  JSON.stringify(theftAfter),
-);
-await page.keyboard.press('Escape');
+  check(`PRECONDITION: the menu has items to reach at ${w}x${h}`, r.items >= 5, JSON.stringify(r));
+  // The capped and uncapped cases are the two halves: a fix that only caps, or only un-caps,
+  // fails one of them.
+  if (r.capped) {
+    sawCapped = true;
+    check(`a capped menu scrolls, so its last item is reachable at ${w}x${h}`, r.scrollTop > 0 && r.lastInViewport && r.lastHitsOwnItem, JSON.stringify(r));
+  } else {
+    check(`an uncapped menu shows its last item without scrolling at ${w}x${h}`, r.lastInViewport && r.lastHitsOwnItem, JSON.stringify(r));
+  }
+  await page.keyboard.press('Escape');
+}
+// Without this the loop can silently take the uncapped branch every time and report a pass while
+// the capped case — the one that regressed — is never executed.
+check('PRECONDITION: at least one geometry actually capped the menu', sawCapped);
 await page.setViewportSize({ width: 1280, height: 1000 });
 await page.waitForTimeout(200);
 
