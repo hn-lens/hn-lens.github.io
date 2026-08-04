@@ -738,7 +738,10 @@ export default function CommentsView({ id }: { id: number }) {
                       type="search"
                       value={query}
                       onChange={(e) => setQuery(e.target.value)}
-                      placeholder="Search this discussion…"
+                      // Sized to fit the narrowest field this inline box gets. An input cannot
+                      // ellipsise its own placeholder, so a longer one is cut mid-word; the
+                      // accessible name carries the full wording.
+                      placeholder="Find…"
                       aria-label="Search comments in this discussion"
                       // The right inset only has to clear the Clear button, which needs a query to exist.
                       className={cn(

@@ -89,12 +89,17 @@ export function usePopoverClamp(
         const acs = getComputedStyle(el);
         if (acs.position === 'sticky' || acs.position === 'fixed') {
           const ar = el.getBoundingClientRect();
-          if (ar.height > 0 && ar.height <= window.innerHeight * 0.6) ownBarBottom = ar.bottom;
+          if (ar.height > 0) ownBarBottom = ar.bottom;
           break;
         }
       }
-      const bandTop = Math.max(pinnedHeaderBottom(), ownBarBottom) + pad;
       const bandBottom = vh - pad;
+      // Clearing the bars is a preference, not an absolute: a tall bar (a toolbar with its tray
+      // open, or a landscape phone) can reach the bottom of the screen, and a band computed from it
+      // alone would be empty or inverted -- which collapses the popover to nothing or parks it off
+      // the bottom. Keep a usable strip no matter what, preferring to clear the bars when possible.
+      const MIN_BAND = 120;
+      const bandTop = Math.max(pad, Math.min(Math.max(pinnedHeaderBottom(), ownBarBottom) + pad, bandBottom - MIN_BAND));
 
       const natural = el.getBoundingClientRect();
       const anchor = anchorRef.current?.getBoundingClientRect() ?? null;

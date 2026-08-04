@@ -13,6 +13,9 @@
 import { chromium } from 'playwright';
 
 const BASE = process.env.BASE || 'http://localhost:4173/';
+// Swept on the feed AND on a discussion, because the discussion carries a second pinned bar with
+// its own text field; checking only the landing page cannot see it.
+let ROUTES = [''];
 const fails = [];
 const check = (name, pass, detail = '') => {
   console.log(`  ${pass ? '\u2713' : '\u2717'} ${name}${detail ? ` \u2014 ${detail}` : ''}`);
@@ -28,8 +31,24 @@ const WIDE = 1024;
 // Sweeping widths alone therefore misses the worst case entirely.
 const TEXT_SIZES = ['md', 'lg'];
 
+let sawToolbarField = false;
 const b = await chromium.launch({ headless: true });
 try {
+  // Discover a real discussion. A hard-coded id is not reliably a story with a comment thread, and
+  // without a thread the toolbar never renders, so its text field would go unmeasured and this
+  // sweep would report a clean pass having never looked at it.
+  {
+    const ctx = await b.newContext({ viewport: { width: 1280, height: 900 } });
+    const p0 = await ctx.newPage();
+    await p0.goto(BASE, { waitUntil: 'domcontentloaded' });
+    await p0.waitForSelector('article[data-id]', { timeout: 45000 }).catch(() => {});
+    await p0.waitForTimeout(2000);
+    const id = await p0.evaluate(() => document.querySelector('article[data-id]')?.getAttribute('data-id') ?? null);
+    await ctx.close();
+    if (id) ROUTES = ['', `#/item/${id}`];
+  }
+  check('PRECONDITION: a live discussion was found to sweep as well as the feed', ROUTES.length === 2, JSON.stringify(ROUTES));
+  for (const ROUTE of ROUTES) {
   for (const ts of TEXT_SIZES) {
   for (const w of WIDTHS) {
     const ctx = await b.newContext({ viewport: { width: w, height: 900 }, isMobile: w < 768, hasTouch: w < 768 });
@@ -41,10 +60,25 @@ try {
         /* private mode */
       }
     });
-    await page.goto(BASE, { waitUntil: 'domcontentloaded' });
+    await page.goto(BASE + (ROUTE ? ROUTE : ''), { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('header', { timeout: 20000 });
     await page.evaluate((size) => window.__hnlens.prefs.getState().setTextSize(size), ts);
     await page.waitForTimeout(600);
+    if (ROUTE) {
+      await page.waitForSelector('.disc-toolbar', { timeout: 20000 }).catch(() => {});
+      // The toolbar's search box lives behind a tool; open it or there is no placeholder to measure.
+      await page.evaluate(() => {
+        const direct = [...document.querySelectorAll('.disc-toolbar button')].find((b) => /search/i.test(b.getAttribute('aria-label') || ''));
+        if (direct) return direct.click();
+        document.querySelector('.disc-toolbar button[aria-label="More discussion tools"]')?.click();
+      });
+      await page.waitForTimeout(250);
+      await page.evaluate(() => {
+        const mi = [...document.querySelectorAll('[role="menuitem"]')].find((i) => /search/i.test(i.textContent || ''));
+        mi?.click();
+      });
+      await page.waitForTimeout(350);
+    }
     const applied = await page.evaluate(() => document.documentElement.dataset.textsize);
     check(`PRECONDITION: reading text size ${ts} is actually applied at ${w}px`, applied === ts, `applied=${applied}`);
 
@@ -71,10 +105,17 @@ try {
           headroom: Math.round(avail - textW), clipped: avail - textW < 4,
         };
       };
+      // EVERY placeholder living in a pinned bar, not just the top nav's. The discussion toolbar's
+      // own search box escaped this check by being a different element in a different bar, and was
+      // cut mid-word for exactly the reason the top nav's wording was already shortened.
+      const barInputs = [...document.querySelectorAll('header input, .disc-toolbar input')].filter(
+        (el) => el.offsetParent !== null && el.placeholder,
+      );
       const input = document.querySelector('header input');
       const inner = document.querySelector('header')?.firstElementChild;
       return {
         search: fit(input, input?.placeholder ?? ''),
+        barPlaceholders: barInputs.map((el) => ({ name: el.getAttribute('aria-label') || 'input', ...fit(el, el.placeholder) })),
         selects: [...document.querySelectorAll('header select')]
           .map((s) => fit(s, s.options[s.selectedIndex]?.text ?? ''))
           .filter(Boolean),
@@ -94,6 +135,13 @@ try {
     // outcome; it is only a defect when the header had room and trimmed anyway. At an enlarged
     // reading size the header genuinely runs out of room, so an ellipsis there is correct
     // behaviour, not a defect, and asserting otherwise would demand space that does not exist.
+    // Not asserted per width: at the narrowest sizes this field folds away by design, so demanding
+    // it everywhere would fail a correct state. Asserted ONCE across the sweep instead, below,
+    // so the field cannot silently go unmeasured either.
+    if (r.barPlaceholders.length >= 2) sawToolbarField = true;
+    for (const ph of r.barPlaceholders) {
+      check(`the "${ph.name}" placeholder fits its field at ${w}px/${ts}`, !ph.clipped, JSON.stringify(ph));
+    }
     if (w >= WIDE && ts === 'md') {
       check(`PRECONDITION: the header shows its selects at ${w}px/${ts}`, r.selects.length >= 2, `visible=${r.selects.length}`);
       for (const s of r.selects) {
@@ -106,6 +154,8 @@ try {
     await ctx.close();
   }
   }
+  }
+  check('PRECONDITION: the discussion toolbar text field was measured somewhere in the sweep', sawToolbarField);
 } finally {
   await b.close();
 }
