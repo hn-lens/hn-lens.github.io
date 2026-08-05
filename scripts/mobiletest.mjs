@@ -403,6 +403,13 @@ await desk.close();
   const CLASSES = {
     'seg-btn': '.seg-btn',
     'search-input': 'input[type="search"]',
+    // Added after a sweep found five control classes sitting between 30 and 36px on a FULL-HEIGHT
+    // phone — under the floor on exactly the devices the floor exists for. They were never listed
+    // here, so the check reported nothing while every one of them was too small to hit reliably.
+    'feed-tab': '.feed-tabs button',
+    'topbar-control': 'header button',
+    'empty-cta': '.empty-cta',
+    'settings-nav': "nav[aria-label='Settings sections'] a, nav[aria-label='Settings sections'] button",
   };
   const measureClasses = (surface) =>
     tp.evaluate(({ classes, surface: s }) => {

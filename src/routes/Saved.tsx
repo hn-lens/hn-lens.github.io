@@ -21,7 +21,7 @@ export default function Saved() {
           </p>
           <Link
             to="/"
-            className="mt-4 inline-block rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-accent-fg hover:opacity-90"
+            className="empty-cta mt-4 inline-flex items-center rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-accent-fg hover:opacity-90"
           >
             Browse the feed
           </Link>

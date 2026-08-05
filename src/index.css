@@ -2326,3 +2326,24 @@ html[data-short] .disc-tb-bar {
     min-height: 1.5rem;
   }
 }
+/* Criterion 6: a target is at least 44px, or 36px where the screen is too short to afford it.
+   These classes sat between 30 and 36px on a full-height phone, which is under the floor on the
+   very devices the floor exists for. */
+@media (pointer: coarse) {
+  .feed-tabs button,
+  header button,
+  header a,
+  .empty-cta,
+  nav[aria-label='Settings sections'] a,
+  nav[aria-label='Settings sections'] button {
+    min-height: 2.75rem;
+  }
+  html[data-short] .feed-tabs button,
+  html[data-short] header button,
+  html[data-short] header a,
+  html[data-short] .empty-cta,
+  html[data-short] nav[aria-label='Settings sections'] a,
+  html[data-short] nav[aria-label='Settings sections'] button {
+    min-height: 2.25rem;
+  }
+}
