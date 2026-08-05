@@ -410,20 +410,38 @@ try {
   // M4 — below ~400px CQ the inline Search folds into the "…" menu. The remaining controls must form a
   // LEFT/RIGHT toolbar (right actions pinned), NOT clump at the left leaving a dead TRAILING gap on the
   // right. Assert the rightmost visible control sits at the bar's inner-right edge once Search has folded.
-  await page.setViewportSize({ width: 320, height: 800 });
-  await page.waitForTimeout(200);
-  const narrowGap = await page.evaluate(() => {
-    const bar = document.querySelector('.disc-tb-bar');
-    const br = bar.getBoundingClientRect();
-    const items = [...bar.children].filter((k) => k.getBoundingClientRect().width > 0);
-    const rightmost = Math.max(...items.map((k) => k.getBoundingClientRect().right));
-    const padRight = parseFloat(getComputedStyle(bar).paddingRight) || 0;
-    // VISIBLE, not merely present: the folded search <input> stays in the DOM inside a display:none
-    // span, so querySelector alone always finds it — check its rendered box.
-    const si = bar.querySelector('input[type="search"]');
-    return { searchInline: !!si && si.getBoundingClientRect().width > 0, trailing: Math.round(br.right - padRight - rightmost) };
-  });
-  check('narrowest: Search has folded and the right actions are pinned — no dead trailing gap', !narrowGap.searchInline && narrowGap.trailing <= 12, JSON.stringify(narrowGap));
+  // Measured at EVERY width, not just the narrowest. A single-width probe passed while 75-115px of
+  // dead space sat at the end of the row across a whole band of widths, because the width it
+  // happened to sample was not one of them.
+  const gapWidths = [320, 340, 360, 375, 390, 400, 420, 440, 470, 520, 600, 680, 760];
+  const gaps = [];
+  for (const gw of gapWidths) {
+    await page.setViewportSize({ width: gw, height: 800 });
+    await page.waitForTimeout(180);
+    const g = await page.evaluate(() => {
+      const bar = document.querySelector('.disc-tb-bar');
+      const br = bar.getBoundingClientRect();
+      // Deepest VISIBLE leaves: the sort and tools wrappers are display:contents, so their buttons
+      // are grandchildren and a children-only scan reports the wrong rightmost edge.
+      const leaves = [...bar.querySelectorAll('*')].filter((e) => {
+        const r = e.getBoundingClientRect();
+        return r.width > 0 && r.height > 0 && ![...e.children].some((c) => c.getBoundingClientRect().width > 0);
+      });
+      if (!leaves.length) return null;
+      const rightmost = Math.max(...leaves.map((e) => e.getBoundingClientRect().right));
+      const padRight = parseFloat(getComputedStyle(bar).paddingRight) || 0;
+      const si = bar.querySelector('input[type="search"]');
+      return { searchInline: !!si && si.getBoundingClientRect().width > 0, trailing: Math.round(br.right - padRight - rightmost) };
+    });
+    gaps.push({ w: gw, ...(g || { trailing: null }) });
+  }
+  check('PRECONDITION: the toolbar was measurable at every width in the gap sweep', gaps.every((g) => g.trailing !== null), JSON.stringify(gaps.filter((g) => g.trailing === null)));
+  const badGaps = gaps.filter((g) => g.trailing !== null && g.trailing > 16);
+  check(
+    'no dead space at the end of the control row, at ANY width',
+    badGaps.length === 0,
+    badGaps.length ? badGaps.map((g) => `${g.w}:${g.trailing}px`).join(' | ') : `max ${Math.max(...gaps.map((g) => g.trailing))}px across ${gaps.length} widths`,
+  );
   // Where the Search filler has folded there is no elastic control left, so a gap in the centre is
   // accepted. That licence is bounded by the sort control still being LABELLED there: the band may
   // look sparse, but it must not be sparse AND unreadable at the same width.

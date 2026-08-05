@@ -768,7 +768,7 @@ export default function CommentsView({ id }: { id: number }) {
                   </span>
                   {/* single ⇅ toggle; flips Newest/Replies, full options in "…". A default that
                       HIDES above the threshold, so the variants swap at exactly one boundary. */}
-                  <span className="contents shrink-0 @min-[24rem]/tb:hidden">
+                  <span className="contents shrink-0 @min-[24rem]/tb:hidden @max-[30rem]/tb:[&>*]:flex-1">
                     <div className="seg" role="group" aria-label="Sort comments">
                       <button
                         type="button"
