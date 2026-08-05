@@ -134,7 +134,19 @@ const firstPage = await page.locator('article').count();
 const more = page.getByRole('button', { name: /Load more/i });
 check('long feed paginates (first page < 60)', firstPage > 0 && firstPage < 60, `${firstPage}`);
 if (await more.count()) {
-  await more.first().click();
+  // This button sits thousands of pixels below the fold and the app scrolls smoothly, so the
+  // driver's own scroll-then-click races the animation: on firefox it computes a click point, the
+  // page settles, and the click lands on whatever card now occupies those coordinates. The button
+  // itself is not obscured -- so assert THAT directly, which is the property worth having, and then
+  // activate it in-page rather than through a coordinate the engine has already invalidated.
+  const topmost = await more.first().evaluate((el) => {
+    el.scrollIntoView({ block: 'center', behavior: 'instant' });
+    const r = el.getBoundingClientRect();
+    const hit = document.elementFromPoint(Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2));
+    return !!hit && (hit === el || el.contains(hit));
+  });
+  check('Load more is not covered by anything', topmost, `topmost=${topmost}`);
+  await more.first().evaluate((el) => el.click());
   await page.waitForTimeout(800);
   check('Load more shows additional stories', (await page.locator('article').count()) > firstPage, `${firstPage} -> ${await page.locator('article').count()}`);
 } else {
