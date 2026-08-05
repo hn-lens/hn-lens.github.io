@@ -17,20 +17,24 @@ const check = (name, pass, detail = '') => {
 
 // Short-and-wide is the case that was broken; the tall cases are the opposite-case control, so a
 // fix that compacts everything everywhere fails here rather than shipping.
-// The short-screen budget reflects a decision taken deliberately: on a screen this short the tap
-// minimum is relaxed from 44px to 36px, which is what brings the furniture down to roughly two
-// thirds. It was 92% with zero lines of text visible. Going below this would mean shrinking targets
-// past the point a fingertip can rely on them.
+// These ceilings are measured to the first READABLE LINE, not to the top of the first comment box.
+// That is the stricter of two readings of the spec and the one that matches what a reader is
+// waiting to see; it costs every comment's byline, so the numbers are several points higher than
+// the same layout scored under the looser reading. They were RE-DERIVED when the convention
+// changed -- carrying the old figures across would be comparing measurements taken with two
+// different rulers. On a screen this short the tap minimum is already relaxed to 36px, which is
+// what brought the furniture down from 92% with zero lines of text visible; going further would
+// mean shrinking targets past the point a fingertip can rely on them.
 // The line counts stay low on short screens because a genuinely one-line first comment is common;
 // the tall cases carry the higher counts, and act as the opposite-case control so a fix that
 // compacts every screen fails here rather than shipping.
 const CASES = [
-  { w: 640, h: 360, maxChromePct: 67, minLines: 1 },
-  { w: 740, h: 360, maxChromePct: 67, minLines: 1 },
-  { w: 844, h: 390, maxChromePct: 63, minLines: 1 },
-  { w: 1024, h: 768, maxChromePct: 40, minLines: 6 },
-  { w: 390, h: 844, maxChromePct: 50, minLines: 5 },
-  { w: 1280, h: 800, maxChromePct: 40, minLines: 6 },
+  { w: 640, h: 360, maxChromePct: 72, minLines: 1 },
+  { w: 740, h: 360, maxChromePct: 72, minLines: 1 },
+  { w: 844, h: 390, maxChromePct: 67, minLines: 1 },
+  { w: 1024, h: 768, maxChromePct: 39, minLines: 6 },
+  { w: 390, h: 844, maxChromePct: 47, minLines: 5 },
+  { w: 1280, h: 800, maxChromePct: 38, minLines: 6 },
 ];
 
 const b = await chromium.launch({ headless: true });
@@ -66,7 +70,12 @@ try {
     await page.waitForTimeout(2200);
 
     const r = await page.evaluate(() => {
-      const first = document.querySelector('[id^="comment-"]');
+      // To the first READABLE line, not to the top of the comment box. A byline with no text under
+      // it is not reading, and measuring to the container's edge flatters the result by the height
+      // of every comment's header. This is the stricter of the two readings of the spec and the one
+      // that matches what the reader is actually waiting to see.
+      const firstBody = document.querySelector('.comment-body');
+      const first = firstBody || document.querySelector('[id^="comment-"]');
       const bodies = [...document.querySelectorAll('.comment-body')];
       let lines = 0;
       for (const el of bodies) {

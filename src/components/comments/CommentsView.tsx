@@ -392,6 +392,12 @@ export default function CommentsView({ id }: { id: number }) {
   usePopoverClamp(toolMenuOpen && !shortScreen, toolMenuContentRef, toolMenuRef, closeToolMenu);
   useModalBehavior(toolMenuContentRef, toolMenuOpen && shortScreen);
 
+  // A reduced sort control must still be able to show which order the thread is IN. The fixed
+  // subsets omit Default, so whenever that was the current order none of the visible segments was
+  // pressed and the control reported no state at all. Substituting the current order in keeps the
+  // segment count the ladder budgeted for.
+  const withCurrentSort = (list: Sort[]): Sort[] => (list.includes(sort) ? list : [sort, ...list.slice(0, list.length - 1)]);
+
   // One list, rendered by whichever presentation is in use, so the two cannot drift.
   const toolMenuItems = (
     <>
@@ -750,7 +756,7 @@ export default function CommentsView({ id }: { id: number }) {
                   {/* 3 buttons Newest|Oldest|Replies; Default remains in the "…" menu */}
                   <span className="hidden shrink-0 @min-[40rem]/tb:contents @min-[43rem]/tb:hidden">
                     <div className="seg" role="group" aria-label="Sort comments">
-                      {SORTS_3.map((sk) => (
+                      {withCurrentSort(SORTS_3).map((sk) => (
                         <button key={sk} type="button" aria-pressed={sort === sk} onClick={() => setSort(sk)} className="seg-btn">
                           {SORTS.find(([k]) => k === sk)?.[1]}
                         </button>
@@ -760,7 +766,7 @@ export default function CommentsView({ id }: { id: number }) {
                   {/* 2 buttons Newest|Replies; Default/Oldest remain in the "…" menu */}
                   <span className="hidden shrink-0 @min-[24rem]/tb:contents @min-[40rem]/tb:hidden @max-[30rem]/tb:[&>*]:flex-1">
                     <div className="seg" role="group" aria-label="Sort comments">
-                      {SORTS_2.map((sk) => (
+                      {withCurrentSort(SORTS_2).map((sk) => (
                         <button key={sk} type="button" aria-pressed={sort === sk} onClick={() => setSort(sk)} className="seg-btn">
                           {SORTS.find(([k]) => k === sk)?.[1]}
                         </button>

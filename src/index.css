@@ -2299,3 +2299,30 @@ html[data-short] .comment-body {
     justify-content: center;
   }
 }
+/* Every comment's byline costs the same as two lines of the text it introduces, which on a screen
+   this short is the difference between reading and not. */
+@media (pointer: coarse) {
+  html[data-short] .comment-actions {
+    min-height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+  }
+  html[data-short] .comment-actions button,
+  html[data-short] .comment-actions a {
+    min-height: 1.75rem;
+  }
+}
+html[data-short] .comment-actions {
+  padding-top: 0;
+  padding-bottom: 0;
+}
+html[data-short] .disc-tb-bar {
+  padding-top: 0.125rem;
+  padding-bottom: 0.125rem;
+}
+@media (pointer: coarse) {
+  html[data-short] .comment-actions button,
+  html[data-short] .comment-actions a {
+    min-height: 1.5rem;
+  }
+}

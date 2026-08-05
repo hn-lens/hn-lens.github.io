@@ -512,6 +512,36 @@ try {
     });
     reach.push({ w: rw, ...(r || { inline: null }) });
   }
+  // Whatever shape the sort control has been reduced to, it must still show which order the thread
+  // is in. The reduced forms carried a FIXED subset, so an order outside that subset left every
+  // segment unpressed and the control announced nothing.
+  const sortState = [];
+  for (const sw of [320, 360, 390, 430, 520, 640, 700, 760]) {
+    await page.setViewportSize({ width: sw, height: 800 });
+    await page.waitForTimeout(180);
+    const st = await page.evaluate(() => {
+      const bar = document.querySelector('.disc-tb-bar');
+      if (!bar) return null;
+      const btns = [...bar.querySelectorAll('button')].filter(
+        (x) => /newest|oldest|replies|default/i.test(x.textContent || '') && x.getBoundingClientRect().width > 0,
+      );
+      if (!btns.length) return { none: true };
+      const pressed = btns.filter((x) => x.getAttribute('aria-pressed') === 'true').map((x) => x.textContent.trim());
+      // The single-toggle form is one button that NAMES the current order rather than pressing one
+      // of several, so it states the order even with nothing pressed.
+      const names = btns.length === 1 && /newest|oldest|replies|default/i.test(btns[0].textContent || '');
+      return { count: btns.length, pressed, states: names || pressed.length === 1 };
+    });
+    sortState.push({ w: sw, ...(st || { none: true }) });
+  }
+  check('PRECONDITION: a sort control was found at every width', sortState.every((x) => !x.none), JSON.stringify(sortState.filter((x) => x.none)));
+  const stateless = sortState.filter((x) => !x.none && !x.states);
+  check(
+    'the sort control shows which order the thread is in, at every width',
+    stateless.length === 0,
+    stateless.length ? stateless.map((x) => `${x.w}px: ${x.count} segments, ${x.pressed.length} pressed`).join(' | ') : `${sortState.length} widths`,
+  );
+
   check('PRECONDITION: the toolbar was present at every width in the reachability sweep', reach.every((r) => r.inline !== null), JSON.stringify(reach.filter((r) => r.inline === null)));
   const unreachable = reach.filter((r) => r.inline === false && r.inMenu === false);
   check(
