@@ -199,15 +199,24 @@ try {
       // search is the flex filler, so the slack is whatever it holds ABOVE its own minimum; when it
       // is folded there is no filler and the slack is the row's unused width.
       headroom: (() => {
-        const kids = [...bar.children].filter((e) => e.offsetParent !== null);
         const inp = bar.querySelector('input[type="search"]');
         const box = inp && inp.offsetParent !== null ? inp.closest('span,div') || inp : null;
         if (box) {
           const minPx = parseFloat(getComputedStyle(box).minWidth) || 0;
           return Math.round(box.getBoundingClientRect().width - minPx);
         }
-        const used = kids.reduce((a, k) => a + k.getBoundingClientRect().width, 0);
-        return Math.round(inner - used);
+        // No filler left, so the slack is the row's unused width. Measured from the SPAN the
+        // controls actually occupy: summing bar.children counts a display:contents wrapper as zero
+        // and silently omits every button inside it, which over-states the slack in precisely the
+        // folded state this branch exists to measure.
+        const leaves = [...bar.querySelectorAll('*')].filter((e) => {
+          const r = e.getBoundingClientRect();
+          return r.width > 0 && r.height > 0 && ![...e.children].some((c) => c.getBoundingClientRect().width > 0);
+        });
+        if (!leaves.length) return Number.NaN;
+        const l = Math.min(...leaves.map((e) => e.getBoundingClientRect().left));
+        const r = Math.max(...leaves.map((e) => e.getBoundingClientRect().right));
+        return Math.round(inner - (r - l));
       })(),
     };
   };
@@ -255,6 +264,9 @@ try {
           // but demanding slack there too would need the tools to fold by theme, which a container
           // query cannot express (it measures the container, and the theme changes the CONTENT).
           // That remainder is recorded in review/REGISTER.md rather than silently dropped.
+          // NaN fails every comparison, so `NaN < MIN` is false and an unmeasurable cell would slip
+          // through as a pass. An unmeasurable cell is a failed measurement, not a good result.
+          else if (requireHeadroom && !Number.isFinite(r.headroom)) bad.push(`${cell}: headroom could not be measured`);
           else if (requireHeadroom && r.headroom < MIN_HEADROOM) bad.push(`${cell}: only ${r.headroom}px headroom before it wraps (need ${MIN_HEADROOM})`);
         }
       }
