@@ -136,6 +136,12 @@ export function usePopoverClamp(
 
       el.style.transform = dx || dy ? `translate(${dx}px, ${dy}px)` : 'none';
       if (el.style.overflowY === 'auto' && keepScroll) el.scrollTop = keepScroll;
+      // A capped popover can cut its list mid-group, leaving a group heading as the last thing
+      // drawn with nothing beneath it. Nothing about a flat bottom edge says the list continues,
+      // and phones draw no resting scrollbar to hint at it, so mark the state for CSS to show it.
+      const capped = el.scrollHeight > el.clientHeight + 1;
+      if (capped) el.dataset.scrollable = '';
+      else delete el.dataset.scrollable;
     };
 
     place();

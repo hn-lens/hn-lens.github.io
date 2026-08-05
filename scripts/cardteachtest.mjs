@@ -245,6 +245,7 @@ for (const [w, h] of [[360, 430], [360, 640], [390, 844]]) {
       lastLabel: last.textContent.trim().slice(0, 24),
       lastInViewport: lr.top >= 0 && lr.bottom <= window.innerHeight,
       lastHitsOwnItem: hit ? last === hit || last.contains(hit) : false,
+      marked: m.hasAttribute('data-scrollable'),
     };
   });
   check(`PRECONDITION: the menu has items to reach at ${w}x${h}`, r.items >= 5, JSON.stringify(r));
@@ -253,8 +254,12 @@ for (const [w, h] of [[360, 430], [360, 640], [390, 844]]) {
   if (r.capped) {
     sawCapped = true;
     check(`a capped menu scrolls, so its last item is reachable at ${w}x${h}`, r.scrollTop > 0 && r.lastInViewport && r.lastHitsOwnItem, JSON.stringify(r));
+    // Reachable is not the same as discoverable: a flat cut bottom edge reads as the end of the
+    // list, and a phone draws no resting scrollbar to say otherwise.
+    check(`a capped menu announces there is more to see at ${w}x${h}`, r.marked, JSON.stringify(r));
   } else {
     check(`an uncapped menu shows its last item without scrolling at ${w}x${h}`, r.lastInViewport && r.lastHitsOwnItem, JSON.stringify(r));
+    check(`an uncapped menu does not claim to scroll at ${w}x${h}`, !r.marked, JSON.stringify(r));
   }
   await page.keyboard.press('Escape');
 }

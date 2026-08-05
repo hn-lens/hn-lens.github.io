@@ -2274,3 +2274,17 @@ html[data-short] .comment-body {
     color: transparent;
   }
 }
+/* A popover trimmed to fit says so: the last row fades into the edge and the scrollbar is always
+   drawn, rather than a flat cut that reads as the end of the list. */
+[data-scrollable] {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 1.25rem), transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 1.25rem), transparent 100%);
+  scrollbar-width: thin;
+}
+[data-scrollable]::-webkit-scrollbar {
+  width: 6px;
+}
+[data-scrollable]::-webkit-scrollbar-thumb {
+  background: var(--edge);
+  border-radius: 3px;
+}

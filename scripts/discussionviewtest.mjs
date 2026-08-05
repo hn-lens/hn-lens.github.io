@@ -596,6 +596,60 @@ console.log('\n[F] toolbar keyboard + jump interaction');
   }
   await page.evaluate(() => { window.location.hash = '#/item/1'; });
   await page.waitForTimeout(700);
+
+  // F11 — a tools menu trimmed to fit must SAY it is trimmed. At the narrowest widths the list is
+  // capped mid-group, and the last thing drawn can be a group heading with none of its options
+  // under it; a flat bottom edge then reads as the end of the list. Phones draw no resting
+  // scrollbar, so the affordance has to be part of the element.
+  // #/item/1 has no thread in this harness, so it has no toolbar to open; use the discussion the
+  // rest of this section uses.
+  await page.goto(`${BASE}#/item/1000`, { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('.disc-toolbar', { timeout: 15000 }).catch(() => {});
+  await page.waitForTimeout(600);
+  // This harness's thread yields a six-entry menu, which fits at every geometry that still uses the
+  // anchored presentation -- so the CAPPED half cannot be forced here, and asserting it would be
+  // asserting nothing. The capped case is covered in cardteachtest, where a short viewport does
+  // force it. What is checked here is the opposite case: a menu that fits must NOT claim to scroll.
+  for (const [w, h] of [[320, 640], [360, 640], [375, 667]]) {
+    await page.setViewportSize({ width: w, height: h });
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.waitForTimeout(500);
+    const r = await page.evaluate(async () => {
+      const btn = document.querySelector('.disc-toolbar button[aria-label="More discussion tools"]');
+      if (!btn) return { noMenu: true, why: 'no trigger', bar: !!document.querySelector('.disc-toolbar') };
+      // A previous step may have left it open, in which case this click would CLOSE it.
+      if (btn.getAttribute('aria-expanded') !== 'true') btn.click();
+      await new Promise((res) => setTimeout(res, 400));
+      const m = document.querySelector('.disc-toolbar [role="menu"]');
+      if (!m) return { noMenu: true, why: 'trigger did not open', expanded: btn.getAttribute('aria-expanded') };
+      const items = [...m.querySelectorAll('[role="menuitem"]')];
+      const capped = m.scrollHeight > m.clientHeight + 1;
+      const marked = m.hasAttribute('data-scrollable');
+      m.scrollTop = 9999;
+      m.dispatchEvent(new Event('scroll', { bubbles: true }));
+      await new Promise((res) => setTimeout(res, 250));
+      const last = items[items.length - 1];
+      const lr = last.getBoundingClientRect();
+      const hit = document.elementFromPoint(Math.round(lr.left + lr.width / 2), Math.round(lr.top + lr.height / 2));
+      return {
+        entries: items.length, capped, marked, scrolled: Math.round(m.scrollTop),
+        lastReachable: !!hit && (last === hit || last.contains(hit)),
+      };
+    });
+    check(`PRECONDITION: the tools menu opens with entries at ${w}x${h}`, !r.noMenu && r.entries >= 4, JSON.stringify(r));
+    if (r.noMenu) continue;
+    // Only the capped case is the subject; if it fits outright there is nothing to announce, and
+    // asserting the marker anyway would demand a scrollbar on a list that does not scroll.
+    if (r.capped) {
+      check(`a trimmed tools menu announces there is more at ${w}x${h}`, r.marked, JSON.stringify(r));
+      check(`a trimmed tools menu scrolls to its last entry at ${w}x${h}`, r.scrolled > 0 && r.lastReachable, JSON.stringify(r));
+    } else {
+      check(`an untrimmed tools menu needs no scroll marker at ${w}x${h}`, !r.marked, JSON.stringify(r));
+    }
+    await page.keyboard.press('Escape');
+  }
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.waitForTimeout(200);
 }
 
 await b.close();
