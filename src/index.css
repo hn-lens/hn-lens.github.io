@@ -2228,9 +2228,19 @@ html[data-short] .disc-toolbar {
   padding-top: 0.25rem;
   padding-bottom: 0.25rem;
 }
+/* On a screen this short a 44px row is a twelfth of everything the reader can see, and the page was
+   spending two thirds of itself on furniture before a word of the thread. 36px still clears the
+   24px minimum comfortably; the full 44px is kept everywhere with room for it. */
 @media (pointer: coarse) {
   html[data-short] .discussion-header button,
-  html[data-short] .discussion-header a {
+  html[data-short] .discussion-header a,
+  html[data-short] .disc-tb-bar button,
+  html[data-short] .disc-tb-bar a,
+  html[data-short] .disc-tb-bar input,
+  html[data-short] .thread-root button,
+  html[data-short] .comment-actions button,
+  html[data-short] .comment-actions a,
+  html[data-short] .replies-toggle {
     min-height: 2.25rem;
   }
 }

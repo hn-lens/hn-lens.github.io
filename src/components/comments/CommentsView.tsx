@@ -757,7 +757,7 @@ export default function CommentsView({ id }: { id: number }) {
                     </div>
                   </span>
                   {/* 2 buttons Newest|Replies; Default/Oldest remain in the "…" menu */}
-                  <span className="hidden shrink-0 @min-[29rem]/tb:contents @min-[40rem]/tb:hidden">
+                  <span className="hidden shrink-0 @min-[24rem]/tb:contents @min-[40rem]/tb:hidden @max-[30rem]/tb:[&>*]:flex-1">
                     <div className="seg" role="group" aria-label="Sort comments">
                       {SORTS_2.map((sk) => (
                         <button key={sk} type="button" aria-pressed={sort === sk} onClick={() => setSort(sk)} className="seg-btn">
@@ -768,7 +768,7 @@ export default function CommentsView({ id }: { id: number }) {
                   </span>
                   {/* single ⇅ toggle; flips Newest/Replies, full options in "…". A default that
                       HIDES above the threshold, so the variants swap at exactly one boundary. */}
-                  <span className="contents shrink-0 @min-[29rem]/tb:hidden">
+                  <span className="contents shrink-0 @min-[24rem]/tb:hidden">
                     <div className="seg" role="group" aria-label="Sort comments">
                       <button
                         type="button"
@@ -784,7 +784,7 @@ export default function CommentsView({ id }: { id: number }) {
                   </span>
 
                   {/* SEARCH — flex filler; typing filters the thread inline. Moves into "…" LAST. */}
-                  <span className="relative hidden min-w-[1.5rem] flex-1 items-center @min-[20rem]/tb:flex">
+                  <span className="relative hidden min-w-[1.5rem] flex-1 items-center @min-[30rem]/tb:flex">
                     <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-subtle" />
                     <input
                       type="search"
