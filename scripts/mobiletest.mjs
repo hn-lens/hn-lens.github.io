@@ -400,6 +400,31 @@ await desk.close();
   // both had one instance raised to 44px inside the discussion while their siblings elsewhere stayed
   // 28px / 34px, so two identically-styled controls sat on screen at different heights. Whatever
   // height a class adopts on touch, every instance of it adopts.
+  // The tab strip scrolls edge-to-edge, and its fade is what tells a reader there is more to the
+  // side. Anchored to the padded wrapper instead of the strip, it stopped short and left a band in
+  // which a half-scrolled tab was drawn at full strength against a hard seam.
+  for (const fw of [320, 360, 390, 430]) {
+    await tp.setViewportSize({ width: fw, height: 844 });
+    await tp.goto(`${BASE}#/?feed=top`, { waitUntil: 'domcontentloaded' });
+    await tp.waitForSelector('article', { timeout: 20000 }).catch(() => {});
+    await tp.waitForTimeout(900);
+    const f = await tp.evaluate(() => {
+      const strip = document.querySelector('.feed-tabs');
+      if (!strip) return null;
+      const sr = strip.getBoundingClientRect();
+      const scrolls = strip.scrollWidth > strip.clientWidth + 1;
+      const fades = [...strip.parentElement.children]
+        .filter((e) => e.getAttribute('aria-hidden') !== null && e.tagName === 'DIV')
+        .map((e) => e.getBoundingClientRect());
+      return { scrolls, right: Math.round(sr.right), covered: fades.some((r) => r.right >= sr.right - 1) };
+    });
+    check(`PRECONDITION: the tab strip is present and scrolls at ${fw}px`, !!f && f.scrolls, JSON.stringify(f));
+    if (f && f.scrolls) {
+      check(`the tab strip's fade reaches the edge it is fading at ${fw}px`, f.covered, JSON.stringify(f));
+    }
+  }
+  await tp.setViewportSize({ width: 390, height: 844 });
+
   const CLASSES = {
     'seg-btn': '.seg-btn',
     'search-input': 'input[type="search"]',

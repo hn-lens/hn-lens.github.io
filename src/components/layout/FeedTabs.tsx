@@ -24,6 +24,9 @@ export default function FeedTabs({
 }) {
   const activeRef = useRef<HTMLButtonElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  // The fades are offset past this wrapper's own padding because the strip they cover scrolls
+  // edge-to-edge: anchored to the wrapper they stopped short of it, leaving a band where a
+  // half-scrolled tab was drawn at full strength against a hard vertical seam.
   // Edge fades hint that the tab strip scrolls — otherwise off-screen tabs (e.g.
   // "Read", last in the row) are invisible on a narrow/mobile viewport with no cue.
   // Only shown when actually scrollable, and hidden at each end so they never mask
@@ -101,10 +104,10 @@ export default function FeedTabs({
         })}
       </div>
       {edges.left && (
-        <div aria-hidden className="pointer-events-none absolute inset-y-0 left-0 w-6 bg-gradient-to-r from-bg to-transparent" />
+        <div aria-hidden className="pointer-events-none absolute inset-y-0 -left-3 w-9 bg-gradient-to-r from-bg to-transparent sm:-left-4 sm:w-10" />
       )}
       {edges.right && (
-        <div aria-hidden className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-bg to-transparent" />
+        <div aria-hidden className="pointer-events-none absolute inset-y-0 -right-3 w-11 bg-gradient-to-l from-bg to-transparent sm:-right-4 sm:w-12" />
       )}
     </div>
   );
