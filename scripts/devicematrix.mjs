@@ -39,6 +39,14 @@ const PROFILES = [
   { name: 'tablet-768', viewport: { width: 768, height: 1024 }, dsf: 2, mobile: true },
   { name: 'laptop-1280', viewport: { width: 1280, height: 800 }, dsf: 1, mobile: false },
   { name: 'desktop-1920', viewport: { width: 1920, height: 1080 }, dsf: 1, mobile: false },
+  // SIDEWAYS. Sweeping widths alone cannot see this class at all: these screens are WIDE, so every
+  // width breakpoint resolves to the roomy layout, while the height is a third of a desktop's. The
+  // absence of these profiles is why a page that showed no content whatsoever when a phone was
+  // turned sideways survived several full review rounds unremarked.
+  { name: 'land-640x360', viewport: { width: 640, height: 360 }, dsf: 2, mobile: true },
+  { name: 'land-740x360', viewport: { width: 740, height: 360 }, dsf: 2, mobile: true },
+  { name: 'land-844x390', viewport: { width: 844, height: 390 }, dsf: 2, mobile: true },
+  { name: 'land-1024x768', viewport: { width: 1024, height: 768 }, dsf: 2, mobile: true },
 ];
 
 const MOBILE_UA =
@@ -86,6 +94,9 @@ const PAGES = [
   { key: 'search', hash: '#/?q=rust', wait: null },
   { key: 'settings', hash: '#/settings', wait: null },
   { key: 'saved', hash: '#/saved', wait: null },
+  // The tools-open state has carried more defects than any resting page; capturing only resting
+  // states means a reviewer never sees it.
+  { key: 'discussion-tools', hash: `#/item/${itemId}`, wait: '[id^="comment-"]', tools: true },
 ];
 
 let shots = 0;
@@ -113,7 +124,21 @@ for (const prof of PROFILES) {
       await p.goto(BASE + pg.hash, { waitUntil: 'domcontentloaded' });
       if (pg.wait) await p.waitForSelector(pg.wait, { timeout: 30000 }).catch(() => {});
       await p.waitForTimeout(2600);
-      await p.evaluate(() => window.scrollTo(0, 0));
+      if (pg.tools) {
+        await p.evaluate(async () => {
+          const direct = [...document.querySelectorAll('.disc-toolbar button')].find((b) => /search/i.test(b.getAttribute('aria-label') || ''));
+          if (direct) direct.click();
+          else document.querySelector('.disc-toolbar button[aria-label="More discussion tools"]')?.click();
+          await new Promise((r) => setTimeout(r, 300));
+          const item = [...document.querySelectorAll('[role="menuitem"]')].find((i) => /search/i.test(i.textContent || ''));
+          item?.click();
+          await new Promise((r) => setTimeout(r, 350));
+          document.querySelector('.disc-toolbar button[aria-label="More discussion tools"]')?.click();
+          await new Promise((r) => setTimeout(r, 450));
+        });
+      } else {
+        await p.evaluate(() => window.scrollTo(0, 0));
+      }
       await p.waitForTimeout(250);
       await p.screenshot({ path: `${OUT}/${pg.key}__${prof.name}.png` });
       shots += 1;

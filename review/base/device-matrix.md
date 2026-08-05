@@ -41,6 +41,18 @@ what makes it find things the others cannot:
 3. For anything you suspect, state the measurement you would need to be sure, and take it off the
    pixels if you can. Report the number.
 
+## Defect versus observation
+
+`review/SPEC.md` section 9a is a flat list of DECIDABLE criteria, and section 9b gives the content
+budget in numbers. A finding is a DEFECT when it violates one of those. Everything else you notice
+is an OBSERVATION: say it once, plainly, and do not rate it above LOW.
+
+Section 11 lists tradeoffs the maintainer has DELIBERATED AND ACCEPTED, including two marked "do not
+report it again". Re-reporting an accepted decision as a fresh defect is the single most common way
+this review wastes a round: three separate reviewers have independently reported the same accepted
+icon choice. Read section 11 before you write anything up. Reporting that an accepted tradeoff has
+grown BEYOND its stated scope is still valuable — that is what the "still in scope" notes are for.
+
 ## What counts as a defect here
 
 Judge against the page's stated purpose. The recurring shapes worth naming, as CLASSES:

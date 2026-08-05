@@ -292,6 +292,52 @@ New information (a different trigger, a wider blast radius, a wrong root cause) 
 
 ---
 
+## 9a. Layout acceptance criteria — the decidable list
+
+Every criterion below is decidable by measurement: two people measuring the same screen reach the
+same verdict. They are stated as a FLAT list on purpose — nothing here is singled out as more
+important than the rest, because singling one out tells a reviewer where to look and biases the
+sample. They apply to every page at every supported size, upright and sideways.
+
+A finding is a DEFECT when it violates one of these. Anything else a reviewer notices is an
+OBSERVATION: worth recording once, not worth blocking a release, and not worth re-reporting.
+
+1. No page scrolls horizontally at any width, theme, layout or reading-text size.
+2. No text is cut mid-word or mid-glyph. Text that does not fit is shortened with an ellipsis, or
+   not drawn at all. A control too small to render its own placeholder draws none.
+3. No element overlaps another that it is not deliberately layered over, and nothing is drawn
+   outside the frame's last pixel row or column.
+4. Every control in a bar pinned to the top of the screen receives its own tap at its own centre,
+   at every scroll position, with any popover open.
+5. Every entry of an open menu can be reached and activated, scrolling within the menu if it is
+   height-capped.
+6. Tap targets are at least 44px, or at least 36px on a screen under ~500px tall.
+7. Text meets WCAG AA against the surface it sits on; a control's boundary meets 3:1 against its
+   surface.
+8. A control that changes state shows its current state without relying on colour alone.
+9. A reading surface spends no more of the screen on its own furniture than section 9b allows.
+10. A row of controls occupies one row, with no empty stretch inside it, at every width.
+11. The same action produces a recognisably similar result at every size; a control does not change
+    into a different-looking control without the width changing.
+12. Anything that folds away remains reachable from the control it folded into.
+
+## 9b. Content budget — how much screen a reading surface may spend on itself
+
+Measured from the top of the viewport to the top of the first piece of content, as a percentage of
+viewport height, with the thread loaded:
+
+| Viewport | Maximum furniture |
+|---|---|
+| under ~400px tall (phone held sideways) | 67% |
+| ~400px tall | 63% |
+| 768px tall and above | 40% |
+| a tall phone (≈844px) | 50% |
+
+These are ceilings, not targets. They are set by what the design honestly supports with tap targets
+at their stated size — not by what would be nice.
+
+---
+
 ## 10. Deliberately unspecified
 
 Treat these as SPEC-GAPs. If behaviour here looks wrong, report it as a question, not a defect:
@@ -310,13 +356,31 @@ Treat these as SPEC-GAPs. If behaviour here looks wrong, report it as a question
 Deliberated and accepted by the maintainer. Re-reporting these as new defects is not useful;
 reporting that one has grown BEYOND its stated scope is.
 
-- **Discussion toolbar at ≤400px: empty space in the centre once Search folds.** The toolbar keeps
-  every control on ONE row at every width by degrading controls in a fixed priority order, with the
-  Search box as the flex filler that absorbs the slack. At the narrowest widths Search itself must
-  fold into the "…" menu — it folds LAST, by design — and once the filler is gone, the remaining
-  count-on-the-left / actions-on-the-right layout leaves a gap between them. This is a real tension
-  between two of the product's own rules ("Search folds last" and "no visible empty space") which
-  cannot both hold inside a one-row constraint at that width; count-left/actions-right is a standard
-  mobile bar layout. **Still in scope for a finding:** an empty centre ABOVE ~400px, a second row at
-  any width, a control folding out of the documented priority order, or anything folded becoming
+- **Discussion toolbar: SORT HAS PRIORITY, and nothing it leaves behind is a hole.** The toolbar
+  keeps every control on ONE row at every width by degrading in a fixed priority order. The sort
+  control is the one the reader needs most, so it yields LAST: Summary/Ask fold into the "…" menu
+  first, then the Search filler, and only then does sort drop from four segments to two to one. The
+  Search box is elastic in BOTH directions — it absorbs slack when there is any, and shrinks to a
+  sliver before folding — and when it does fold the sort segments take the freed width, so its
+  departure leaves no gap. A field too narrow to render its own placeholder draws none rather than a
+  sliced one. **Still in scope for a finding:** a second row at any width, an empty stretch anywhere
+  in the row, a control folding out of this order, text cut mid-word, or anything folded becoming
   unreachable from the "…" menu.
+
+- **Tap targets are 44px, except on a screen under ~500px tall, where they are 36px.** A phone held
+  sideways leaves so little height that 44px rows spent two thirds of the screen before the thread
+  began. 36px is the deliberate trade there and comfortably clears the 24px minimum. **In scope:**
+  a target under 36px anywhere, or under 44px on a screen that is NOT short.
+
+- **The page content and the top bar do not share a left edge on every route** (they align on the
+  feeds; Settings is offset ~64px, reading pages ~192px). Deliberated and accepted by the maintainer:
+  it does not bother them, and the alignment that could be achieved would still leave the TEXT
+  baselines ~8px apart, so it would not read as fixed. **Not a defect. Do not report it again.**
+
+- **The "Why #N?" control uses the application's own brand mark as its icon.** This is the
+  maintainer's design choice, made deliberately. **Not a defect. Do not report it again.**
+
+- **On a screen under ~500px tall the discussion "…" menu opens as a centred dialog over a dimmed
+  page**, rather than dropping from its trigger, because there is no room beneath the trigger at that
+  height. Accepted by the maintainer. **In scope:** the dialog being unreachable, clipped, leaving no
+  way out, or appearing on a screen that is NOT short.
