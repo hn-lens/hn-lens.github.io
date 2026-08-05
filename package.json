@@ -71,6 +71,7 @@
     "test:onboarding": "node scripts/onboardingtest.mjs",
     "test:gist": "node scripts/gisttest.mjs",
     "test:headerfit": "node scripts/headerfittest.mjs",
+    "test:contentbudget": "node scripts/contentbudgettest.mjs",
     "test:themecontrast": "node scripts/themecontrasttest.mjs",
     "test:switch": "node scripts/switchtest.mjs",
     "test:visual": "node scripts/visualtest.mjs",

@@ -154,6 +154,17 @@ window.addEventListener('online', () => {
 // `scripts/feedcontinuitytest.mjs` holds this to the whole excursion x position matrix.
 if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
 
+// `data-short` gives CSS a HEIGHT axis to compact against; width breakpoints alone resolve a
+// wide-but-short screen (a phone held sideways) to the roomy desktop layout.
+function applyShortViewport(): void {
+  const short = window.innerHeight < 500;
+  if (short) document.documentElement.dataset.short = '1';
+  else delete document.documentElement.dataset.short;
+}
+applyShortViewport();
+window.addEventListener('resize', applyShortViewport);
+window.addEventListener('orientationchange', applyShortViewport);
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ErrorBoundary>

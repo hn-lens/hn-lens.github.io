@@ -99,8 +99,7 @@ export default function CommentsView({ id }: { id: number }) {
   // so the tray can never stack and reintroduce the wall of chrome this replaced.
   const [tool, setTool] = useState<null | 'search' | 'summary' | 'ask'>(null);
   const [toolMenuOpen, setToolMenuOpen] = useState(false);
-  // Below this height the toolbar, its tray and an anchored menu cannot all fit, so the menu is
-  // presented as a dialog instead.
+  // Below this height an anchored menu cannot fit; it is presented as a dialog instead.
   const [shortScreen, setShortScreen] = useState(() => typeof window !== 'undefined' && window.innerHeight < 420);
   useEffect(() => {
     const onResize = () => setShortScreen(window.innerHeight < 420);
@@ -568,7 +567,7 @@ export default function CommentsView({ id }: { id: number }) {
   const hasCommentControls = !!tree && (topLevel.length > 0 || searching || newIds.length > 0);
 
   return (
-    <div className="space-y-2">
+    <div className="disc-lead space-y-2">
       <div>
         <div className="mb-1 flex min-w-0 items-center gap-1.5 text-xs text-subtle">
           {/* Through the shared component, not a hand-rolled <img>. The bare tag inherited none of
@@ -582,7 +581,7 @@ export default function CommentsView({ id }: { id: number }) {
             {domain || (isComment ? 'comment' : 'discussion')}
           </span>
         </div>
-        <h1 className="text-xl font-semibold leading-snug [overflow-wrap:anywhere]">
+        <h1 className="disc-title text-xl font-semibold leading-snug [overflow-wrap:anywhere]">
           {href ? (
             <a
               href={href}
@@ -608,8 +607,7 @@ export default function CommentsView({ id }: { id: number }) {
           </Link>
         )}
 
-        {/* The author shortens rather than pushing anything onto a second line, and the three
-            actions travel together, so a wrap can never strand one of them alone on a line. */}
+        {/* The author shortens, and the three actions travel together, so a wrap cannot strand one. */}
         <div className="discussion-header mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted sm:gap-x-3">
           <span className="inline-flex shrink-0 items-center gap-1 font-medium text-fg">
             <ArrowBigUp className="size-3.5 text-accent" /> {story.score ?? 0}
@@ -792,7 +790,6 @@ export default function CommentsView({ id }: { id: number }) {
                       type="search"
                       value={query}
                       onChange={(e) => setQuery(e.target.value)}
-                      // An input cannot ellipsise its placeholder, so this fits the narrowest field.
                       placeholder="Find"
                       aria-label="Search comments in this discussion"
                       // The right inset only has to clear the Clear button, which needs a query to exist.

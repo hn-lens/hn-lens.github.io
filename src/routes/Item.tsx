@@ -30,11 +30,11 @@ export default function Item() {
   };
 
   return (
-    <main className="mx-auto max-w-3xl px-3 py-4 sm:px-4">
+    <main className="disc-main mx-auto max-w-3xl px-3 py-4 sm:px-4">
       <button
         type="button"
         onClick={goBack}
-        className="mb-3 inline-flex items-center gap-1 text-sm text-muted hover:text-fg"
+        className="disc-back mb-3 inline-flex items-center gap-1 text-sm text-muted hover:text-fg"
       >
         <ArrowLeft className="size-4" /> Back to feed
       </button>

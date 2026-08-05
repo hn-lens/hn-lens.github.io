@@ -80,8 +80,7 @@ export function usePopoverClamp(
       const vh = window.innerHeight;
       const vw = window.innerWidth;
       const gap = 4;
-      // Clear the whole bar the anchor sits in, not just its trigger's row; folded into the band so
-      // the height cap below accounts for it.
+      // Clear the whole bar the anchor sits in, not just its trigger's row.
       let ownBarBottom = 0;
       for (let el = anchorRef.current?.parentElement; el; el = el.parentElement) {
         const acs = getComputedStyle(el);
