@@ -608,52 +608,56 @@ export default function CommentsView({ id }: { id: number }) {
           </Link>
         )}
 
-        <div className="discussion-header mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
-          <span className="inline-flex items-center gap-1 font-medium text-fg">
+        {/* The author shortens rather than pushing anything onto a second line, and the three
+            actions travel together, so a wrap can never strand one of them alone on a line. */}
+        <div className="discussion-header mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted sm:gap-x-3">
+          <span className="inline-flex shrink-0 items-center gap-1 font-medium text-fg">
             <ArrowBigUp className="size-3.5 text-accent" /> {story.score ?? 0}
           </span>
-          <span className="inline-flex items-center gap-1">
+          <span className="inline-flex shrink-0 items-center gap-1">
             <MessageSquare className="size-3.5" /> {story.descendants ?? 0}
           </span>
           {story.by && (
-            <span className="[overflow-wrap:anywhere]">
-              by{' '}
-              <Link to={`/user/${encodeURIComponent(story.by)}`} className="hover:text-accent hover:underline">
+            <span className="flex min-w-[3.5rem] shrink items-center gap-1 truncate">
+              <span className="hidden sm:inline">by</span>{' '}
+              <Link to={`/user/${encodeURIComponent(story.by)}`} className="truncate hover:text-accent hover:underline">
                 {story.by}
               </Link>
             </span>
           )}
-          <span>{timeAgo(story.time)}</span>
-          {href && (
+          <span className="shrink-0 whitespace-nowrap">{timeAgo(story.time)}</span>
+          <span className="inline-flex shrink-0 items-center gap-x-2 sm:gap-x-3">
+            {href && (
+              <a
+                href={href}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex shrink-0 items-center gap-1 hover:text-fg"
+              >
+                <ExternalLink className="size-3.5" /> Article
+              </a>
+            )}
             <a
-              href={href}
+              href={HN_ITEM(story.id)}
               target="_blank"
               rel="noreferrer"
-              className="inline-flex items-center gap-1 hover:text-fg"
+              onClick={() => trackForItem('upvote_out', story)}
+              className="inline-flex shrink-0 items-center gap-1 hover:text-fg"
             >
-              <ExternalLink className="size-3.5" /> Article
+              <ArrowUpRight className="size-3.5" /> HN
             </a>
-          )}
-          <a
-            href={HN_ITEM(story.id)}
-            target="_blank"
-            rel="noreferrer"
-            onClick={() => trackForItem('upvote_out', story)}
-            className="inline-flex items-center gap-1 hover:text-fg"
-          >
-            <ArrowUpRight className="size-3.5" /> HN
-          </a>
-          {!isComment && (
-            <button
-              type="button"
-              onClick={() => void toggleSaved(story)}
-              aria-pressed={saved}
-              className={cn('inline-flex items-center gap-1 hover:text-fg', saved && 'text-accent')}
-            >
-              {saved ? <BookmarkCheck className="size-3.5" /> : <Bookmark className="size-3.5" />}
-              {saved ? 'Saved' : 'Save'}
-            </button>
-          )}
+            {!isComment && (
+              <button
+                type="button"
+                onClick={() => void toggleSaved(story)}
+                aria-pressed={saved}
+                className={cn('inline-flex shrink-0 items-center gap-1 hover:text-fg', saved && 'text-accent')}
+              >
+                {saved ? <BookmarkCheck className="size-3.5" /> : <Bookmark className="size-3.5" />}
+                {saved ? 'Saved' : 'Save'}
+              </button>
+            )}
+          </span>
         </div>
 
         {story.text && (
@@ -755,7 +759,7 @@ export default function CommentsView({ id }: { id: number }) {
                     </div>
                   </span>
                   {/* 2 buttons Newest|Replies; Default/Oldest remain in the "…" menu */}
-                  <span className="hidden shrink-0 @min-[34rem]/tb:contents @min-[40rem]/tb:hidden">
+                  <span className="hidden shrink-0 @min-[26rem]/tb:contents @min-[40rem]/tb:hidden">
                     <div className="seg" role="group" aria-label="Sort comments">
                       {SORTS_2.map((sk) => (
                         <button key={sk} type="button" aria-pressed={sort === sk} onClick={() => setSort(sk)} className="seg-btn">
@@ -766,7 +770,7 @@ export default function CommentsView({ id }: { id: number }) {
                   </span>
                   {/* single ⇅ toggle; flips Newest/Replies, full options in "…". A default that
                       HIDES above the threshold, so the variants swap at exactly one boundary. */}
-                  <span className="contents shrink-0 @min-[34rem]/tb:hidden">
+                  <span className="contents shrink-0 @min-[26rem]/tb:hidden">
                     <div className="seg" role="group" aria-label="Sort comments">
                       <button
                         type="button"
@@ -776,13 +780,13 @@ export default function CommentsView({ id }: { id: number }) {
                         aria-label={`Sort: ${sortLabel}. Tap to cycle sort order; full options in the more-actions menu.`}
                       >
                         <ArrowUpDown className="size-3.5" />
-                        <span className="hidden @min-[29rem]/tb:inline">{sortLabel}</span>
+                        <span className="hidden @min-[17rem]/tb:inline">{sortLabel}</span>
                       </button>
                     </div>
                   </span>
 
                   {/* SEARCH — flex filler; typing filters the thread inline. Moves into "…" LAST. */}
-                  <span className="relative hidden min-w-[5rem] flex-1 items-center @min-[20rem]/tb:flex">
+                  <span className="relative hidden min-w-[3rem] flex-1 items-center @min-[34rem]/tb:flex">
                     <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-subtle" />
                     <input
                       type="search"

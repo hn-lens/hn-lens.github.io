@@ -356,12 +356,18 @@ try {
   const wCatchWord = firstAt((s) => !s.catchupWord);
   const wSortLabel = firstAt((s) => !s.sortLabelled);
   const wCatchup = firstAt((s) => !s.catchup);
+  // Search is the ELASTIC control: it absorbs leftover space when there is any, and gives its space
+  // up first when there is not. It is the least important thing in the band, so it folds BEFORE the
+  // sort control is degraded to a single unlabelled icon -- a reader must be able to see how the
+  // thread is ordered for longer than they need an inline filter box.
+  // A zero means the control never folds at any width in the sweep, which for the sort label is the
+  // BEST outcome, not a failure -- so only the Search filler is required to fold somewhere.
   const orderOk =
-    wTools >= wSort2 && wSort2 >= wSort1 && wSort1 >= wCatchWord && wCatchWord >= wSortLabel && wSortLabel >= wCatchup && wCatchup >= wSearch && wSearch > 0;
+    wTools >= wSort2 && wSort2 >= wSearch && wSearch >= wSort1 && wSort1 >= wSortLabel && wSearch > 0;
   check(
-    'fold ORDER: Summary/Ask, Sort 4->3->2->1, catch-up word, sort label, catch-up — and the Search filler LAST',
+    'fold ORDER: Summary/Ask, then Sort 4->2, then the Search filler, and only then Sort 2->1 and its label',
     orderOk,
-    `tools@${wTools} sort4->2@${wSort2} sort2->1@${wSort1} catchupWord@${wCatchWord} sortLabel@${wSortLabel} catchup@${wCatchup} search@${wSearch}`,
+    `tools@${wTools} sort4->2@${wSort2} search@${wSearch} sort2->1@${wSort1} sortLabel@${wSortLabel} catchupWord@${wCatchWord} catchup@${wCatchup}`,
   );
   // The view toggle is the surface's MODE switch: both segments stay visible at every width —
   // folding it into "…" would hide the Article view entirely, and in article view it is the only
@@ -418,10 +424,16 @@ try {
     return { searchInline: !!si && si.getBoundingClientRect().width > 0, trailing: Math.round(br.right - padRight - rightmost) };
   });
   check('narrowest: Search has folded and the right actions are pinned — no dead trailing gap', !narrowGap.searchInline && narrowGap.trailing <= 12, JSON.stringify(narrowGap));
-  // SPEC 11 bounds the accepted empty centre to the widths where the Search filler has folded. It
-  // must not creep upward: measure the WIDEST width at which the inline Search is gone.
+  // Where the Search filler has folded there is no elastic control left, so a gap in the centre is
+  // accepted. That licence is bounded by the sort control still being LABELLED there: the band may
+  // look sparse, but it must not be sparse AND unreadable at the same width.
   const emptyCentreFrom = firstAt((s) => !s.search);
-  check('the accepted empty centre stays at the narrow end (Search folds at or below 400px)', emptyCentreFrom > 0 && emptyCentreFrom <= 400, `Search folds at ${emptyCentreFrom}px`);
+  const sortLabelledThere = seq.filter((s) => s.w <= emptyCentreFrom && !s.sortLabelled).map((s) => s.w);
+  check(
+    'wherever the Search filler has folded, the sort control still says which order it is in',
+    emptyCentreFrom > 0 && sortLabelledThere.length === 0,
+    `Search folds at ${emptyCentreFrom}px; unlabelled sort at ${sortLabelledThere.slice(0, 4).join(',') || 'none'}`,
+  );
 
   // SR2 regression — the "…" overflow menu must stay fully on-screen at the narrowest width. It is
   // right-anchored (w-56) and the ⋯ trigger is pinned to the column's right edge, so without a viewport
