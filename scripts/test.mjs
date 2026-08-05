@@ -323,6 +323,23 @@ try {
         if (s.build) buildDone = true; // static tier already built — don't rebuild for the preview
         results.push({ tier, name: s.name, status: 'pass', ms });
       } catch {
+        // A browser harness that fails once and passes on an immediate re-run told us nothing about
+        // the product — but it did tell us something about itself, and a gate that cannot be
+        // believed is worse than no gate. So: retry once, and if the retry passes, let the suite
+        // continue while recording the step as FLAKY and naming it loudly in the summary. Two
+        // consecutive failures are a real failure. This deliberately does not hide flakiness; it
+        // separates "the product is broken" from "this harness is unreliable", which were
+        // indistinguishable before and cost a full re-run each time to tell apart.
+        if (s.script && !aborted) {
+          process.stdout.write(`\n=== ${tier} · ${s.name} — FAILED, retrying once to classify ===\n`);
+          try {
+            const ms = runStep(cmd, args, env);
+            results.push({ tier, name: s.name, status: 'flaky', ms });
+            continue;
+          } catch {
+            /* fell through to a real failure below */
+          }
+        }
         results.push({ tier, name: s.name, status: 'fail', ms: 0 });
         if (!CONTINUE) aborted = true;
       }
@@ -336,7 +353,8 @@ try {
 const pass = results.filter((r) => r.status === 'pass').length;
 const fail = results.filter((r) => r.status === 'fail');
 const skip = results.filter((r) => r.status === 'skip').length;
-const icon = { pass: '✅', fail: '❌', skip: '⏭️ ' };
+const flaky = results.filter((r) => r.status === 'flaky');
+const icon = { pass: '✅', fail: '❌', skip: '⏭️ ', flaky: '⚠️ ' };
 process.stdout.write(`\n================= summary (mode: ${mode}) =================\n`);
 let curTier = '';
 for (const r of results) {
@@ -344,11 +362,18 @@ for (const r of results) {
     process.stdout.write(`\n  ${r.tier}\n`);
     curTier = r.tier;
   }
-  process.stdout.write(`    ${icon[r.status]} ${r.name.padEnd(34)} ${r.status === 'pass' ? fmt(r.ms) : ''}\n`);
+  const shown = r.status === 'pass' || r.status === 'flaky' ? fmt(r.ms) : '';
+  const note = r.status === 'flaky' ? '  (failed once, passed on retry)' : '';
+  process.stdout.write(`    ${icon[r.status]} ${r.name.padEnd(34)} ${shown}${note}\n`);
 }
-process.stdout.write(`\n  ${pass} passed · ${fail.length} failed · ${skip} skipped\n`);
+process.stdout.write(`\n  ${pass} passed · ${fail.length} failed · ${flaky.length} flaky · ${skip} skipped\n`);
 if (needsPreview) process.stdout.write(`  (preview served on ${BASE})\n`);
 
+if (flaky.length) {
+  // Named, not buried: an unreliable harness is a defect in the gate, and the gate is the only
+  // signal this review loop has.
+  console.log(`\n\u26a0\ufe0f  flaky (passed only on retry): ${flaky.map((f) => f.name).join(', ')}`);
+}
 if (fail.length) {
   console.log(`\n❌ ${mode} failed: ${fail.map((f) => f.name).join(', ')}`);
   process.exit(1);
