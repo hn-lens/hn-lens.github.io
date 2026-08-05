@@ -2288,3 +2288,14 @@ html[data-short] .comment-body {
   background: var(--edge);
   border-radius: 3px;
 }
+/* When the filter folds, the sort control takes the width it leaves. Stretching only the group
+   leaves that width as blank space inside the control, so the buttons have to stretch with it. */
+@container tb (max-width: 30rem) {
+  .disc-tb-bar .seg {
+    flex: 1 1 auto;
+  }
+  .disc-tb-bar .seg > .seg-btn {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+}

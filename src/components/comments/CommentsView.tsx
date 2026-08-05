@@ -411,8 +411,9 @@ export default function CommentsView({ id }: { id: number }) {
             </MenuItem>
           </div>
         )}
-        {/* Search — only when the inline box has dropped. */}
-        <div className="@min-[20rem]/tb:hidden">
+        {/* Search — only when the inline box has dropped. Mirrors the inline box's own threshold:
+            if these two disagree there is a band of widths where it is in neither place. */}
+        <div className="@min-[30rem]/tb:hidden">
           <MenuItem onClick={() => { toggleTool('search'); setToolMenuOpen(false); }}>
             <Search className="size-3.5" /> Search this discussion
           </MenuItem>

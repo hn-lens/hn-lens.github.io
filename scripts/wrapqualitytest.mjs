@@ -447,6 +447,85 @@ try {
     });
     gaps.push({ w: gw, ...(g || { trailing: null }) });
   }
+  // Two classes the width-by-width sweep above cannot see, both of which shipped:
+  //  - a control that folds out of the row must be reachable from the "..." menu at EVERY width.
+  //    The inline box and its menu fallback are governed by SEPARATE thresholds, and when they
+  //    disagreed there was a band of widths where the search existed in neither place.
+  //  - growing a control to absorb the space a folded one left behind stretches its BOX; if its
+  //    contents stay at their natural width the freed space becomes a blank tail inside the
+  //    control, which is the same dead space measured a level deeper.
+  const reach = [];
+  for (const rw of [320, 360, 375, 390, 430, 470, 512, 560, 640, 760]) {
+    await page.setViewportSize({ width: rw, height: 800 });
+    await page.waitForTimeout(180);
+    const r = await page.evaluate(async () => {
+      const bar = document.querySelector('.disc-tb-bar');
+      if (!bar) return null;
+      const inp = bar.querySelector('input[type="search"]');
+      const inline = !!inp && inp.getBoundingClientRect().width > 0;
+      // The SORT control specifically. `.seg` also matches the Discussion/Article toggle, which
+      // never grows, so a first-match lookup measures a control that cannot exhibit this defect.
+      // Anchor on the sort BUTTON and measure the space left inside whatever container was
+      // stretched around it. Targeting a container by selector picks the wrong element as the
+      // ladder changes shape -- `.seg` also matches the view toggle, and the single-button form
+      // has no group at all -- and each wrong target reports a comfortable zero.
+      // ASYMMETRY, not the right gap alone. A stretched control whose label is centred has slack on
+      // both sides and looks deliberate; the defect is slack that piles up on ONE side, which is
+      // what a left-aligned label in a stretched box produces. Measuring only the right gap
+      // condemns the centred case and would push the fix in the wrong direction.
+      const inkTail = (el) => {
+        if (!el || el.getBoundingClientRect().width === 0) return 0;
+        const cs = getComputedStyle(el);
+        const r = el.getBoundingClientRect();
+        const rng = document.createRange();
+        rng.selectNodeContents(el);
+        const t = rng.getBoundingClientRect();
+        if (!t || t.width === 0) return 0;
+        const left = t.left - (r.left + parseFloat(cs.paddingLeft || '0'));
+        const right = r.right - parseFloat(cs.paddingRight || '0') - t.right;
+        return Math.round(Math.abs(right - left));
+      };
+      const sortBtns = [...bar.querySelectorAll('button')].filter(
+        (x) => /newest|oldest|replies|default/i.test(x.textContent || '') && x.getBoundingClientRect().width > 0,
+      );
+      let tail = 0;
+      for (const btn of sortBtns) {
+        tail = Math.max(tail, inkTail(btn));
+        const par = btn.parentElement;
+        if (par && par.getBoundingClientRect().width > 0) {
+          const pr = par.getBoundingClientRect();
+          const padR = parseFloat(getComputedStyle(par).paddingRight || '0');
+          const rightmost = Math.max(...[...par.children].filter((c) => c.getBoundingClientRect().width > 0).map((c) => c.getBoundingClientRect().right));
+          tail = Math.max(tail, Math.round(pr.right - padR - rightmost));
+        }
+      }
+      document.querySelector('.disc-toolbar button[aria-label="More discussion tools"]')?.click();
+      await new Promise((res) => setTimeout(res, 320));
+      const menu = document.querySelector('[role="menu"]');
+      // VISIBLE, not merely present: a container-query-hidden entry is still in the DOM and still
+      // matches by text, so a presence test reports it reachable when nothing is drawn.
+      const inMenu = menu
+        ? [...menu.querySelectorAll('[role="menuitem"]')].some((i) => /search/i.test(i.textContent || '') && i.getBoundingClientRect().width > 0)
+        : false;
+      document.querySelector('.disc-toolbar button[aria-label="More discussion tools"]')?.click();
+      return { inline, inMenu, tail };
+    });
+    reach.push({ w: rw, ...(r || { inline: null }) });
+  }
+  check('PRECONDITION: the toolbar was present at every width in the reachability sweep', reach.every((r) => r.inline !== null), JSON.stringify(reach.filter((r) => r.inline === null)));
+  const unreachable = reach.filter((r) => r.inline === false && r.inMenu === false);
+  check(
+    'the in-thread search is reachable at every width, inline or from the "…" menu',
+    unreachable.length === 0,
+    unreachable.length ? unreachable.map((r) => `${r.w}px: in neither`).join(' | ') : `${reach.length} widths`,
+  );
+  const tails = reach.filter((r) => r.tail > 16);
+  check(
+    'no blank tail inside the sort control when it absorbs freed width',
+    tails.length === 0,
+    tails.length ? tails.map((r) => `${r.w}:${r.tail}px`).join(' | ') : `max ${Math.max(...reach.map((r) => r.tail))}px`,
+  );
+
   check('PRECONDITION: the toolbar was measurable at every width in the gap sweep', gaps.every((g) => g.trailing !== null), JSON.stringify(gaps.filter((g) => g.trailing === null)));
   const badGaps = gaps.filter((g) => g.trailing !== null && g.trailing > 16);
   check(
