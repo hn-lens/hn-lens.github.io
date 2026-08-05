@@ -103,6 +103,7 @@ try {
         return {
           text: text.slice(0, 26), textW: Math.round(textW), avail: Math.round(avail),
           headroom: Math.round(avail - textW), clipped: avail - textW < 4,
+          ellipsis: cs.textOverflow === 'ellipsis',
         };
       };
       // EVERY placeholder living in a pinned bar, not just the top nav's. The discussion toolbar's
@@ -140,6 +141,15 @@ try {
     // so the field cannot silently go unmeasured either.
     if (r.barPlaceholders.length >= 2) sawToolbarField = true;
     for (const ph of r.barPlaceholders) {
+      // A field narrower than this is a SLIVER: flex has given it whatever was left over, its
+      // purpose is carried by its icon and its accessible name, and its placeholder ellipsises
+      // rather than being sliced. Requiring the wording to fit there would instead force the field
+      // to fold away entirely, which just moves the empty space somewhere else in the row.
+      const SLIVER = 60;
+      if (ph.avail < SLIVER) {
+        check(`the "${ph.name}" sliver field at ${w}px/${ts} ellipsises rather than hard-cuts`, ph.ellipsis, JSON.stringify(ph));
+        continue;
+      }
       check(`the "${ph.name}" placeholder fits its field at ${w}px/${ts}`, !ph.clipped, JSON.stringify(ph));
     }
     if (w >= WIDE && ts === 'md') {

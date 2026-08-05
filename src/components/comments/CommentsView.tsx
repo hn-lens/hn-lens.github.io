@@ -608,7 +608,7 @@ export default function CommentsView({ id }: { id: number }) {
         )}
 
         {/* The author shortens, and the three actions travel together, so a wrap cannot strand one. */}
-        <div className="discussion-header mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted sm:gap-x-3">
+        <div className="discussion-header mt-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-0 text-xs text-muted sm:gap-x-3">
           <span className="inline-flex shrink-0 items-center gap-1 font-medium text-fg">
             <ArrowBigUp className="size-3.5 text-accent" /> {story.score ?? 0}
           </span>
@@ -624,7 +624,7 @@ export default function CommentsView({ id }: { id: number }) {
             </span>
           )}
           <span className="shrink-0 whitespace-nowrap">{timeAgo(story.time)}</span>
-          <span className="inline-flex shrink-0 items-center gap-x-2 sm:gap-x-3">
+          <span className="inline-flex shrink-0 items-center gap-x-1.5 sm:gap-x-3">
             {href && (
               <a
                 href={href}
@@ -757,7 +757,7 @@ export default function CommentsView({ id }: { id: number }) {
                     </div>
                   </span>
                   {/* 2 buttons Newest|Replies; Default/Oldest remain in the "…" menu */}
-                  <span className="hidden shrink-0 @min-[26rem]/tb:contents @min-[40rem]/tb:hidden">
+                  <span className="hidden shrink-0 @min-[29rem]/tb:contents @min-[40rem]/tb:hidden">
                     <div className="seg" role="group" aria-label="Sort comments">
                       {SORTS_2.map((sk) => (
                         <button key={sk} type="button" aria-pressed={sort === sk} onClick={() => setSort(sk)} className="seg-btn">
@@ -768,7 +768,7 @@ export default function CommentsView({ id }: { id: number }) {
                   </span>
                   {/* single ⇅ toggle; flips Newest/Replies, full options in "…". A default that
                       HIDES above the threshold, so the variants swap at exactly one boundary. */}
-                  <span className="contents shrink-0 @min-[26rem]/tb:hidden">
+                  <span className="contents shrink-0 @min-[29rem]/tb:hidden">
                     <div className="seg" role="group" aria-label="Sort comments">
                       <button
                         type="button"
@@ -784,13 +784,16 @@ export default function CommentsView({ id }: { id: number }) {
                   </span>
 
                   {/* SEARCH — flex filler; typing filters the thread inline. Moves into "…" LAST. */}
-                  <span className="relative hidden min-w-[3rem] flex-1 items-center @min-[34rem]/tb:flex">
+                  <span className="relative hidden min-w-[1.5rem] flex-1 items-center @min-[20rem]/tb:flex">
                     <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-subtle" />
                     <input
                       type="search"
                       value={query}
                       onChange={(e) => setQuery(e.target.value)}
                       placeholder="Find"
+                      // Flex gives this field whatever is left, which at the narrowest widths is a
+                      // sliver; ellipsise the placeholder there rather than slicing it mid-word.
+                      style={{ textOverflow: 'ellipsis' }}
                       aria-label="Search comments in this discussion"
                       // The right inset only has to clear the Clear button, which needs a query to exist.
                       className={cn(
@@ -899,7 +902,7 @@ export default function CommentsView({ id }: { id: number }) {
                           type="search"
                           value={query}
                           onChange={(e) => setQuery(e.target.value)}
-                          placeholder="Find in this discussion…"
+                          placeholder="Find in comments…"
                           aria-label="Search comments in this discussion"
                           className="w-full rounded-lg border border-edge bg-surface-2 py-1.5 pl-8 pr-8 text-sm outline-none focus-visible:ring-2 focus-visible:ring-accent"
                         />

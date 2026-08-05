@@ -356,18 +356,19 @@ try {
   const wCatchWord = firstAt((s) => !s.catchupWord);
   const wSortLabel = firstAt((s) => !s.sortLabelled);
   const wCatchup = firstAt((s) => !s.catchup);
-  // Search is the ELASTIC control: it absorbs leftover space when there is any, and gives its space
-  // up first when there is not. It is the least important thing in the band, so it folds BEFORE the
-  // sort control is degraded to a single unlabelled icon -- a reader must be able to see how the
-  // thread is ordered for longer than they need an inline filter box.
-  // A zero means the control never folds at any width in the sweep, which for the sort label is the
-  // BEST outcome, not a failure -- so only the Search filler is required to fold somewhere.
+  // Search is the ELASTIC filler. It SHRINKS hard -- down to a sliver -- so the sort control keeps
+  // its labels as long as possible, but it is the LAST thing to leave the band: the moment it goes,
+  // the space it was filling becomes a hole. Sort therefore degrades while Search is still present;
+  // that is the price of never leaving an empty stretch in the middle of the row.
+  // A zero means the control never folds at any swept width, which for the sort label is the BEST
+  // outcome, so it is excluded from the ordering rather than counted as folding first.
   const orderOk =
-    wTools >= wSort2 && wSort2 >= wSearch && wSearch >= wSort1 && wSort1 >= wSortLabel && wSearch > 0;
+    wTools >= wSort2 && wSort2 >= wSort1 && wSort1 >= wSearch &&
+    wSearch <= wCatchup && wSearch <= wCatchWord && wSearch > 0;
   check(
-    'fold ORDER: Summary/Ask, then Sort 4->2, then the Search filler, and only then Sort 2->1 and its label',
+    'fold ORDER: Summary/Ask, then Sort 4->2->1, then catch-up — and the Search filler LAST',
     orderOk,
-    `tools@${wTools} sort4->2@${wSort2} search@${wSearch} sort2->1@${wSort1} sortLabel@${wSortLabel} catchupWord@${wCatchWord} catchup@${wCatchup}`,
+    `tools@${wTools} sort4->2@${wSort2} sort2->1@${wSort1} catchupWord@${wCatchWord} catchup@${wCatchup} search@${wSearch} sortLabel@${wSortLabel}`,
   );
   // The view toggle is the surface's MODE switch: both segments stay visible at every width —
   // folding it into "…" would hide the Article view entirely, and in article view it is the only
