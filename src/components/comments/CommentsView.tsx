@@ -791,9 +791,7 @@ export default function CommentsView({ id }: { id: number }) {
                       value={query}
                       onChange={(e) => setQuery(e.target.value)}
                       placeholder="Find"
-                      // Flex gives this field whatever is left, which at the narrowest widths is a
-                      // sliver; ellipsise the placeholder there rather than slicing it mid-word.
-                      style={{ textOverflow: 'ellipsis' }}
+                      data-find-input=""
                       aria-label="Search comments in this discussion"
                       // The right inset only has to clear the Clear button, which needs a query to exist.
                       className={cn(

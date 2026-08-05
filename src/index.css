@@ -2213,6 +2213,13 @@ html[data-short] .disc-back {
 html[data-short] .disc-title {
   font-size: 1rem;
   line-height: 1.25;
+  /* One line, so the lead-in costs the same regardless of how wide a font renders the headline.
+     Left to wrap, it is two lines on some font stacks and one on others, and the space below the
+     fold swings by a whole line of comment text. */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+  overflow: hidden;
 }
 html[data-short] .discussion-header {
   margin-top: 0.125rem;
@@ -2248,4 +2255,12 @@ html[data-short] .thread-root > * + * {
 }
 html[data-short] .comment-body {
   margin-top: 0.25rem;
+}
+/* Flex leaves this filter a sliver at the narrowest widths. An ellipsis does not rescue a box that
+   narrow -- it renders a letter and half a dot -- so below this the placeholder is not drawn at all;
+   the field keeps its magnifier and its accessible name. */
+@container tb (max-width: 26rem) {
+  [data-find-input]::placeholder {
+    color: transparent;
+  }
 }

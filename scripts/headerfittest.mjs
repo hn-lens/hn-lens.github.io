@@ -103,7 +103,12 @@ try {
         return {
           text: text.slice(0, 26), textW: Math.round(textW), avail: Math.round(avail),
           headroom: Math.round(avail - textW), clipped: avail - textW < 4,
-          ellipsis: cs.textOverflow === 'ellipsis',
+          // Whether the placeholder is actually PAINTED. Checking text-overflow only proves a CSS
+          // property is set; a box this narrow renders a letter and half an ellipsis dot anyway.
+          painted: cs.getPropertyValue('color') !== 'rgba(0, 0, 0, 0)' && (() => {
+            const ph = getComputedStyle(el, '::placeholder').color;
+            return !(ph === 'transparent' || /rgba\(.*,\s*0\)$/.test(ph));
+          })(),
         };
       };
       // EVERY placeholder living in a pinned bar, not just the top nav's. The discussion toolbar's
@@ -147,7 +152,7 @@ try {
       // to fold away entirely, which just moves the empty space somewhere else in the row.
       const SLIVER = 60;
       if (ph.avail < SLIVER) {
-        check(`the "${ph.name}" sliver field at ${w}px/${ts} ellipsises rather than hard-cuts`, ph.ellipsis, JSON.stringify(ph));
+        check(`the "${ph.name}" sliver field at ${w}px/${ts} draws no placeholder rather than a cut one`, !ph.painted, JSON.stringify(ph));
         continue;
       }
       check(`the "${ph.name}" placeholder fits its field at ${w}px/${ts}`, !ph.clipped, JSON.stringify(ph));
