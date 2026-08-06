@@ -335,13 +335,18 @@ export default function Feed({ kind, showRank }: { kind: FeedKind; showRank?: bo
 
   return (
     <>
-      {/* Wraps, like .sc-actions. This row is a nowrap flex whose control group cannot shrink, so it
-          overflowed the PAGE with "Refresh" clipped off-screen — reachable with NO non-default
-          setting, because the terminal and cyberpunk DESIGNS default to the `compact` layout, which
-          is the narrowest. Wrappability is a property of a control row, not of one layout. */}
-      <div className="mb-2.5 flex flex-wrap items-center justify-between gap-x-2 gap-y-1 px-0.5 text-xs text-subtle">
-        <span className="min-w-0 truncate">{updatedAt ? `Updated ${timeAgo(Math.floor(updatedAt / 1000))}` : ''}</span>
-        <div className="flex flex-wrap items-center gap-1.5">
+      {/* One row at every width: the status is the flexible filler and ellipsises, the controls keep
+          their size. Wrapping instead of shrinking put "Updated just now" alone on a line at 30% fill
+          with both controls orphaned beneath it. The control group can shrink now — its label folds
+          below 26rem — which is what makes a single row safe; without that it overflowed the PAGE,
+          clipping "Refresh" off-screen in the narrowest layout (`compact`, the terminal and cyberpunk
+          designs' default). The threshold sets only how much status text survives, not whether the
+          row holds: the shrink path carries that at any text size. */}
+      <div className="feed-meta mb-2.5 flex flex-nowrap items-center justify-between gap-x-2 px-0.5 text-xs text-subtle">
+        <span className="feed-meta-status min-w-0 flex-1 truncate">
+          {updatedAt ? `Updated ${timeAgo(Math.floor(updatedAt / 1000))}` : ''}
+        </span>
+        <div className="flex flex-nowrap items-center gap-1.5">
           <button
             type="button"
             role="switch"
@@ -350,31 +355,39 @@ export default function Feed({ kind, showRank }: { kind: FeedKind; showRank?: bo
             // there changed nothing, so it read as a broken control. The note + title point at the fix.
             disabled={topCommentsUnavailable}
             onClick={() => setPref({ showTopComments: !showTopComments })}
+            // Carries the name once the word folds, so the control keeps it at every width.
+            aria-label="Top comments"
             title={
               topCommentsUnavailable
                 ? 'Not shown in the Compact layout (one line per story) — switch layout in Settings to see previews'
                 : 'Show the top comment under each story'
             }
-            className="inline-flex items-center gap-1.5 rounded-md px-1.5 py-1 hover:bg-surface-2 hover:text-fg disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent disabled:hover:text-subtle"
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-md px-1.5 py-1 hover:bg-surface-2 hover:text-fg disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent disabled:hover:text-subtle"
           >
             <MessageSquare className="size-3.5" />
-            <span>Top comments</span>
+            <span className="max-[26rem]:hidden">Top comments</span>
             {/* shared switch visual (see controls.tsx) so the feed + Settings switches match */}
             <SwitchVisual checked={showTopComments} size="sm" />
           </button>
-          {topCommentsUnavailable && showTopComments && (
-            <span className="text-[11px] text-subtle">not shown in Compact layout</span>
-          )}
+
           <button
             type="button"
             onClick={refetch}
             disabled={isFetching}
-            className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 hover:bg-surface-2 hover:text-fg disabled:opacity-60"
+            className="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-1 hover:bg-surface-2 hover:text-fg disabled:opacity-60"
           >
             <RotateCw className={cn('size-3.5', isFetching && 'animate-spin')} /> Refresh
           </button>
         </div>
       </div>
+
+      {/* Why the switch above reads as on while no previews appear. It sits on its own line rather
+          than in the row: it is an explanation, not a control, and competing for width in there
+          pushed the page sideways at 320px — while hiding it left the contradiction unexplained on
+          exactly the screens that can least afford a mystery. */}
+      {topCommentsUnavailable && showTopComments && (
+        <p className="mb-2.5 px-0.5 text-[11px] text-subtle">Top comments aren&apos;t shown in the Compact layout.</p>
+      )}
 
       {/* For You is popularity-only until it has something to learn from — say so
           instead of showing a hollow "why" on every card. */}

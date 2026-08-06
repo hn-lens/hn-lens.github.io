@@ -2334,6 +2334,7 @@ html[data-short] .disc-tb-bar {
   header button,
   header a,
   .empty-cta,
+  .feed-meta button,
   nav[aria-label='Settings sections'] a,
   nav[aria-label='Settings sections'] button {
     min-height: 2.75rem;
@@ -2342,6 +2343,7 @@ html[data-short] .disc-tb-bar {
   html[data-short] header button,
   html[data-short] header a,
   html[data-short] .empty-cta,
+  html[data-short] .feed-meta button,
   html[data-short] nav[aria-label='Settings sections'] a,
   html[data-short] nav[aria-label='Settings sections'] button {
     min-height: 2.25rem;

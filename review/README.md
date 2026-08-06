@@ -3815,3 +3815,77 @@ Numbered lines are unchanged and still reach the reader as literal ordinals.
   beneath it), not as markup; failed pre-fix at 14/400 vs 14/400. Paired with an assertion that the
   HN-comment container is not restyled, and with a sweep of every other construct `mdLite` touches
   (link, quote, rule, emphasis, bold, code) proving each still reaches the reader.
+
+---
+
+## Interval: the feed's own control row (R-59, R-60, R-61)
+
+### Why the row wrapped, and why removing the wrap is not the fix
+
+The feed's meta row put "Updated just now" on one line and orphaned the Top-comments switch and
+Refresh on a second, 30-38% full, at 320/360 default and 320-390 Large. Page overflow is 0 the whole
+time, which is why every overflow guard in the suite was blind to it — the same reason
+`wrapqualitytest` exists for the discussion band. This is the R-23 class on the landing page.
+
+The row's own comment already named the cause: the control group could not shrink, so the browser
+wrapped rather than squeezing. That comment also recorded that `flex-wrap` had been ADDED here to
+stop the row overflowing the page with "Refresh" clipped off-screen in the `compact` layout. So
+`flex-nowrap` alone would have traded the wrap straight back for the overflow it replaced — the
+mirror-image trade this project keeps making. The order that works is: give the group a way to
+shrink FIRST (its label folds below 26rem), then remove the wrap. The status became the flexible
+filler, the buttons `shrink-0`.
+
+The fold threshold is a fixed px width, which is normally the R-23 anti-pattern. It is acceptable
+here only because it no longer carries the invariant: with the shrink path in place, growing the
+text at a fixed width makes the status ellipsise sooner, it does not wrap the row or overflow the
+page. The threshold decides how much status text survives; the shrink path decides whether the row
+holds. That is why the guard sweeps Large text at every width rather than trusting the number.
+
+### The self-inflicted one, and why the explanation moved out of the row
+
+Folding the "not shown in Compact layout" note away below 32rem left `compact` — the DEFAULT layout
+of the terminal and cyberpunk designs — showing a switch that is disabled yet drawn ON, with no
+visible reason, on exactly the phone widths where that layout is reached. Putting the note back into
+the row then overflowed the row's own box by 10-32px and the page by 18px at 320.
+
+Both attempts were wrong in the same way: they treated an explanation as a control competing for
+horizontal room. It is prose. It now renders on its own line, so it is visible at every width and
+costs the row nothing. Note the failure mode this exposed in the FIRST attempt at a red test: the
+in-row state was recreated by injecting the note before `onClick={refetch}`, which matched an
+earlier outage branch instead of the meta row, so the gate "passed" against a build where the
+injected element never rendered at all. The injection was only trusted once a DOM probe confirmed
+the element was present and the row was measurably overflowing by the same 10/32/18px.
+
+### Why `.feed-meta` had no tap-target rule
+
+Its two controls were 24px tall (27px at Large), under both the 44px floor and the 36px relaxation.
+The class had no rule anywhere in `index.css` because it had no hook to be named by; adding the hook
+for the row-shape guard is what made it addressable. It now sits in the existing criterion-6 block
+beside `.feed-tabs button`, with the `html[data-short]` variant.
+
+### An existing guard caught the move, and was tightened rather than relaxed
+
+`layouttest` already asserted this disclosure exists, by matching one exact phrase. The standalone
+sentence needed different wording to read on its own, so the assertion matched the meaning instead —
+but still requires the NEGATIVE form, so a sentence claiming the opposite cannot satisfy it, and it
+still reads `innerText`, so a disclosure that is present but folded away still fails. Demonstrated
+by replacing the sentence with a plausible non-disclosure ("Previews are configured in Settings.")
+and confirming the check goes red.
+
+### Guards (fail-first, demonstrated)
+
+- `feedrowtest` main sweep — 7 widths x 2 reading sizes x 2 feeds. Failed pre-fix in 16 of 28 cells
+  at 2 rows, with all 28 preconditions passing so the sweep is known to have measured its cells.
+  Carries three opposite-case checks so the row cannot be kept on one line by cheating: the page
+  must not scroll sideways, the status must still be painted, and the control whose label folded
+  must still exist with an accessible name.
+- `feedrowtest` tap size — failed pre-fix on all 28 cells at 24/27px, passes at 44/49.5px. An
+  unmeasurable height is treated as a failure rather than allowed to pass a `<` comparison as NaN.
+- `feedrowtest` compact phase — measures the row's OWN box as well as the page, because a row can
+  overflow itself while the page reports 0. BOTH broken states were demonstrated red: 4 failures
+  with the explanation folded away, 3 with it back inside the row reproducing 10/32px self-overflow
+  and 18px page overflow. Its preconditions assert the control really is inoperative-and-on there,
+  so the disclosure check cannot pass by measuring a state that does not arise.
+- Sibling sweep, outside the gate: all 14 layouts x 2 reading sizes x 2 widths (56 cells) clean for
+  row count, self-overflow and page overflow, including `compact`, the layout the original overflow
+  was reported in.

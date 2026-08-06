@@ -350,7 +350,12 @@ for (const lay of ['media', 'feature']) {
     s.setLayout('compact');
   });
   await page.waitForTimeout(400);
-  const noted = await page.evaluate(() => /not shown in Compact layout/i.test(document.body.innerText));
+  // Matches the meaning rather than one phrasing, but still requires the NEGATIVE form, so a
+  // sentence claiming the opposite cannot pass. `innerText` is used deliberately: it omits
+  // `display: none` text, so a disclosure that is present but folded away still fails.
+  const noted = await page.evaluate(() =>
+    /(aren't|are not|isn't|is not|not) shown in (the )?Compact layout/i.test(document.body.innerText),
+  );
   check('compact discloses that the ON "Top comments" switch is not shown here', noted, `noted=${noted}`);
   await page.evaluate(() => window.__hnlens.prefs.getState().setLayout('cards'));
   await page.waitForTimeout(300);

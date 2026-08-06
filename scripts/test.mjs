@@ -149,6 +149,11 @@ const TIERS = {
       // Page overflow is 0 for a control row that wraps while a line sits half empty, so no
       // overflow guard can see it. This measures the SHAPE of the row instead.
       { name: 'wrapqualitytest (control rows do not wrap raggedly)', script: 'wrapqualitytest' },
+      // The same class on the FEED's own row, which wrapped rather than shrinking and stranded the
+      // freshness status alone on a line at 30% fill. Also holds the two states this row has now
+      // shipped broken in: the explanation for an inoperative control overflowing the page from
+      // inside the row, and being invisible on a phone when folded away instead.
+      { name: 'feedrowtest (the feed meta row keeps to one row)', script: 'feedrowtest' },
       { name: 'headerfittest (header labels fit, never cut mid-word)', script: 'headerfittest' },
       { name: 'contentbudgettest (a page spends its screen on content, not chrome)', script: 'contentbudgettest' },
       { name: 'articleproxytest (reader-proxy attribution + prefetch)', script: 'articleproxytest' },
