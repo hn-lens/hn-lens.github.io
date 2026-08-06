@@ -639,7 +639,7 @@ function StoryCard({
                 <button
                   type="button"
                   onClick={onOpenComments}
-                  className="font-semibold text-accent hover:underline"
+                  className="sc-readmore relative z-10 inline-flex items-center font-semibold text-accent hover:underline"
                 >
                   Read {comments} {comments === 1 ? 'comment' : 'comments'} →
                 </button>

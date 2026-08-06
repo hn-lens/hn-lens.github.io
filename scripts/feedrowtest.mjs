@@ -212,17 +212,24 @@ try {
         await ctx.close();
         continue;
       }
-      // If the control were not actually inoperative-and-on here, the explanation check below would
-      // be asserting nothing at all.
+      // The control must actually be inoperative here (disabled), or the state checks below assert
+      // nothing.
       check(
-        `PRECONDITION ${tag}: the Top-comments control is inoperative but drawn on`,
-        r.unavailable && r.shownOn,
+        `PRECONDITION ${tag}: the Top-comments control is inoperative (disabled) in compact`,
+        r.unavailable,
         JSON.stringify({ unavailable: r.unavailable, shownOn: r.shownOn }),
+      );
+      // R-64: a disabled switch must reflect its EFFECTIVE state — OFF, since no previews render in
+      // the one-line layout — not assert the stored ON preference that has no effect here.
+      check(
+        `${tag}: the inoperative switch is drawn OFF, not asserting an ineffective ON setting`,
+        !r.shownOn,
+        `aria-checked reads on = ${r.shownOn}`,
       );
       check(`${tag}: the row does not overflow its own box`, r.selfOverflow <= 0, `selfOverflow=${r.selfOverflow}`);
       check(`${tag}: the page does not scroll horizontally`, r.pageOverflow <= 0, `pageOverflow=${r.pageOverflow}`);
       check(
-        `${tag}: the reason the control reads as on is visible on screen`,
+        `${tag}: the reason previews are not shown here is visible on screen`,
         r.notePainted,
         `notePainted=${r.notePainted}`,
       );

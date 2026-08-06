@@ -73,10 +73,12 @@ fall back to WASM without it.
 
 ## Deploy (GitHub Pages)
 
-Pushing to `main` triggers `.github/workflows/deploy.yml`, which builds and publishes `dist/`
-to GitHub Pages. In the repo settings, set **Pages → Build and deployment → Source: GitHub
-Actions**. The app uses a hash router and relative asset base, so it works on any Pages URL
-(user or project site) without extra configuration.
+Pushing to `main` first runs `.github/workflows/ci.yml` — the `npm run verify` gate (typecheck,
+lint, build, and the test harnesses). Only when CI succeeds does `.github/workflows/deploy.yml`
+run (via `workflow_run`), building and publishing `dist/` to GitHub Pages; a failing gate blocks
+the deploy. In the repo settings, set **Pages → Build and deployment → Source: GitHub Actions**.
+The app uses a hash router and relative asset base, so it works on any Pages URL (user or project
+site) without extra configuration.
 
 ## Contributing
 

@@ -53,27 +53,58 @@ const sidebarVisible = await page.evaluate(() => {
 });
 check('desktop sidebar is hidden on mobile', !sidebarVisible);
 
-// (a2) touch targets: EVERY story-card action control — buttons AND the "Open on HN" <a>
-// AND the comments-count control (the only way into the discussion on a link story) — is
-// >=44px on a phone (desktop keeps its denser 36px sizing). Measuring all control types
-// (not just <button>) is deliberate: an earlier version scoped the bump to `button` and
-// silently left the <a> + comments control at 36/20px.
-const targets = await page.evaluate(() =>
-  // VISIBLE inline controls only: the narrow-width overflow moves some actions into the "..." menu
-  // (display:none in the row), and a hidden 0x0 element is not an inline touch target — the menu
-  // items have their own hit area when opened. Measure what the reader can actually tap in the row.
-  [...document.querySelectorAll('.sc-actions button, .sc-actions a, .sc-comments')]
-    .filter((el) => el.offsetParent !== null && !el.closest('[role="menu"]'))
-    .map((el) => {
-      const r = el.getBoundingClientRect();
-      return { label: (el.getAttribute('aria-label') || el.getAttribute('title') || '').slice(0, 20), min: Math.round(Math.min(r.width, r.height)) };
-    })
-);
-const tooSmall = targets.filter((t) => t.min < 44);
+// (a2) touch targets across phone WIDTHS. Every story-card action control (buttons AND the
+// "Open on HN" <a>) and the comments-count control must be >=44px (min DIMENSION) on a tall phone.
+// This SWEEPS widths because the .sc-actions controls used to shrink on narrow phones — where the
+// surplus actions fold into the "…" menu — so a single-width check at 375 (where the "…" button is
+// already 44px) missed the 32px it became at 320/360. Measuring the min DIMENSION (not just height)
+// is deliberate: a 32x44 target is under the floor on the axis a finger spans in a horizontal row.
+const TAP_SEL = '.sc-actions button, .sc-actions a, .sc-comments, .sc-readmore';
+const tapBad = [];
+let tapMeasured = 0;
+let headerBadH = [];
+for (const tw of [320, 360, 375, 390, 414]) {
+  await page.setViewportSize({ width: tw, height: 780 });
+  await page.waitForTimeout(250);
+  const res = await page.evaluate(
+    (sel) => {
+      // VISIBLE inline controls only: a hidden 0x0 element folded into the "…" menu is not an inline
+      // touch target (the menu items have their own hit area when opened).
+      const cards = [...document.querySelectorAll(sel)]
+        .filter((el) => el.offsetParent !== null && !el.closest('[role="menu"]'))
+        .map((el) => {
+          const r = el.getBoundingClientRect();
+          return { label: (el.getAttribute('aria-label') || el.getAttribute('title') || el.textContent || '').trim().slice(0, 18), min: Math.round(Math.min(r.width, r.height)) };
+        });
+      // Header controls are deliberately narrower than 44px (the search field takes priority in the
+      // constrained top bar — forcing 44px WIDTH clips the search placeholder at 320/lg). What they
+      // must keep is a comfortable 44px tap HEIGHT and a width no thinner than the WCAG-AA 24px floor
+      // (the icon buttons sit at 36px, the logo/home link at 24px).
+      const header = [...document.querySelectorAll('header button, header a')]
+        .filter((el) => el.offsetParent !== null)
+        .map((el) => {
+          const r = el.getBoundingClientRect();
+          return { label: (el.getAttribute('aria-label') || el.textContent || '').trim().slice(0, 18), h: Math.round(r.height), w: Math.round(r.width) };
+        });
+      return { cards, header };
+    },
+    TAP_SEL,
+  );
+  tapMeasured += res.cards.length;
+  for (const t of res.cards) if (t.min < 44) tapBad.push({ w: tw, ...t });
+  for (const t of res.header) if (t.h < 44 || t.w < 24) headerBadH.push({ w: tw, ...t });
+}
+await page.setViewportSize({ width: 375, height: 780 });
+check('PRECONDITION: tap-target controls measured across widths', tapMeasured >= 5, `${tapMeasured} measured`);
 check(
-  'all story-card action + comments controls are >=44px touch targets on mobile',
-  targets.length > 0 && tooSmall.length === 0,
-  tooSmall.length ? `too small: ${JSON.stringify(tooSmall)}` : `${targets.length} controls, all >=44px`
+  'story-card touch targets are >=44px across phone widths (320-414, tall screen)',
+  tapBad.length === 0,
+  tapBad.length ? `too small: ${JSON.stringify(tapBad.slice(0, 8))}` : `all >=44px across 5 widths`,
+);
+check(
+  'header controls keep a 44px tap HEIGHT and a >=24px (WCAG-AA) width across phone widths',
+  headerBadH.length === 0,
+  headerBadH.length ? `bad: ${JSON.stringify(headerBadH.slice(0, 6))}` : `all >=44 tall, >=24 wide`,
 );
 
 // (b) mobile Tune ranking is reachable and reveals the sliders

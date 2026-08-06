@@ -350,9 +350,11 @@ export default function Feed({ kind, showRank }: { kind: FeedKind; showRank?: bo
           <button
             type="button"
             role="switch"
-            aria-checked={showTopComments}
-            // Disabled where previews are never rendered (the one-line Compact layout): toggling it
-            // there changed nothing, so it read as a broken control. The note + title point at the fix.
+            // Reflects the EFFECTIVE state: in the one-line Compact layout previews never render, so
+            // the switch reads OFF there rather than asserting an ON setting that does nothing. The
+            // stored preference is untouched (previews return on a layout that shows them); the note
+            // below explains why it is off here.
+            aria-checked={showTopComments && !topCommentsUnavailable}
             disabled={topCommentsUnavailable}
             onClick={() => setPref({ showTopComments: !showTopComments })}
             // Carries the name once the word folds, so the control keeps it at every width.
@@ -367,7 +369,7 @@ export default function Feed({ kind, showRank }: { kind: FeedKind; showRank?: bo
             <MessageSquare className="size-3.5" />
             <span className="max-[26rem]:hidden">Top comments</span>
             {/* shared switch visual (see controls.tsx) so the feed + Settings switches match */}
-            <SwitchVisual checked={showTopComments} size="sm" />
+            <SwitchVisual checked={showTopComments && !topCommentsUnavailable} size="sm" />
           </button>
 
           <button
