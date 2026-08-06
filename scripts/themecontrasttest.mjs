@@ -141,6 +141,31 @@ check('enumerated the full design list from the app', Array.isArray(designs) && 
 const aaFails = [];
 const secFails = [];
 const compFails = [];
+const hoverFails = [];
+
+// R-04: read the ACTUAL hover-dim opacity the primary accent buttons ship, rather than assuming a
+// constant — so a regression to a dimmer value is caught here instead of silently passing. Primary
+// buttons carry `bg-accent` + a `hover:opacity-NN` utility; collect them from the settings surface
+// (which renders several) and take the most-dimming value. Fails loudly if none is found — then the
+// hover check below would be measuring nothing.
+const hoverOpacity = await page.evaluate(async () => {
+  const found = new Set();
+  location.hash = '#/settings';
+  await new Promise((r) => setTimeout(r, 500));
+  for (const el of document.querySelectorAll('.bg-accent[class*="hover:opacity-"]')) {
+    const m = /hover:opacity-(\d{1,3})\b/.exec(el.getAttribute('class') || '');
+    if (m) found.add(Number(m[1]) / 100);
+  }
+  location.hash = '#/';
+  await new Promise((r) => setTimeout(r, 200));
+  return found.size ? Math.min(...found) : null;
+});
+check(
+  'PRECONDITION [R-04]: a primary accent button that dims on hover was found to measure',
+  hoverOpacity != null && hoverOpacity > 0 && hoverOpacity < 1,
+  `hoverOpacity=${hoverOpacity}`
+);
+
 for (const d of designs) {
   for (const mode of ['light', 'dark']) {
     const tok = await page.evaluate(
@@ -175,6 +200,20 @@ for (const d of designs) {
     eval1(AA, 4.5, aaFails);
     eval1(SECONDARY, 3.0, secFails);
     eval1(COMPONENT, 3.0, compFails);
+    // R-04: primary buttons dim on hover. `opacity` composites BOTH the label and the fill toward
+    // the page bg, which lowers the label-vs-fill contrast — it must still meet AA at the ACTUAL
+    // shipped hover opacity (read live above from the real buttons, not hardcoded; opacity 0.90
+    // dropped solarized + crimson-dark below 4.5, so a regression to it fails here).
+    if (hoverOpacity) {
+      const afg = rgb('accentFg');
+      const acc = rgb('accent');
+      const bgc = rgb('bg');
+      if (afg && acc && bgc) {
+        const over = (fgp, a) => fgp.map((v, i) => v * a + bgc[i] * (1 - a));
+        const hov = contrast(over(afg, hoverOpacity), over(acc, hoverOpacity));
+        if (hov < 4.5) hoverFails.push(`${d}/${mode} hover-label=${hov.toFixed(2)}(<4.5 @op${hoverOpacity})`);
+      }
+    }
   }
 }
 
@@ -182,7 +221,9 @@ console.log(`[theme-contrast] ${designs.length} designs \u00d7 2 modes checked`)
 if (aaFails.length) console.log('AA (4.5) failures:\n  ' + aaFails.join('\n  '));
 if (secFails.length) console.log('secondary (3:1) failures:\n  ' + secFails.join('\n  '));
 if (compFails.length) console.log('component/non-text (3:1) failures:\n  ' + compFails.join('\n  '));
+if (hoverFails.length) console.log('hover-dimmed primary-button label AA failures:\n  ' + hoverFails.join('\n  '));
 check('all primary text pairs meet WCAG AA (4.5:1) in every design \u00d7 mode', aaFails.length === 0, `${aaFails.length} failing`);
+check('primary-button labels stay AA when dimmed on hover in every design \u00d7 mode', hoverFails.length === 0, `${hoverFails.length} failing`);
 check('all secondary text pairs meet 3:1 in every design \u00d7 mode', secFails.length === 0, `${secFails.length} failing`);
 check('interactive-control edge meets non-text 3:1 (WCAG 1.4.11) in every design \u00d7 mode', compFails.length === 0, `${compFails.length} failing`);
 

@@ -118,7 +118,7 @@ export default function AskThread({ story, tree }: { story: HnItem; tree: Algoli
         <button
           type="submit"
           disabled={loading || !question.trim()}
-          className="shrink-0 rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-accent-fg hover:opacity-90 disabled:opacity-50"
+          className="shrink-0 rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-accent-fg hover:opacity-95 disabled:opacity-50"
         >
           {/* "Send", not "Ask": the toolbar tool that OPENS this panel is called Ask, and two
               controls with the same accessible name on one page is ambiguous both for a screen

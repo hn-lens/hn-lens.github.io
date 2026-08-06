@@ -119,7 +119,7 @@ export default function Onboarding() {
           <button
             type="button"
             onClick={() => finish(true)}
-            className="rounded-lg bg-accent px-3.5 py-2 text-sm font-medium text-accent-fg hover:opacity-90"
+            className="rounded-lg bg-accent px-3.5 py-2 text-sm font-medium text-accent-fg hover:opacity-95"
           >
             {selected.size ? `Start with ${selected.size} interest${selected.size > 1 ? 's' : ''}` : 'Get started'}
           </button>

@@ -272,7 +272,7 @@ export default function Settings() {
             type="button"
             onClick={doTrain}
             disabled={training}
-            className="inline-flex items-center gap-2 rounded-lg bg-accent px-3 py-2 text-sm font-medium text-accent-fg hover:opacity-90 disabled:opacity-60"
+            className="inline-flex items-center gap-2 rounded-lg bg-accent px-3 py-2 text-sm font-medium text-accent-fg hover:opacity-95 disabled:opacity-60"
           >
             {training ? <Loader2 className="size-4 animate-spin" /> : <GraduationCap className="size-4" />}
             Retrain now

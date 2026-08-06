@@ -237,7 +237,7 @@ function PromptEditorDialog({ kind, onClose, onSaved }: { kind: PromptKind; onCl
             <button type="button" onClick={onClose} className="rounded-lg border border-edge px-3 py-1.5 text-sm hover:bg-surface-2">
               Cancel
             </button>
-            <button type="button" onClick={save} className="rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-accent-fg hover:opacity-90">
+            <button type="button" onClick={save} className="rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-accent-fg hover:opacity-95">
               Save &amp; re-run
             </button>
           </div>

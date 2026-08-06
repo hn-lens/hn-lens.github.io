@@ -94,7 +94,7 @@ export default function HnAccount() {
           />
           <button
             type="submit"
-            className="rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-accent-fg hover:opacity-90"
+            className="rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-accent-fg hover:opacity-95"
           >
             Connect
           </button>

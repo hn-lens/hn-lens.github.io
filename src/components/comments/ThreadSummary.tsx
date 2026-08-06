@@ -107,7 +107,7 @@ export default function ThreadSummary({ story, tree }: { story: HnItem; tree: Al
           <button
             type="button"
             onClick={() => run(false)}
-            className="rounded-lg bg-accent px-2.5 py-1 text-xs font-medium text-accent-fg hover:opacity-90"
+            className="rounded-lg bg-accent px-2.5 py-1 text-xs font-medium text-accent-fg hover:opacity-95"
           >
             Summarize
           </button>
