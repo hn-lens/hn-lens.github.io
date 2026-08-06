@@ -25,6 +25,10 @@ const CASES = [
   { w: 375, h: 844, ts: 'lg', layout: 'grid' },
   { w: 360, h: 780, ts: 'lg', layout: 'grid' },
   { w: 390, h: 844, ts: 'lg', layout: 'bento' },
+  { w: 320, h: 800, ts: 'lg', layout: 'grid' },
+  { w: 360, h: 800, ts: 'lg', layout: 'bento' },
+  { w: 412, h: 896, ts: 'lg', layout: 'grid' },
+  { w: 375, h: 812, ts: 'lg', layout: 'media' },
   { w: 414, h: 896, ts: 'md', layout: 'grid' },
   { w: 390, h: 844, ts: 'md', layout: 'cards' },
 ];
@@ -57,67 +61,82 @@ try {
     await page.waitForTimeout(300);
 
     const r = await page.evaluate(async () => {
+      const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
       const btns = [...document.querySelectorAll('article[data-id] button')].filter((x) =>
         /personalize|more/i.test(x.getAttribute('aria-label') || x.textContent || ''),
       );
       if (!btns.length) return { noBtn: true };
-      // The topmost card's control: that is the anchor that sits under the strip.
       btns.sort((a, z) => a.getBoundingClientRect().top - z.getBoundingClientRect().top);
-      btns[0].click();
-      await new Promise((res) => setTimeout(res, 420));
-      const m = document.querySelector('[role="menu"]');
-      if (!m) return { noMenu: true };
-      const mb = m.getBoundingClientRect();
       const vw = window.innerWidth;
       const vh = window.innerHeight;
-      let over = 0;
-      let barsSeen = 0;
-      let overBy = null;
-      const seen = new Set();
-      for (const x of [vw * 0.25, vw * 0.5, vw * 0.75]) {
-        for (const y of [2, 24, 48, 72, 96, 120, 144, 168]) {
-          for (const el of document.elementsFromPoint(Math.round(x), y)) {
-            if (!(el instanceof HTMLElement) || m.contains(el) || el.contains(m)) continue;
-            const cs = getComputedStyle(el);
-            if (cs.position !== 'sticky' && cs.position !== 'fixed') continue;
-            const bb = el.getBoundingClientRect();
-            if (bb.height <= 0 || bb.height > vh * 0.6) continue;
-            if (!seen.has(el)) {
+      // Whether a card menu lands under the strip depends on where its ⋯ sits relative to the
+      // strip, which shifts with the feed-row height and text size — so a single card can be masked
+      // by an unrelated layout change (it was, once). Sweep several cards and keep the WORST, so the
+      // invariant is caught wherever a menu flips into the strip rather than only for the top card.
+      const CARDS = Math.min(5, btns.length);
+      let worst = null;
+      let cardsOpened = 0;
+      let barsSeenAny = 0;
+      for (let i = 0; i < CARDS; i++) {
+        const btn = btns[i];
+        btn.click();
+        await sleep(360);
+        const m = document.querySelector('[role="menu"]');
+        if (!m) continue;
+        cardsOpened += 1;
+        const mb = m.getBoundingClientRect();
+        let over = 0;
+        let overBy = null;
+        const seen = new Set();
+        for (const x of [vw * 0.25, vw * 0.5, vw * 0.75]) {
+          for (const y of [2, 24, 48, 72, 96, 120, 144, 168]) {
+            for (const el of document.elementsFromPoint(Math.round(x), y)) {
+              if (!(el instanceof HTMLElement) || m.contains(el) || el.contains(m)) continue;
+              const cs = getComputedStyle(el);
+              if (cs.position !== 'sticky' && cs.position !== 'fixed') continue;
+              const bb = el.getBoundingClientRect();
+              if (bb.height <= 0 || bb.height > vh * 0.6) continue;
               seen.add(el);
-              barsSeen += 1;
-            }
-            const ov = Math.round(Math.min(mb.bottom, bb.bottom) - Math.max(mb.top, bb.top));
-            if (ov > over) {
-              over = ov;
-              overBy = `${el.tagName}.${String(el.className || '').slice(0, 26)} [${Math.round(bb.top)},${Math.round(bb.bottom)}]`;
+              const ov = Math.round(Math.min(mb.bottom, bb.bottom) - Math.max(mb.top, bb.top));
+              if (ov > over) {
+                over = ov;
+                overBy = `${el.tagName}.${String(el.className || '').slice(0, 26)} [${Math.round(bb.top)},${Math.round(bb.bottom)}]`;
+              }
             }
           }
         }
-      }
-      const items = [...m.querySelectorAll('a,button,[role="menuitem"]')].filter((e) => {
-        const bb = e.getBoundingClientRect();
-        return bb.width > 0 && bb.height > 0;
-      });
-      let stolen = 0;
-      const stolenBy = [];
-      for (const it of items) {
-        const bb = it.getBoundingClientRect();
-        const cy = bb.top + bb.height / 2;
-        if (cy < 0 || cy > vh) continue;
-        const hit = document.elementFromPoint(Math.round(bb.left + bb.width / 2), Math.round(cy));
-        if (hit && hit !== it && !it.contains(hit)) {
-          stolen += 1;
-          stolenBy.push(`"${(it.textContent || '').trim().slice(0, 18)}"@${Math.round(bb.top)} <- ${hit.tagName}.${String(hit.className || '').slice(0, 24)} "${(hit.textContent || '').trim().slice(0, 16)}"`);
+        barsSeenAny = Math.max(barsSeenAny, seen.size);
+        const items = [...m.querySelectorAll('a,button,[role="menuitem"]')].filter((e) => {
+          const bb = e.getBoundingClientRect();
+          return bb.width > 0 && bb.height > 0;
+        });
+        let stolen = 0;
+        const stolenBy = [];
+        for (const it of items) {
+          const bb = it.getBoundingClientRect();
+          const cy = bb.top + bb.height / 2;
+          if (cy < 0 || cy > vh) continue;
+          const hit = document.elementFromPoint(Math.round(bb.left + bb.width / 2), Math.round(cy));
+          if (hit && hit !== it && !it.contains(hit)) {
+            stolen += 1;
+            stolenBy.push(`"${(it.textContent || '').trim().slice(0, 18)}"@${Math.round(bb.top)} <- ${hit.tagName} "${(hit.textContent || '').trim().slice(0, 14)}"`);
+          }
         }
+        const cand = { items: items.length, menuTop: Math.round(mb.top), over, overBy, stolen, stolenBy, card: i };
+        if (!worst || over > worst.over || stolen > worst.stolen) worst = cand;
+        // Close before the next card so only one menu is measured at a time.
+        btn.click();
+        await sleep(160);
       }
-      return { items: items.length, menuTop: Math.round(mb.top), over, overBy, barsSeen, stolen, stolenBy, scrollY: Math.round(window.scrollY) };
+      if (!worst) return { noMenu: true };
+      return { ...worst, barsSeen: barsSeenAny, cardsOpened, scrollY: Math.round(window.scrollY) };
     });
 
     const tag = `${c.w}x${c.h}/${c.ts}/${c.layout}`;
     // Each of these would make the two checks below vacuously true.
     check(
-      `PRECONDITION ${tag}: a menu with items is open at scroll 0, with a pinned bar on screen`,
-      !r.noBtn && !r.noMenu && r.items >= 3 && r.barsSeen >= 1 && r.scrollY === 0,
+      `PRECONDITION ${tag}: several card menus opened at scroll 0, with a pinned bar on screen`,
+      !r.noBtn && !r.noMenu && r.items >= 3 && r.barsSeen >= 1 && r.scrollY === 0 && r.cardsOpened >= 2,
       JSON.stringify(r),
     );
     if (r.noBtn || r.noMenu) {

@@ -175,6 +175,10 @@ const TIERS = {
       { name: 'tabfadetest (scroll-hint fade keeps tab labels AA)', script: 'tabfadetest' },
       { name: 'switchtest (switch control rendering + WCAG 1.4.11)', script: 'switchtest' },
       { name: 'cardteachtest (follow/mute from a card)', script: 'cardteachtest' },
+      // A card menu must never be painted under the sticky feed-tab strip. cardteachtest's mock
+      // fixture can't place a menu in the strip's y-region; this drives the REAL feed where a
+      // not-yet-stuck strip (tall header at large text) once swallowed the menu.
+      { name: 'popoverbandtest (card menu never lands under a pinned bar)', script: 'popoverbandtest' },
       { name: 'mobiletest (mobile tune + read access)', script: 'mobiletest' },
       { name: 'onboardingtest (first-run interests)', script: 'onboardingtest' },
       { name: 'gisttest (non-AI thread digest)', script: 'gisttest' },

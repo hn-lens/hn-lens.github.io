@@ -46,9 +46,12 @@ function pinnedHeaderBottom(): number {
         // Ignore anything occupying most of the screen: that is an overlay or a scroll container,
         // not a bar, and treating it as one would leave nowhere to put the popover.
         if (r.height > vh * 0.6 || r.height <= 0) continue;
-        const offset = parseFloat(cs.top);
-        const stuck = r.top <= (Number.isFinite(offset) ? offset : 0) + 0.5;
-        if (stuck && r.bottom > bottom) bottom = r.bottom;
+        // A bar that `elementsFromPoint` returns at the top of the screen IS painted there, whether
+        // or not it has reached its sticky offset yet. A strip that is `sticky top-14` but whose
+        // natural position sits below a header taller than 14 (large reading text) is not "stuck" at
+        // scroll 0, yet it still paints over a popover placed beneath it — which is exactly how a
+        // card menu opened at scroll 0 landed underneath the feed-tab strip.
+        if (r.bottom > bottom) bottom = r.bottom;
       }
     }
   }
