@@ -741,6 +741,113 @@ console.log('\n[F] toolbar keyboard + jump interaction');
   await page.waitForTimeout(200);
 }
 
+// ===== [F] On TOUCH, the toolbar-row controls share ONE height. Each control clears the 44px tap
+// minimum, but a `.seg` wraps its 44px button in an 8px track (=52px) while a bare input stayed 44px
+// — so the Find field sat 8px short of the toggle/sort beside it. The lenses measure each control
+// against the absolute minimum, never against its ROW-MATES, so this passed every check while
+// looking like a shrunken field. This guard measures the controls against EACH OTHER on a touch
+// device wide enough for the Find field to be inline.
+console.log('\n[G] on touch, the toolbar controls in one row share a height');
+{
+  const cctx = await b.newContext({ viewport: { width: 680, height: 820 }, isMobile: true, hasTouch: true });
+  const cp = await cctx.newPage();
+  // Same mock as the main context (routes are per-context).
+  await cp.route(/hacker-news\.firebaseio\.com/, (r) => {
+    const u = r.request().url();
+    const j = (x) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(x) });
+    if (u.includes('/topstories.json')) return j(STORY_IDS);
+    for (const ep of ['beststories', 'newstories', 'askstories', 'showstories', 'jobstories']) if (u.includes(`/${ep}.json`)) return j([]);
+    const m = u.match(/item\/(\d+)/);
+    if (m) return j(STORY_IDS.includes(Number(m[1])) ? mkStory(Number(m[1])) : null);
+    if (u.includes('/user/')) return j({ id: 'x', karma: 1, created: now });
+    if (u.includes('maxitem')) return j(9999);
+    return j(null);
+  });
+  await cp.route(/hn\.algolia\.com\/api\/v1\/search/, (r) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ hits: [] }) }));
+  await cp.route(/hn\.algolia\.com\/api\/v1\/items\/(\d+)/, (r) => {
+    const id = Number(r.request().url().match(/items\/(\d+)/)[1]);
+    r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(mkTree(id)) });
+  });
+  await cp.route(/google\.com\/s2\/favicons|gstatic\.com\/faviconV2/, (r) => r.fulfill({ status: 200, body: '' }));
+  await cp.addInitScript(() => {
+    try {
+      localStorage.setItem('hn:onboard', 'skip');
+    } catch {
+      /* private mode */
+    }
+  });
+  await cp.goto(`${BASE}#/item/1000`, { waitUntil: 'domcontentloaded' });
+  await cp.waitForFunction(() => /comments/i.test(document.body.innerText), null, { timeout: 15000 }).catch(() => {});
+  await cp.waitForTimeout(600);
+  const measure = () =>
+    cp.evaluate(() => {
+      const bar = document.querySelector('.disc-tb-bar');
+      if (!bar) return { noBar: true };
+      // The distinct control types that share the row: the segmented controls (toggle, sort), the
+      // Find input, the tools group, and the "…" button. Their OUTER heights must agree. Classify by
+      // element identity (not a className substring — the input's class is "w-full rounded-l…", which
+      // matches no name, which is why the old hasInput probe silently read false).
+      const controls = [
+        ...bar.querySelectorAll('.seg'),
+        ...bar.querySelectorAll('.seg-act'),
+        ...bar.querySelectorAll('input[type="search"]'),
+        ...bar.querySelectorAll('button[aria-label="More discussion tools"]'),
+      ]
+        .filter((el) => el.offsetParent !== null)
+        .map((el) => ({
+          what: el.matches('input') ? 'input' : el.matches('.seg-act') ? 'seg-act' : el.matches('.seg') ? 'seg' : el.matches('button') ? 'tools-menu' : el.tagName,
+          h: Math.round(el.getBoundingClientRect().height),
+        }));
+      const heights = controls.map((c) => c.h);
+      return {
+        controls,
+        hasInput: controls.some((c) => c.what === 'input'),
+        types: new Set(controls.map((c) => c.what)).size,
+        min: Math.min(...heights),
+        max: Math.max(...heights),
+        n: controls.length,
+      };
+    });
+  // Two widths so BOTH bare controls are compared against the segs: at ~40rem/tb the "…" menu is
+  // inline (seg-act folded); at ~45rem/tb the seg-act tools group is inline ("…" folded). The Find
+  // field is inline (>=30rem/tb) at both — measuring only one width left the other bare control's
+  // height unchecked.
+  for (const [w, expect] of [
+    [680, 'tools-menu'],
+    [760, 'seg-act'],
+  ]) {
+    await cp.setViewportSize({ width: w, height: 820 });
+    await cp.waitForTimeout(250);
+    const r = await measure();
+    check(`PRECONDITION [G]: at ${w}px the Find input and >=2 control types share the touch toolbar`, !r.noBar && r.types >= 2 && r.hasInput, JSON.stringify(r));
+    check(`PRECONDITION [G]: at ${w}px the ${expect} control is inline beside the segs`, !r.noBar && r.controls.some((c) => c.what === expect), JSON.stringify(r));
+    if (!r.noBar) {
+      check(`on touch at ${w}px, every toolbar-row control is the same height (±2px)`, r.max - r.min <= 2, `heights ${r.min}..${r.max}: ${JSON.stringify(r.controls)}`);
+    }
+  }
+
+  // [H] The comment count renders exactly ONCE, in the header meta — never also in the toolbar band.
+  // It used to appear twice (~40px apart): a plain count in the header AND a font-semibold count in
+  // the toolbar band (which sat beside the unread "N new" number, so two unrelated figures read as
+  // adjacent). The accessible count carries a screen-reader "comment(s)" word; post-fix that word
+  // lives in the header meta (.discussion-header) and NOT in the toolbar band (.disc-tb-bar).
+  console.log('\n[H] the comment count renders once (header meta), not also in the toolbar band');
+  {
+    const c = await cp.evaluate(() => {
+      const isCountWord = (t) => /^comments?$/.test((t || '').trim().toLowerCase());
+      const bar = document.querySelector('.disc-tb-bar');
+      const header = document.querySelector('.discussion-header');
+      const barCount = bar ? [...bar.querySelectorAll('.sr-only')].some((e) => isCountWord(e.textContent)) : null;
+      const headerCount = header ? [...header.querySelectorAll('.sr-only')].some((e) => isCountWord(e.textContent)) : false;
+      return { hasBar: !!bar, hasHeader: !!header, barCount, headerCount };
+    });
+    check('PRECONDITION [H]: the toolbar band and header meta are both present', c.hasBar && c.hasHeader, JSON.stringify(c));
+    check('the comment count is NOT rendered in the toolbar band', c.barCount === false, JSON.stringify(c));
+    check('the comment count IS rendered once in the header meta', c.headerCount === true, JSON.stringify(c));
+  }
+  await cctx.close();
+}
+
 await b.close();
 console.log(`\n${fails.length === 0 ? 'RESULT: DISCUSSION VIEW (summary gate + feed-open new-badge) PASS \u2713' : `RESULT: ${fails.length} FAILED \u2717`}`);
 if (fails.length) fails.forEach((f) => console.log('  - ' + f));

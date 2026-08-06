@@ -2169,10 +2169,12 @@ html[data-textsize='lg'] {
   color: var(--accent-fg);
 }
 /* Touch devices get a real target; the label drops at narrow widths so the row
- * still fits, which is why the SKIN rather than the text carries the meaning. */
+ * still fits, which is why the SKIN rather than the text carries the meaning.
+ * 50px (not 44) so the group's outer box — button + 2px border — is 52px, matching
+ * the `.seg` toggle/sort tracks beside it in the row. Still a >=44px tap target. */
 @media (pointer: coarse) {
   .seg-act > button {
-    height: 44px;
+    height: 50px;
     padding-inline: 0.75rem;
   }
   /* Action controls get a 44px tap target on touch. `.seg-btn` and the search input are shared
@@ -2187,6 +2189,17 @@ html[data-textsize='lg'] {
   .disc-tb-bar button[aria-label='More discussion tools'],
   .disc-toolbar [role='menu'] button {
     min-height: 44px;
+  }
+  /* A `.seg` wraps its 44px button in a 3px-padding + 1px-border track, so the toggle and sort
+     controls stand 52px tall. The bare controls beside them — the Find field, the catch-up jumper
+     and the "…" menu button — used only the 44px tap minimum, sitting 8px short of the segs, which
+     reads as a row of mismatched heights. Match every bare control in this row to the seg outer
+     height (the `.seg-act` tools group is matched via its button height above). Scoped to the
+     discussion toolbar; the nav/search-results inputs keep 44px next to their own neighbours. */
+  .disc-tb-bar input[type='search'],
+  .disc-tb-bar button[aria-label='More discussion tools'],
+  .disc-catchup {
+    min-height: 52px;
   }
 }
 

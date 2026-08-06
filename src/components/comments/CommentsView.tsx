@@ -619,8 +619,14 @@ export default function CommentsView({ id }: { id: number }) {
           <span className="inline-flex shrink-0 items-center gap-1 font-medium text-fg">
             <ArrowBigUp className="size-3.5 text-accent" /> {story.score ?? 0}
           </span>
-          <span className="inline-flex shrink-0 items-center gap-1">
-            <MessageSquare className="size-3.5" /> {story.descendants ?? 0}
+          {/* Given the same prominence as the score (accent icon + solid-fg number): it is now the
+              ONLY place the comment count appears, so it carries the weight the toolbar number used
+              to — which frees the discussion toolbar of a count element entirely. */}
+          <span className="inline-flex shrink-0 items-center gap-1 font-medium text-fg">
+            <MessageSquare className="size-3.5 text-accent" /> {story.descendants ?? 0}
+            {/* Screen-reader word — this is now the ONLY comment-count in the discussion, so it must
+                announce "N comments", not a bare number (the toolbar count that used to carry it is gone). */}
+            <span className="sr-only"> {(story.descendants ?? 0) === 1 ? 'comment' : 'comments'}</span>
           </span>
           {story.by && (
             <span className="flex min-w-[3.5rem] shrink items-center gap-1 truncate">
@@ -731,11 +737,8 @@ export default function CommentsView({ id }: { id: number }) {
 
               {!showArticle && hasCommentControls && (
                 <>
-                  <span className="shrink-0 text-sm font-semibold">
-                    {story.descendants ?? topLevel.length}
-                    {/* Word is screen-reader-only (kept inside the count so it adds no visual width). */}
-                    <span className="sr-only"> {(story.descendants ?? topLevel.length) === 1 ? 'comment' : 'comments'}</span>
-                  </span>
+                  {/* No comment count in this row: it lives once, prominently, in the header meta
+                      above (accent icon + solid number). Dropping it here reclaims toolbar width. */}
 
                   {/* SORT — flat, degrades with width; the full option set is always reachable (here or in "…"). */}
                   {/* full 4-segment */}
