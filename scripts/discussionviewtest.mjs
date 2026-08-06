@@ -776,6 +776,15 @@ console.log('\n[G] on touch, the toolbar controls in one row share a height');
       /* private mode */
     }
   });
+  // Seed a PRIOR visit BEFORE opening the discussion so the "N new" catch-up jumper renders in the
+  // row (it only appears when comments post-date the last visit). Load the app to reach the IndexedDB
+  // handle, seed seen ~50000s ago (before the two FRESH fixture comments), then open the discussion.
+  await cp.goto(`${BASE}#/`, { waitUntil: 'domcontentloaded' });
+  await cp.waitForFunction(() => window.__hnlens && window.__hnlens.db, null, { timeout: 20000 });
+  await cp.evaluate(async (t) => {
+    const dbMod = await window.__hnlens.db();
+    await dbMod.db.seen.put({ id: 1000, ts: (t - 50000) * 1000 });
+  }, now);
   await cp.goto(`${BASE}#/item/1000`, { waitUntil: 'domcontentloaded' });
   await cp.waitForFunction(() => /comments/i.test(document.body.innerText), null, { timeout: 15000 }).catch(() => {});
   await cp.waitForTimeout(600);
@@ -784,18 +793,31 @@ console.log('\n[G] on touch, the toolbar controls in one row share a height');
       const bar = document.querySelector('.disc-tb-bar');
       if (!bar) return { noBar: true };
       // The distinct control types that share the row: the segmented controls (toggle, sort), the
-      // Find input, the tools group, and the "…" button. Their OUTER heights must agree. Classify by
-      // element identity (not a className substring — the input's class is "w-full rounded-l…", which
-      // matches no name, which is why the old hasInput probe silently read false).
+      // Find input, the tools group, the "…" button, and the "N new" catch-up jumper. Their OUTER
+      // heights must agree. Classify by element identity (not a className substring — the input's
+      // class is "w-full rounded-l…", which matches no name, which is why the old hasInput probe
+      // silently read false). `.disc-catchup` is a <button>, so it must be tested BEFORE the generic
+      // button case or it would be mislabelled "tools-menu".
       const controls = [
         ...bar.querySelectorAll('.seg'),
         ...bar.querySelectorAll('.seg-act'),
         ...bar.querySelectorAll('input[type="search"]'),
         ...bar.querySelectorAll('button[aria-label="More discussion tools"]'),
+        ...bar.querySelectorAll('.disc-catchup'),
       ]
         .filter((el) => el.offsetParent !== null)
         .map((el) => ({
-          what: el.matches('input') ? 'input' : el.matches('.seg-act') ? 'seg-act' : el.matches('.seg') ? 'seg' : el.matches('button') ? 'tools-menu' : el.tagName,
+          what: el.matches('input')
+            ? 'input'
+            : el.matches('.seg-act')
+              ? 'seg-act'
+              : el.matches('.disc-catchup')
+                ? 'catchup'
+                : el.matches('.seg')
+                  ? 'seg'
+                  : el.matches('button')
+                    ? 'tools-menu'
+                    : el.tagName,
           h: Math.round(el.getBoundingClientRect().height),
         }));
       const heights = controls.map((c) => c.h);
@@ -821,6 +843,7 @@ console.log('\n[G] on touch, the toolbar controls in one row share a height');
     const r = await measure();
     check(`PRECONDITION [G]: at ${w}px the Find input and >=2 control types share the touch toolbar`, !r.noBar && r.types >= 2 && r.hasInput, JSON.stringify(r));
     check(`PRECONDITION [G]: at ${w}px the ${expect} control is inline beside the segs`, !r.noBar && r.controls.some((c) => c.what === expect), JSON.stringify(r));
+    check(`PRECONDITION [G]: at ${w}px the "N new" catch-up jumper is inline beside the segs`, !r.noBar && r.controls.some((c) => c.what === 'catchup'), JSON.stringify(r));
     if (!r.noBar) {
       check(`on touch at ${w}px, every toolbar-row control is the same height (±2px)`, r.max - r.min <= 2, `heights ${r.min}..${r.max}: ${JSON.stringify(r.controls)}`);
     }

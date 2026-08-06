@@ -2194,11 +2194,13 @@ html[data-textsize='lg'] {
      controls stand 52px tall. The bare controls beside them — the Find field, the catch-up jumper
      and the "…" menu button — used only the 44px tap minimum, sitting 8px short of the segs, which
      reads as a row of mismatched heights. Match every bare control in this row to the seg outer
-     height (the `.seg-act` tools group is matched via its button height above). Scoped to the
-     discussion toolbar; the nav/search-results inputs keep 44px next to their own neighbours. */
+     height (the `.seg-act` tools group is matched via its button height above). Every selector here
+     is scoped to `.disc-tb-bar` so it outranks the 44px `.disc-tb-bar > button` rule above — the
+     catch-up jumper is a direct button child, so a bare `.disc-catchup` (0,1,0) would lose to that
+     rule (0,1,1) and stay 44px. The nav/search-results inputs keep 44px next to their neighbours. */
   .disc-tb-bar input[type='search'],
   .disc-tb-bar button[aria-label='More discussion tools'],
-  .disc-catchup {
+  .disc-tb-bar .disc-catchup {
     min-height: 52px;
   }
 }
