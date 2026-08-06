@@ -699,7 +699,7 @@ export default function CommentsView({ id }: { id: number }) {
               }`}
             >
               {canReadArticle && (
-                <div className="seg shrink-0" role="tablist" aria-label="Read the discussion or the article">
+                <div className="seg shrink-0" role="tablist" aria-label="Read the discussion or the extracted article">
                   {/* Icons carry the two views; `aria-label` carries the accessible name, and the
                       segment's selected styling carries which one is active. The words do not fit
                       this row's budget at any shipped column width alongside the sort control, the
@@ -719,8 +719,8 @@ export default function CommentsView({ id }: { id: number }) {
                     type="button"
                     role="tab"
                     aria-selected={view === 'article'}
-                    aria-label="Article"
-                    title="Article"
+                    aria-label="Extracted article"
+                    title="Extracted article"
                     onClick={() => setView('article')}
                     className="seg-btn inline-flex items-center"
                   >

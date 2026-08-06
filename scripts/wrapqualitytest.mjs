@@ -141,7 +141,7 @@ try {
   const pre = await page.evaluate(() => ({
     hasNew: !!document.querySelector('.disc-tb-bar .disc-catchup'),
     hasAsk: !!document.querySelector('.disc-toolbar [aria-label="Ask"]'),
-    hasToggle: !!document.querySelector('.disc-tb-bar .seg[aria-label="Read the discussion or the article"]'),
+    hasToggle: !!document.querySelector('.disc-tb-bar .seg[aria-label="Read the discussion or the extracted article"]'),
   }));
   check('precondition: the band carries every control (view toggle + jump + Ask)', pre.hasNew && pre.hasAsk && pre.hasToggle, JSON.stringify(pre));
 
@@ -157,7 +157,7 @@ try {
       const r = el && el.getBoundingClientRect();
       return !!r && r.width > 0 && r.height > 0;
     };
-    const toggle = document.querySelector('.seg[aria-label="Read the discussion or the article"]');
+    const toggle = document.querySelector('.seg[aria-label="Read the discussion or the extracted article"]');
     // A `display: contents` wrapper generates NO box: its own rect is 0x0 and its CHILD is the real
     // flex item. Measuring `bar.children` alone therefore silently skips every control that is
     // shown through one (the sort control and the Summary/Ask group), so both the row bucketing and
@@ -294,7 +294,7 @@ try {
       // Scoped to the SORT control by name: the view toggle is a `.seg` too, so a bare `.seg`
       // query counts its segments as sort buttons and reports a degradation that never happened.
       const sortBtns = [...bar.querySelectorAll('.seg[aria-label="Sort comments"]')].filter(vis).flatMap((s) => [...s.querySelectorAll('button')]).filter(vis).length;
-      const toggle = document.querySelector('.seg[aria-label="Read the discussion or the article"]');
+      const toggle = document.querySelector('.seg[aria-label="Read the discussion or the extracted article"]');
       return {
         sortBtns,
         search: vis(bar.querySelector('input[type="search"]')),
@@ -386,8 +386,8 @@ try {
   // control the band has. Drawn as icons, so its ACCESSIBLE NAMES carry the meaning.
   const toggleGone = seq.filter((s) => s.toggleSegs !== 2).map((s) => `${s.w}:${s.toggleSegs}`);
   check('the Discussion/Article toggle keeps BOTH segments visible at every width', toggleGone.length === 0, toggleGone.slice(0, 6).join(' | ') || `${seq.length} widths`);
-  const badNames = seq.filter((s) => s.toggleNames.join('|') !== 'Discussion|Article').map((s) => `${s.w}:${s.toggleNames.join('|')}`);
-  check('the view toggle keeps the accessible names "Discussion" and "Article" at every width', badNames.length === 0, badNames.slice(0, 4).join(' | ') || `${seq.length} widths`);
+  const badNames = seq.filter((s) => s.toggleNames.join('|') !== 'Discussion|Extracted article').map((s) => `${s.w}:${s.toggleNames.join('|')}`);
+  check('the view toggle keeps the accessible names "Discussion" and "Extracted article" at every width', badNames.length === 0, badNames.slice(0, 4).join(' | ') || `${seq.length} widths`);
   check('the Discussion/Article toggle shares the toolbar row (it is inside the bar)', seq.every((s) => s.inBar), `inBar at ${seq.filter((s) => s.inBar).length}/${seq.length} widths`);
   // Two concrete anchors so the order check above can't be satisfied by a band that degraded
   // everything (or nothing) everywhere.

@@ -78,13 +78,13 @@ await page.waitForTimeout(400);
 
 // ---- toggle present for a link story ----
 check(
-  'C2: Discussion|Article toggle present for a link story',
-  (await page.getByRole('tab', { name: 'Discussion' }).count()) > 0 && (await page.getByRole('tab', { name: 'Article' }).count()) > 0
+  'C2: Discussion|Extracted-article toggle present for a link story',
+  (await page.getByRole('tab', { name: 'Discussion' }).count()) > 0 && (await page.getByRole('tab', { name: 'Extracted article' }).count()) > 0
 );
 check('C2: defaults to Discussion (comments shown)', /a fine discussion comment/.test(await page.locator('body').innerText()));
 
 // ---- switch to Article: extracted text + attribution + original link, comments hidden ----
-await page.getByRole('tab', { name: 'Article' }).click();
+await page.getByRole('tab', { name: 'Extracted article' }).click();
 await page.waitForTimeout(500);
 {
   const body = await page.locator('body').innerText();
@@ -110,7 +110,7 @@ check('C2: toggling back to Discussion restores comments', /a fine discussion co
 await page.goto(`${BASE}#/item/3100`, { waitUntil: 'domcontentloaded' });
 await page.waitForFunction(() => /broken-article discussion|A broken article/i.test(document.body.innerText), null, { timeout: 20000 }).catch(() => {});
 await page.waitForTimeout(400);
-await page.getByRole('tab', { name: 'Article' }).click();
+await page.getByRole('tab', { name: 'Extracted article' }).click();
 await page.waitForSelector('text=/Couldn.t fetch the article/i', { timeout: 15000 }).catch(() => {});
 {
   const body = await page.locator('body').innerText();

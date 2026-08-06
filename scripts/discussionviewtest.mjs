@@ -207,6 +207,39 @@ const savedInDb = await page.evaluate(async () => {
 });
 check('the story is persisted to db.saved from the discussion view', savedInDb);
 
+// ===== [C2] The two "Article" affordances must be distinguishable. The story header carries a link
+// that LEAVES the app for the original URL; the control band carries a toggle that switches to the
+// in-app EXTRACTED-text reader. Both were named "Article", so two adjacent controls with different
+// outcomes shared one name. The link keeps "Article" (it is the genuine original); the toggle
+// becomes "Extracted article". Still at #/item/1000 (a link story, so the toggle renders) and 1280px
+// wide (so the band is inline, not folded into the "…" menu).
+console.log('\n[C2] the external link and the in-app reader are named distinctly');
+{
+  const r = await page.evaluate(() => {
+    const nameOf = (el) => (el.getAttribute('aria-label') || el.getAttribute('title') || el.textContent || '').trim();
+    const all = [...document.querySelectorAll('a,button')].filter((e) => e.getBoundingClientRect().width > 0);
+    // The external link is an <a> to an off-site http(s) URL opened in a new tab.
+    const link = all.find(
+      (e) => e.tagName === 'A' && /^https?:/.test(e.getAttribute('href') || '') && e.getAttribute('target') === '_blank' && /article/i.test(nameOf(e)),
+    );
+    // The in-app reader toggle is the tab that switches the view (role=tab, file icon, no href).
+    const toggle = all.find((e) => e.getAttribute('role') === 'tab' && e.tagName === 'BUTTON' && /article/i.test(nameOf(e)));
+    const articleNamed = all.filter((e) => /^(extracted )?article$/i.test(nameOf(e))).map(nameOf);
+    return {
+      linkName: link ? nameOf(link) : null,
+      toggleName: toggle ? nameOf(toggle) : null,
+      // Any two affordances sharing an identical article-name is the defect.
+      dupSharedName: articleNamed.filter((n, i) => articleNamed.findIndex((m) => m.toLowerCase() === n.toLowerCase()) !== i),
+      all: articleNamed,
+    };
+  });
+  // Without both controls present the checks below would be vacuous.
+  check('PRECONDITION: both the external link and the in-app reader toggle are present', !!r.linkName && !!r.toggleName, JSON.stringify(r));
+  check('the external link is named "Article"', r.linkName === 'Article', `link name = ${JSON.stringify(r.linkName)}`);
+  check('the in-app reader toggle is named "Extracted article"', r.toggleName === 'Extracted article', `toggle name = ${JSON.stringify(r.toggleName)}`);
+  check('no two affordances share one "Article" name', r.dupSharedName.length === 0, `shared: ${JSON.stringify(r.dupSharedName)} (all article-named: ${JSON.stringify(r.all)})`);
+}
+
 // ===== [D] The comment Sort control (a 4-option .seg) must not cause horizontal PAGE
 // overflow on a narrow phone — the segmented track wraps within its bounds instead of
 // pushing the page wider (regression: the .seg row overflowed at 320px in every theme and
