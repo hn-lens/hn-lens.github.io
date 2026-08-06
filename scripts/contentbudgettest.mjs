@@ -1,33 +1,81 @@
-// Content budget — a page must spend most of a screen on its CONTENT, not on its own furniture.
+// Content budget — a reading page must spend most of a screen on its CONTENT, not on its own
+// furniture. Density here was keyed to viewport WIDTH only, so a phone held sideways — wide but
+// ~360px tall — got the roomy desktop layout and spent 92% of the screen on chrome, leaving zero
+// lines of comment text visible. This measures how far down the first comment starts and how many
+// lines of body text are on screen.
 //
-// The discussion page exists to be read. Density here was keyed to viewport WIDTH only, so a phone
-// held sideways — wide but ~360px tall — got the roomy layout meant for a desktop and spent 92% of
-// the screen on chrome, leaving zero lines of comment text visible.
-//
-// This measures the thing a reader actually cares about: how far down the first comment starts, and
-// how many lines of comment body are on screen. Width-based checks cannot see this class at all.
+// HERMETIC (2026-08-06): this used to measure whichever LIVE discussion HN happened to serve, so a
+// story with a two-line title pushed the first comment ~44px lower and the measurement swung 45% ->
+// 51% between runs — green locally, red on CI, for a reason that had nothing to do with the code.
+// A randomly-failing gate is worse than none. The story is now a fixture with a fixed one-line
+// title, so the number reflects the CHROME (topbar + header + control band) — which is what the
+// budget is about — not title-length roulette. The components under measurement (topbar, header,
+// band, comments) are the REAL ones; only the story DATA is mocked, so the furniture height is
+// production-accurate. A two-line title counting as furniture is a separate SPEC-interpretation
+// question, tracked in the register, not something this gate should decide at random.
 import { chromium } from 'playwright';
 
 const BASE = process.env.BASE || 'http://localhost:4173/';
+const now = Math.floor(Date.now() / 1000);
 const fails = [];
 const check = (name, pass, detail = '') => {
   console.log(`  ${pass ? '\u2713' : '\u2717'} ${name}${detail ? ` \u2014 ${detail}` : ''}`);
   if (!pass) fails.push(name);
 };
 
+const STORY_ID = 1000;
+// A representative one-line HN title (~55 chars fits one line at 390px), a real URL so the
+// Discussion/Article toggle renders (production furniture), and enough comments — each a paragraph
+// long enough to wrap to several lines — that the tall viewports can show 5-6 lines of body text.
+const TITLE = 'A small language model that runs entirely in your browser';
+const PARA =
+  '<p>This is a substantive comment with enough words to wrap across several lines at a comfortable ' +
+  'reading measure, so the tall viewports have real body text to count rather than a one-line stub ' +
+  'that would make the minimum-lines check pass for the wrong reason.</p>';
+const mkTree = () => ({
+  id: STORY_ID,
+  story_id: STORY_ID,
+  title: TITLE,
+  url: 'https://example.com/small-lm',
+  points: 240,
+  author: 'op',
+  created_at_i: now - 100000,
+  type: 'story',
+  text: null,
+  children: Array.from({ length: 12 }, (_, i) => ({
+    id: STORY_ID * 10 + i + 1,
+    author: `commenter${i + 1}`,
+    text: PARA,
+    created_at_i: now - 80000 + i * 100,
+    children: [],
+  })),
+});
+const mkStory = () => ({ id: STORY_ID, type: 'story', by: 'op', title: TITLE, url: 'https://example.com/small-lm', score: 240, descendants: 12, time: now - 100000 });
+
+const applyMocks = async (page) => {
+  await page.route(/hacker-news\.firebaseio\.com/, (r) => {
+    const u = r.request().url();
+    const j = (x) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(x) });
+    if (u.includes('/topstories.json')) return j([STORY_ID]);
+    for (const ep of ['beststories', 'newstories', 'askstories', 'showstories', 'jobstories']) if (u.includes(`/${ep}.json`)) return j([]);
+    const m = u.match(/item\/(\d+)/);
+    if (m) return j(Number(m[1]) === STORY_ID ? mkStory() : null);
+    if (u.includes('/user/')) return j({ id: 'x', karma: 1, created: now });
+    if (u.includes('maxitem')) return j(9999);
+    return j(null);
+  });
+  await page.route(/hn\.algolia\.com\/api\/v1\/search/, (r) =>
+    r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ nbHits: 0, page: 0, nbPages: 0, hits: [] }) }),
+  );
+  await page.route(/hn\.algolia\.com\/api\/v1\/items\/(\d+)/, (r) =>
+    r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(mkTree()) }),
+  );
+  await page.route(/google\.com\/s2\/favicons|gstatic\.com\/faviconV2/, (r) => r.fulfill({ status: 200, body: '' }));
+};
+
 // Short-and-wide is the case that was broken; the tall cases are the opposite-case control, so a
-// fix that compacts everything everywhere fails here rather than shipping.
-// These ceilings are measured to the first READABLE LINE, not to the top of the first comment box.
-// That is the stricter of two readings of the spec and the one that matches what a reader is
-// waiting to see; it costs every comment's byline, so the numbers are several points higher than
-// the same layout scored under the looser reading. They were RE-DERIVED when the convention
-// changed -- carrying the old figures across would be comparing measurements taken with two
-// different rulers. On a screen this short the tap minimum is already relaxed to 36px, which is
-// what brought the furniture down from 92% with zero lines of text visible; going further would
-// mean shrinking targets past the point a fingertip can rely on them.
-// The line counts stay low on short screens because a genuinely one-line first comment is common;
-// the tall cases carry the higher counts, and act as the opposite-case control so a fix that
-// compacts every screen fails here rather than shipping.
+// fix that compacts everything everywhere fails here rather than shipping. On a screen under ~500px
+// tall the tap minimum is already relaxed to 36px, which is what brought the furniture down from 92%.
 const CASES = [
   { w: 640, h: 360, maxChromePct: 72, minLines: 1 },
   { w: 740, h: 360, maxChromePct: 72, minLines: 1 },
@@ -39,25 +87,10 @@ const CASES = [
 
 const b = await chromium.launch({ headless: true });
 try {
-  let id = null;
-  {
-    const ctx = await b.newContext({ viewport: { width: 1280, height: 900 } });
-    const p = await ctx.newPage();
-    await p.goto(BASE, { waitUntil: 'domcontentloaded' });
-    await p.waitForSelector('article[data-id]', { timeout: 45000 }).catch(() => {});
-    await p.waitForTimeout(2000);
-    id = await p.evaluate(() => {
-      const arts = [...document.querySelectorAll('article[data-id]')];
-      const withComments = arts.find((a) => /\d+\s*comment/i.test(a.textContent || ''));
-      return (withComments || arts[0])?.getAttribute('data-id') ?? null;
-    });
-    await ctx.close();
-  }
-  check('PRECONDITION: a live discussion was found to measure', !!id, `id=${id}`);
-
   for (const c of CASES) {
     const ctx = await b.newContext({ viewport: { width: c.w, height: c.h }, isMobile: c.w < 1024, hasTouch: c.w < 1024 });
     const page = await ctx.newPage();
+    await applyMocks(page);
     await page.addInitScript(() => {
       try {
         localStorage.setItem('hn:onboard', 'skip');
@@ -65,15 +98,14 @@ try {
         /* private mode */
       }
     });
-    await page.goto(`${BASE}#/item/${id}`, { waitUntil: 'domcontentloaded' });
+    await page.goto(`${BASE}#/item/${STORY_ID}`, { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('[id^="comment-"]', { timeout: 30000 }).catch(() => {});
-    await page.waitForTimeout(2200);
+    await page.waitForTimeout(1600);
 
     const r = await page.evaluate(() => {
-      // To the first READABLE line, not to the top of the comment box. A byline with no text under
-      // it is not reading, and measuring to the container's edge flatters the result by the height
-      // of every comment's header. This is the stricter of the two readings of the spec and the one
-      // that matches what the reader is actually waiting to see.
+      // To the first READABLE line, not to the top of the comment box: a byline with no text under
+      // it is not reading, and measuring to the container edge flatters the result by every
+      // comment's header. This is the stricter reading of the spec and what the reader waits to see.
       const firstBody = document.querySelector('.comment-body');
       const first = firstBody || document.querySelector('[id^="comment-"]');
       const bodies = [...document.querySelectorAll('.comment-body')];
@@ -89,30 +121,29 @@ try {
         hasThread: !!first && bodies.length > 0,
         firstTop: first ? Math.round(first.getBoundingClientRect().top) : null,
         lines,
+        // Proof the FIXTURE (not a live fallback) is what's being measured, so the number is
+        // deterministic across machines and runs.
+        isFixture: /small language model/i.test(document.body.innerText),
         vh: window.innerHeight,
         overflow: Math.round(document.documentElement.scrollWidth - document.documentElement.clientWidth),
       };
     });
 
     const tag = `${c.w}x${c.h}`;
-    // Without a thread on screen the two checks below would measure an empty page and pass.
     check(`PRECONDITION: the thread rendered at ${tag}`, r.hasThread && r.firstTop !== null, JSON.stringify(r));
     if (!r.hasThread) {
       await ctx.close();
       continue;
     }
+    // The mocked story — not a live one — is what's being measured, so the number is deterministic.
+    check(`PRECONDITION: the fixture discussion is what rendered at ${tag}`, r.isFixture, `isFixture=${r.isFixture}`);
     const pct = Math.round((r.firstTop / r.vh) * 100);
     check(
       `at ${tag} the page spends at most ${c.maxChromePct}% of the screen before the first comment`,
       pct <= c.maxChromePct,
       `${pct}% (${r.firstTop}px of ${r.vh})`,
     );
-    check(
-      `at ${tag} at least ${c.minLines} lines of comment text are on screen`,
-      r.lines >= c.minLines,
-      `${r.lines} line(s)`,
-    );
-    // Compacting must not be paid for by pushing the page sideways.
+    check(`at ${tag} at least ${c.minLines} lines of comment text are on screen`, r.lines >= c.minLines, `${r.lines} line(s)`);
     check(`at ${tag} the page does not scroll horizontally`, r.overflow <= 0, `overflow=${r.overflow}`);
     await ctx.close();
   }
