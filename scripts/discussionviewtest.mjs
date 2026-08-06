@@ -261,6 +261,62 @@ for (const w of [360, 320]) {
 await page.setViewportSize({ width: 1280, height: 900 });
 await page.waitForTimeout(200);
 
+// ===== [D2] On a SHORT screen (a phone held sideways, ~360px tall) the discussion tools menu opens
+// as a centred MODAL over a dimmed page, not a dropdown that must find room beside a tall toolbar +
+// tray. A dropdown genuinely cannot fit there; a modal sits on top, so every entry stays reachable
+// and nothing is clipped. This locks in that resolution: the menu must be a modal AND every item on
+// screen and hittable at landscape sizes.
+console.log('\n[D2] the tools menu is a reachable modal on a short (landscape) screen');
+// 740x360 is a landscape phone where this mock story folds a tool into the "…" menu. The `isModal`
+// assertion is the teeth: a short screen must present a MODAL, not a dropdown that has to find room
+// beside a tall toolbar — disabling the short-screen branch turns it into a dropdown and fails here.
+for (const [w, h] of [[740, 360]]) {
+  await page.setViewportSize({ width: w, height: h });
+  await page.goto(`${BASE}#/item/1000`, { waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(() => /comments/i.test(document.body.innerText), null, { timeout: 15000 }).catch(() => {});
+  await page.waitForTimeout(500);
+  const r = await page.evaluate(async () => {
+    const more = [...document.querySelectorAll('button')].find((x) => /more discussion tools/i.test(x.getAttribute('aria-label') || ''));
+    if (!more || more.getBoundingClientRect().width === 0) return { noMore: true };
+    more.click();
+    await new Promise((res) => setTimeout(res, 400));
+    const menu = document.querySelector('[role="menu"]');
+    if (!menu) return { noMenu: true };
+    const isModal = !!document.querySelector('.fixed.inset-0');
+    const mb = menu.getBoundingClientRect();
+    const vh = window.innerHeight;
+    const vw = window.innerWidth;
+    const items = [...menu.querySelectorAll('a,button,[role="menuitem"]')].filter((e) => {
+      const bb = e.getBoundingClientRect();
+      return bb.width > 0 && bb.height > 0;
+    });
+    let unreachable = 0;
+    let offscreen = 0;
+    for (const it of items) {
+      const bb = it.getBoundingClientRect();
+      if (bb.top < 0 || bb.bottom > vh + 0.5) {
+        offscreen += 1;
+        continue;
+      }
+      const hit = document.elementFromPoint(Math.round(bb.left + bb.width / 2), Math.round(bb.top + bb.height / 2));
+      if (hit && hit !== it && !it.contains(hit) && !menu.contains(hit)) unreachable += 1;
+    }
+    const clipped = mb.top < -0.5 || mb.bottom > vh + 0.5 || mb.left < -0.5 || mb.right > vw + 0.5;
+    return { isModal, items: items.length, unreachable, offscreen, clipped };
+  });
+  const tag = `${w}x${h}`;
+  // Without an open menu carrying items, the reachability checks would be vacuous.
+  check(`PRECONDITION ${tag}: the tools menu opened with items`, !r.noMore && !r.noMenu && r.items >= 1, JSON.stringify(r));
+  if (r.noMore || r.noMenu) continue;
+  check(`${tag}: the short-screen tools menu is a modal (not a dropdown that can't fit)`, r.isModal, JSON.stringify(r));
+  check(`${tag}: every tools-menu item is on screen`, r.offscreen === 0, `${r.offscreen} offscreen`);
+  check(`${tag}: every tools-menu item is reachable (nothing opaque over it)`, r.unreachable === 0, `${r.unreachable} unreachable`);
+  check(`${tag}: the tools menu is not clipped by the viewport`, !r.clipped, JSON.stringify(r));
+}
+await page.setViewportSize({ width: 1280, height: 900 });
+await page.goto(`${BASE}#/item/1000`, { waitUntil: 'domcontentloaded' });
+await page.waitForTimeout(300);
+
 // --- "Back to feed" must preserve the feed you came from, and must never leave the app ---
 // It used to push "/" unconditionally, which resolves to the DEFAULT feed — so the tab was lost from
 // every non-default feed, along with a search context and the remembered paging depth. Stepping back
