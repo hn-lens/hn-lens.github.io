@@ -170,6 +170,9 @@ const TIERS = {
       { name: 'trainlabeltest (glance vs stay training labels)', script: 'trainlabeltest' },
       { name: 'diversitytest (per-domain cap in For You)', script: 'diversitytest' },
       { name: 'themecontrasttest (WCAG contrast, all designs \u00d7 modes)', script: 'themecontrasttest' },
+      // The feed-tab strip's edge fade must hint at scroll without washing a fully-visible tab's
+      // label below AA — a 44px fade bit into the last tab's trailing glyphs.
+      { name: 'tabfadetest (scroll-hint fade keeps tab labels AA)', script: 'tabfadetest' },
       { name: 'switchtest (switch control rendering + WCAG 1.4.11)', script: 'switchtest' },
       { name: 'cardteachtest (follow/mute from a card)', script: 'cardteachtest' },
       { name: 'mobiletest (mobile tune + read access)', script: 'mobiletest' },
