@@ -131,10 +131,13 @@ try {
       continue;
     }
     measured += 1;
+    // AA is 4.5:1. Require 5.0 as HEADROOM: the last glyph's overlap with the fade is sensitive to
+    // font metrics, which differ between the local and CI machines (a green-local/red-CI 3.97 shipped
+    // once at fadeW 24). A 0.5 buffer means a thin local margin fails HERE, before it fails AA on CI.
     check(
-      `${tag}: the last visible tab "${r.label}" keeps AA text contrast under the fade`,
-      r.contrast >= 4.5,
-      `contrast=${r.contrast}:1 (alpha ${r.alphaAtGlyph}, base ${r.base}, fadeW ${r.fadeW})`,
+      `${tag}: the last visible tab "${r.label}" keeps AA text contrast under the fade (with CI headroom)`,
+      r.contrast >= 5.0,
+      `contrast=${r.contrast}:1 (alpha ${r.alphaAtGlyph}, base ${r.base}, fadeW ${r.fadeW}) [AA 4.5, require 5.0]`,
     );
     // Opposite case: the fix must not be "remove the fade". When there is more to scroll to, the
     // affordance must still be present.

@@ -103,15 +103,17 @@ export default function FeedTabs({
           );
         })}
       </div>
-      {/* Narrow (24px) so the opaque end of the fade clears a FULLY-visible tab's text — a 44px fade
-          bit ~20px into the last tab and dropped its trailing glyphs below AA. The negative inset
-          keeps the fade reaching the true scroll edge (so a CLIPPED tab is still softened, not cut
-          at a hard line), which is the seam behaviour this element exists for. */}
+      {/* Narrow (12px) so the fade's opaque end sits well CLEAR of a fully-visible tab's text — a
+          fully-visible tab's label ends ~19px from the edge, so a 12px fade never reaches it (with
+          margin for the ~5px the same text shifts between machines' font metrics). A wider fade bit
+          into the last tab's trailing glyphs and dropped them below AA. The negative inset keeps the
+          fade reaching the true scroll edge, so a CLIPPED tab is still softened rather than cut at a
+          hard line — the seam behaviour this element exists for. */}
       {edges.left && (
-        <div aria-hidden className="pointer-events-none absolute inset-y-0 -left-3 w-6 bg-gradient-to-r from-bg to-transparent sm:-left-4" />
+        <div aria-hidden className="pointer-events-none absolute inset-y-0 -left-3 w-3 bg-gradient-to-r from-bg to-transparent sm:-left-4" />
       )}
       {edges.right && (
-        <div aria-hidden className="pointer-events-none absolute inset-y-0 -right-3 w-6 bg-gradient-to-l from-bg to-transparent sm:-right-4" />
+        <div aria-hidden className="pointer-events-none absolute inset-y-0 -right-3 w-3 bg-gradient-to-l from-bg to-transparent sm:-right-4" />
       )}
     </div>
   );
