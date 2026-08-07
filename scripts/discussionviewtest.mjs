@@ -20,9 +20,10 @@ import { chromium } from 'playwright';
 const BASE = process.env.BASE || 'http://localhost:4173/';
 const now = Math.floor(Date.now() / 1000);
 
-// Two stories in Top. Each Algolia tree has one OLD comment (before the prior visit)
-// and two FRESH comments (after it) so the "new" badge has a definite expected count.
-const STORY_IDS = [1000, 1001];
+// Stories in Top. 1000/1001 each have a small Algolia tree with one OLD comment (before the prior
+// visit) and two FRESH comments (after it) so the "new" badge has a definite expected count; 1002
+// has a big tree (>30 top-level) so the "Show more comments" pager renders for the [I] tap guard.
+const STORY_IDS = [1000, 1001, 1002];
 const mkStory = (id) => ({ id, type: 'story', by: `op${id}`, title: `Story ${id}`, url: `https://d${id}.example/x`, score: 150, descendants: 3, time: now - 100000 });
 const mkTree = (id) => ({
   id, story_id: id, title: `Story ${id}`, url: `https://d${id}.example/x`, points: 150, author: `op${id}`,
@@ -32,6 +33,20 @@ const mkTree = (id) => ({
     { id: id * 10 + 2, author: 'freshA', text: '<p>A FRESH comment posted after your last visit.</p>', created_at_i: now - 1800, children: [] },
     { id: id * 10 + 3, author: 'freshB', text: '<p>Another FRESH comment after your last visit.</p>', created_at_i: now - 1700, children: [] },
   ],
+});
+
+// A thread with more than TOP_BATCH (30) top-level comments so the "Show more comments" pager
+// (`.disc-more`) renders — used by the [I] touch tap-target guard.
+const mkBigTree = (id) => ({
+  id, story_id: id, title: `Story ${id}`, url: `https://d${id}.example/x`, points: 150, author: `op${id}`,
+  created_at_i: now - 100000, type: 'story', text: null,
+  children: Array.from({ length: 35 }, (_, k) => ({
+    id: id * 100 + k,
+    author: `c${k}`,
+    text: `<p>Comment ${k} — a realistic body long enough to wrap.</p>`,
+    created_at_i: now - 1000 * (k + 1),
+    children: [],
+  })),
 });
 
 const fails = [];
@@ -766,7 +781,7 @@ console.log('\n[G] on touch, the toolbar controls in one row share a height');
   await cp.route(/hn\.algolia\.com\/api\/v1\/search/, (r) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ hits: [] }) }));
   await cp.route(/hn\.algolia\.com\/api\/v1\/items\/(\d+)/, (r) => {
     const id = Number(r.request().url().match(/items\/(\d+)/)[1]);
-    r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(mkTree(id)) });
+    r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(id === 1002 ? mkBigTree(id) : mkTree(id)) });
   });
   await cp.route(/google\.com\/s2\/favicons|gstatic\.com\/faviconV2/, (r) => r.fulfill({ status: 200, body: '' }));
   await cp.addInitScript(() => {
@@ -867,6 +882,41 @@ console.log('\n[G] on touch, the toolbar controls in one row share a height');
     check('PRECONDITION [H]: the toolbar band and header meta are both present', c.hasBar && c.hasHeader, JSON.stringify(c));
     check('the comment count is NOT rendered in the toolbar band', c.barCount === false, JSON.stringify(c));
     check('the comment count IS rendered once in the header meta', c.headerCount === true, JSON.stringify(c));
+  }
+
+  // [I] The "Show more comments" pager (.disc-more) meets the 44px touch tap floor on a full-height
+  // phone. It sits OUTSIDE the segmented toolbar (so the toolbar height rules never covered it) and
+  // BELOW the comment list (so sizing it up spends no pre-content chrome). The sibling /item
+  // back-to-feed link is NOT asserted here: raising it to 44/36px breaks the discussion content
+  // budget on touch, a tap-vs-budget conflict left as a spec decision (see the register).
+  console.log('\n[I] the "show more comments" pager meets the 44px touch floor');
+  {
+    await cp.setViewportSize({ width: 390, height: 800 });
+    await cp.goto(`${BASE}#/item/1002`, { waitUntil: 'domcontentloaded' });
+    await cp.waitForFunction(() => document.querySelector('.disc-more'), null, { timeout: 12000 }).catch(() => {});
+    const m = await cp.evaluate(() => {
+      const more = document.querySelector('.disc-more');
+      const back = document.querySelector('.disc-back');
+      return { more: more ? Math.round(more.getBoundingClientRect().height) : null, back: back ? Math.round(back.getBoundingClientRect().height) : null };
+    });
+    check('PRECONDITION [I]: the "show more comments" pager renders on a >30-comment thread', m.more != null, `more=${m.more}`);
+    check('on a full-height touch phone, the show-more pager is >=44px tall', m.more != null && m.more >= 44, `more=${m.more}`);
+    // The back-to-feed link is a deliberate WCAG-AA 24px target on touch (not the 44/36 criterion-6
+    // size) — it sits above the first comment and a bigger box overruns the landscape content budget.
+    check('PRECONDITION [I]: the back-to-feed control renders on /item', m.back != null, `back=${m.back}`);
+    check('on a full-height touch phone, back-to-feed meets the WCAG-AA 24px floor', m.back != null && m.back >= 24, `back=${m.back}`);
+  }
+  {
+    // The AA floor also holds on a short landscape viewport (the tightest content budget).
+    await cp.setViewportSize({ width: 844, height: 390 });
+    await cp.goto(`${BASE}#/item/1000`, { waitUntil: 'domcontentloaded' });
+    await cp.waitForFunction(() => document.querySelector('.disc-back'), null, { timeout: 10000 }).catch(() => {});
+    const back = await cp.evaluate(() => {
+      const b = document.querySelector('.disc-back');
+      return b ? Math.round(b.getBoundingClientRect().height) : null;
+    });
+    check('PRECONDITION [I]: back-to-feed renders on a short landscape /item', back != null, `back=${back}`);
+    check('on a short landscape touch phone, back-to-feed meets the WCAG-AA 24px floor', back != null && back >= 24, `back=${back}`);
   }
   await cctx.close();
 }

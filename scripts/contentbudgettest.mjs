@@ -76,13 +76,19 @@ const applyMocks = async (page) => {
 // Short-and-wide is the case that was broken; the tall cases are the opposite-case control, so a
 // fix that compacts everything everywhere fails here rather than shipping. On a screen under ~500px
 // tall the tap minimum is already relaxed to 36px, which is what brought the furniture down from 92%.
-const CASES = [
-  { w: 640, h: 360, maxChromePct: 72, minLines: 1 },
-  { w: 740, h: 360, maxChromePct: 72, minLines: 1 },
-  { w: 844, h: 390, maxChromePct: 67, minLines: 1 },
-  { w: 1024, h: 768, maxChromePct: 39, minLines: 6 },
-  { w: 390, h: 844, maxChromePct: 47, minLines: 5 },
-  { w: 1280, h: 800, maxChromePct: 38, minLines: 6 },
+ // Landscape ceilings were relaxed ~1-2pt (640/740x360: 72->73; 844x390: 67->69) so the /item
+ // back-to-feed link can be a WCAG-AA 24px tap target. On a short landscape viewport the chrome is
+ // an inherently large fraction of the screen — an independent review found even the pre-fix ~16px
+ // button already sat at the 67% ceiling (844x390), so the %-budget was effectively unsatisfiable
+ // there. 24px measures 71.4% (640/740) and 67.9% (844) — the relax keeps a real, near-current
+ // budget while allowing the AA-minimum target. Portrait/desktop ceilings are UNCHANGED.
+ const CASES = [
+   { w: 640, h: 360, maxChromePct: 73, minLines: 1 },
+   { w: 740, h: 360, maxChromePct: 73, minLines: 1 },
+   { w: 844, h: 390, maxChromePct: 69, minLines: 1 },
+   { w: 1024, h: 768, maxChromePct: 39, minLines: 6 },
+   { w: 390, h: 844, maxChromePct: 47, minLines: 5 },
+   { w: 1280, h: 800, maxChromePct: 38, minLines: 6 },
 ];
 
 const b = await chromium.launch({ headless: true });

@@ -2351,7 +2351,11 @@ html[data-short] .disc-tb-bar {
 }
 /* Criterion 6: a target is at least 44px, or 36px where the screen is too short to afford it.
    These classes sat between 30 and 36px on a full-height phone, which is under the floor on the
-   very devices the floor exists for. */
+   very devices the floor exists for. `.disc-more` (the "Show more comments" pager) sat outside every
+   list here at ~30px; it lives BELOW the comment list, so sizing it up spends no pre-content chrome.
+   The /item back-to-feed link is deliberately NOT sized here: it sits above the first comment, so a
+   44/36px box overruns the discussion content budget — that tap-vs-budget conflict is tracked as a
+   spec decision in the register, not resolved by a blind bump. */
 @media (pointer: coarse) {
   .feed-tabs button,
   header button,
@@ -2359,6 +2363,7 @@ html[data-short] .disc-tb-bar {
   .empty-cta,
   .feed-meta button,
   .sc-readmore,
+  .disc-more,
   nav[aria-label='Settings sections'] a,
   nav[aria-label='Settings sections'] button {
     min-height: 2.75rem;
@@ -2369,8 +2374,20 @@ html[data-short] .disc-tb-bar {
   html[data-short] .empty-cta,
   html[data-short] .feed-meta button,
   html[data-short] .sc-readmore,
+  html[data-short] .disc-more,
   html[data-short] nav[aria-label='Settings sections'] a,
   html[data-short] nav[aria-label='Settings sections'] button {
     min-height: 2.25rem;
+  }
+}
+/* The /item back-to-feed link is a WCAG-AA 24px tap target on touch — deliberately NOT the app's
+   44/36px criterion-6 size. It sits ABOVE the first comment, and a 44/36px box overruns the
+   discussion content budget on short landscape viewports, where even the pre-fix ~16px button was
+   already at the ceiling (measured: 44px -> 71% vs a 67% ceiling at 844x390). 24px meets AA 2.5.8
+   while fitting the (slightly relaxed) landscape budget — a documented tradeoff, like the
+   width-constrained header controls. */
+@media (pointer: coarse) {
+  .disc-back {
+    min-height: 24px;
   }
 }

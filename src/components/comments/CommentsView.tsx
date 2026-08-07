@@ -1019,7 +1019,7 @@ export default function CommentsView({ id }: { id: number }) {
                   <button
                     type="button"
                     onClick={() => setVisibleTop((v) => Math.min(topLevel.length, v + TOP_BATCH))}
-                    className="mx-auto block rounded-lg border border-edge px-3 py-1.5 text-xs text-muted hover:bg-surface-2 hover:text-fg"
+                    className="disc-more mx-auto flex w-fit items-center justify-center rounded-lg border border-edge px-3 py-1.5 text-xs text-muted hover:bg-surface-2 hover:text-fg"
                   >
                     Show more comments ({topLevel.length - visibleTop} more)
                   </button>
