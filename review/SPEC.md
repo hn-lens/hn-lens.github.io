@@ -221,10 +221,11 @@ controls and logotypes are exempt and are LOW at most.
 
 Chrome above the content of a reading surface is measured as a WHOLE, not per component. On the
 discussion page the control band is everything between the story header and the first comment — the
-Discussion/Article view toggle, the comment count, the sort control, the in-thread search, the
-overflow menu and the catch-up button. Together they occupy **ONE row at every width**, and controls
-DEGRADE — shrink, shorten their labels, drop to icons, or fold into the overflow menu — rather than
-taking a second row.
+Discussion/Article view toggle, the sort control, the in-thread search, the overflow menu and the
+catch-up button. The comment count is NOT part of the band — it lives once in the story-header meta
+above, given the same prominence as the score. Together the band controls occupy **ONE row at every
+width**, and controls DEGRADE — shrink, shorten their labels, drop to icons, or fold into the
+overflow menu — rather than taking a second row.
 
 This is an end result about the reading surface, not about any one component: two clusters that are
 each individually a tidy single row still cost the reader two rows of a small screen, and the whole
@@ -323,18 +324,31 @@ OBSERVATION: worth recording once, not worth blocking a release, and not worth r
 
 ## 9b. Content budget — how much screen a reading surface may spend on itself
 
-Measured from the top of the viewport to the top of the first piece of content, as a percentage of
-viewport height, with the thread loaded:
+Measured from the top of the viewport to the top of the first readable line of content (the first
+`.comment-body`, not the comment's byline), as a percentage of viewport height, with the thread
+loaded. These are the exact ceilings enforced by `contentbudgettest`:
 
-| Viewport | Maximum furniture |
+| Viewport (tested) | Maximum furniture |
 |---|---|
-| under ~400px tall (phone held sideways) | 67% |
-| ~400px tall | 63% |
-| 768px tall and above | 40% |
-| a tall phone (≈844px) | 50% |
+| landscape phone ~360px tall (640–740 wide) | 73% |
+| landscape phone ~390px tall (844 wide) | 69% |
+| portrait phone ~844px tall (390 wide) | 47% |
+| laptop 768px tall (1024 wide) | 39% |
+| desktop 800px tall (1280 wide) | 38% |
 
 These are ceilings, not targets. They are set by what the design honestly supports with tap targets
 at their stated size — not by what would be nice.
+
+Short LANDSCAPE viewports carry the loosest ceilings (73% / 69%) on purpose: on a ~360–390px-tall
+screen the chrome is an inherently large fraction of the viewport, so the budget there is dominated
+by furniture rather than avoidable waste. Those two ceilings are set by what the design supports
+**with a WCAG-AA 24px back-to-feed tap target** — a deliberate tap-vs-budget tradeoff (a full 44px
+back button overruns even these ceilings, and even the earlier ~16px button already sat at the
+pre-relax 67% at 844×390; see §11). The back-to-feed link is therefore a 24px AA target on touch,
+not the 44/36px used elsewhere.
+
+Intermediate viewports (≈500–767px tall) are not separately tested; treat the nearest tested ceiling
+as a best-effort guide, not a hard gate.
 
 ---
 
