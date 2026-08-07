@@ -345,7 +345,7 @@ export default function Settings() {
           description="Off by default. Works out of the box — no account or API key."
         />
         <div className="rounded-lg border border-border bg-surface-2 p-2.5 text-xs">
-          <p className="mb-1.5 font-medium text-fg">Reader proxies (tried in this order):</p>
+          <p className="mb-1.5 font-medium text-fg">Reader proxies (candidate list):</p>
           <ol className="space-y-1">
             {READER_PROXIES.map((p, i) => (
               <li key={p.name} className="flex items-baseline gap-2">
@@ -356,9 +356,10 @@ export default function Settings() {
             ))}
           </ol>
           <p className="mt-1.5 text-muted">
-            The first that answers is used; if it&apos;s down/rate-limited the next is tried. Whichever
-            served the text is shown on each summary as “Based on … · via &lt;proxy&gt;”, with a link to the
-            source and the extracted text.
+            The app learns which of these work best in your browser and tries them in that order; the first
+            that answers is used, and the next is tried if one is down or rate-limited. Whichever served the
+            text is shown on each summary as “Based on … · via &lt;proxy&gt;”, with a link to the source and
+            the extracted text.
           </p>
         </div>
         {prefs.fetchArticleText && (

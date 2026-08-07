@@ -71,12 +71,11 @@ check('cachedArticleTerms tokenizes the cached body (no network)', r.at.includes
 check('computeContentSignals(articleTerms:true) ranks the article-matching candidate higher', r.withFlag42 > r.withFlag43 + 0.05, `42=${r.withFlag42} vs 43=${r.withFlag43}`);
 check('computeContentSignals(articleTerms:false) ignores article body (titles equally neutral)', Math.abs(r.noFlag42 - r.noFlag43) < 0.01, `42=${r.noFlag42} vs 43=${r.noFlag43}`);
 
-// --- L3: the article-relevance guard used by the summary + Ask paths (dropping a cookie-wall /
-// paywall / unrelated page the proxy returned so it isn't fed to the model nor labelled "+ article
-// text") now lives in hn/article, shared by every consumer. Unit-check it here via window.__hnlens.
-// The RANKING path deliberately does NOT gate cachedArticleTerms on it: an off-topic page's terms
-// rarely match the liked profile anyway, and gating there would false-drop a legit vague-title
-// article (the train/serve fixture below is exactly such a case — neutral title, on-topic body).
+// --- The article-relevance guard used by the summary + Ask paths (dropping a cookie-wall / paywall /
+// unrelated page so it isn't fed to the model nor labelled "+ article text") lives in hn/article.
+// The RANKING path gates cachedArticleTerms on BLOCKER DETECTION (looksLikeBlocker), NOT on
+// title-relevance: a bot-wall body is kept out of ranking, but a legit vague-title article (neutral
+// title, on-topic body — the train/serve fixture below) is NOT false-dropped.
 const guard = await page.evaluate(async () => {
   const art = await window.__hnlens.article();
   const title = 'quokka telemetry sharding pipeline internals';

@@ -30,9 +30,10 @@ await page.route(/cors\.eu\.org/, (r) => r.fulfill({ status: 200, contentType: '
 await page.route(/api\.codetabs\.com/, (r) => r.fulfill({ status: 500, body: 'down' }));
 
 await page.goto(BASE, { waitUntil: 'domcontentloaded' });
-await page.waitForFunction(() => window.__hnlens && window.__hnlens.article && window.__hnlens.db, null, { timeout: 20000 });
+await page.waitForFunction(() => window.__hnlens && window.__hnlens.article && window.__hnlens.db && window.__hnlens.proxy, null, { timeout: 20000 });
 
 const r = await page.evaluate(async () => {
+  (await window.__hnlens.proxy()).resetProxyHealth(); // clean slate → deterministic seed order
   const art = window.__hnlens.article();
   const dbMod = await window.__hnlens.db();
   await dbMod.db.kv.where('key').startsWith('atext:').delete();
@@ -88,7 +89,7 @@ check('speculative prefetch stops at the cap (3rd new item not fetched)', pf.has
 // uncached engaged item contributes only its title terms; no proxy request is made. ----
 let profileProxyReqs = 0;
 const countProxy = (req) => {
-  if (/allorigins\.win|cors\.eu\.org|codetabs\.com/.test(req.url())) profileProxyReqs++;
+  if (/allorigins\.win|cors\.eu\.org|codetabs\.com|corsproxy\.io|corsfix\.com|everyorigin\.org|cors\.workers\.dev|cors\.lol|thingproxy\.freeboard\.io/.test(req.url())) profileProxyReqs++;
 };
 page.on('request', countProxy);
 const co = await page.evaluate(async () => {
@@ -110,6 +111,35 @@ page.off('request', countProxy);
 check('profile-building makes NO proxy request (cache-only training)', profileProxyReqs === 0, `proxyReqs=${profileProxyReqs}`);
 check('uncached engaged item contributes its title terms only (no live body fetch)', co.terms909.includes('uniqueprofileterm') && co.terms909.includes('quokka'), JSON.stringify(co.terms909));
 
+// ---- an OFF-TOPIC / blocker cached body must NOT feed ranking term-affinity (relevance-gated),
+// while an ON-TOPIC cached body still does; the off-topic item keeps its title terms. ----
+const rel = await page.evaluate(async () => {
+  const content = await window.__hnlens.content();
+  const dbMod = await window.__hnlens.db();
+  await dbMod.db.kv.where('key').startsWith('atext:').delete();
+  await dbMod.db.kv.where('key').startsWith('aterms:').delete();
+  await dbMod.db.events.clear();
+  const off = { id: 950, title: 'quantum computing error correction breakthrough', url: 'https://example.com/qc', by: 'u', score: 50, descendants: 3, time: Math.floor(Date.now() / 1000), type: 'story' };
+  await dbMod.db.items.put({ id: 950, item: off, cachedAt: Date.now() });
+  await dbMod.db.kv.put({ key: 'atext:950', value: { text: 'You do not have permission to access this resource. The reference number is shown below for support. '.repeat(10), proxy: 'x' } });
+  await dbMod.db.events.add({ type: 'open_link', itemId: 950, ts: Date.now() });
+  const on = { id: 951, title: 'raspberry pi kubernetes cluster homelab guide', url: 'https://example.com/pi', by: 'u', score: 50, descendants: 3, time: Math.floor(Date.now() / 1000), type: 'story' };
+  await dbMod.db.items.put({ id: 951, item: on, cachedAt: Date.now() });
+  await dbMod.db.kv.put({ key: 'atext:951', value: { text: 'This raspberry pi kubernetes cluster homelab guide walks through building a kubernetes cluster on several raspberry pi boards with benchmarks for the homelab enthusiast. '.repeat(6), proxy: 'x' } });
+  await dbMod.db.events.add({ type: 'open_link', itemId: 951, ts: Date.now() });
+  const p = await content.buildContentProfile('', { withComments: false, embeddings: false, fetchArticle: true });
+  const t950 = p.likedTermsById.get(950) || [];
+  const t951 = p.likedTermsById.get(951) || [];
+  return {
+    offBodyLeaked: t950.includes('permission') || t950.includes('resource') || t950.includes('reference'),
+    offTitleKept: t950.includes('quantum') && t950.includes('computing'),
+    onBodyKept: t951.includes('kubernetes') || t951.includes('homelab'),
+  };
+});
+check('ranking: an off-topic/blocker cached body does NOT feed term-affinity', rel.offBodyLeaked === false, `leaked=${rel.offBodyLeaked}`);
+check('ranking: the off-topic item still contributes its TITLE terms', rel.offTitleKept === true);
+check('ranking: an on-topic cached body DOES feed term-affinity (opposite case)', rel.onBodyKept === true);
+
 // ---- a hung / unreachable proxy is BOUNDED by a timeout (never stalls forever) ----
 // Make the primary proxy hang past the timeout; fetchArticleBody must abort it and
 // fall through to the next working proxy in ~the bound, not hang indefinitely.
@@ -123,6 +153,7 @@ await page.route(/api\.allorigins\.win/, async (r) => {
   }
 });
 const to = await page.evaluate(async () => {
+  (await window.__hnlens.proxy()).resetProxyHealth(); // seed order so AllOrigins (seed 0) is tried first → hangs → times out
   const art = window.__hnlens.article();
   const dbMod = await window.__hnlens.db();
   await dbMod.db.kv.where('key').startsWith('atext:').delete();
@@ -132,6 +163,25 @@ const to = await page.evaluate(async () => {
 });
 check('a hung primary proxy is abandoned via timeout; the chain continues', to.proxy === 'cors.eu.org', `served by ${to.proxy}`);
 check('the timeout fired (bounded wait, not forever)', to.ms >= 7000 && to.ms < 20000, `${to.ms}ms`);
+
+// ---- speculative prefetch must bound network ATTEMPTS, not just successful caches: under widespread
+// proxy failure the loop must stop at `max` attempts instead of trying every item. Make every proxy
+// fail, prefetch more items than max, and assert only `max` distinct items were ever contacted. ----
+await page.route(/allorigins\.win|cors\.eu\.org|codetabs\.com|corsproxy\.io|corsfix\.com|everyorigin\.org|cors\.workers\.dev|cors\.lol|thingproxy\.freeboard\.io/, (r) => r.fulfill({ status: 503, body: 'down' }));
+const attempted = new Set();
+const trackL3 = (req) => { const mm = req.url().match(/fail(\d+)/); if (mm) attempted.add(mm[1]); };
+page.on('request', trackL3);
+await page.evaluate(async () => {
+  (await window.__hnlens.proxy()).resetProxyHealth();
+  const art = window.__hnlens.article();
+  const dbMod = await window.__hnlens.db();
+  await dbMod.db.kv.where('key').startsWith('atext:').delete();
+  const items = [1, 2, 3, 4, 5].map((n) => ({ id: 7100 + n, url: `https://example.com/fail${n}` }));
+  await art.prefetchArticles(items, 2, 10);
+});
+await new Promise((r) => setTimeout(r, 200));
+page.off('request', trackL3);
+check('speculative prefetch bounds ATTEMPTS not just successes (all-failing ⇒ only max tried)', attempted.size === 2, `attempted=${[...attempted].sort().join(',')}`);
 
 await b.close();
 console.log(`\n${fails.length === 0 ? 'RESULT: ARTICLE PROXY PASS \u2713' : `RESULT: ${fails.length} FAILED`}`);

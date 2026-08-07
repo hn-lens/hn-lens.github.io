@@ -19,6 +19,7 @@ import { getCachedItems } from '../hn/client';
 import { getEngagedItemIds, getDislikedItemIds } from '../interactions';
 import { fetchItemTree } from '../hn/algolia';
 import { getCachedArticle } from '../hn/article';
+import { looksLikeBlocker } from '../hn/proxy';
 import { ensureItemEmbeddings, dot, normalize } from '../models/embeddings';
 import { stripHtml } from '../html';
 import type { AlgoliaComment, HnItem } from '../../types';
@@ -181,13 +182,16 @@ export async function buildContentProfile(
   };
 }
 
-/** Cached article-body terms for an item (NO network — only reads what's already
- *  been fetched). Tokenized terms are memoized under `aterms:<id>`. */
+/** Cached article-body terms for an item (cache-only), gated on `looksLikeBlocker` so a bot-wall body never feeds ranking (a vague-title on-topic article is kept). Memoized under `aterms:<id>`. */
 export async function cachedArticleTerms(id: number): Promise<string[]> {
   const memo = await kvGet<string[]>(`aterms:${id}`);
   if (memo) return memo;
   const art = await getCachedArticle(id);
-  if (!art?.text) return [];
+  if (!art?.text) return []; // not fetched yet — may arrive later, so don't memo
+  if (looksLikeBlocker(art.text)) {
+    await kvSet(`aterms:${id}`, []); // bot-wall / block-page body — keep it out of ranking
+    return [];
+  }
   const t = terms(art.text);
   await kvSet(`aterms:${id}`, t);
   return t;

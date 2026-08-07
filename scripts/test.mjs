@@ -157,6 +157,7 @@ const TIERS = {
       { name: 'headerfittest (header labels fit, never cut mid-word)', script: 'headerfittest' },
       { name: 'contentbudgettest (a page spends its screen on content, not chrome)', script: 'contentbudgettest' },
       { name: 'articleproxytest (reader-proxy attribution + prefetch)', script: 'articleproxytest' },
+      { name: 'proxytest (proxy health ranker + content scorer + charset)', script: 'proxytest' },
       { name: 'articlerankingtest (article body in ranking)', script: 'articlerankingtest' },
       { name: 'articlelinktest (full-text link on click)', script: 'articlelinktest' },
       { name: 'favicontest (privacy toggle: no remote request when off)', script: 'favicontest' },

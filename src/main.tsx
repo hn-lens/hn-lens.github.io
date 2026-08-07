@@ -62,6 +62,7 @@ void probeWebgpu();
   content: () => contentMod,
   autotrain: () => autotrainMod,
   article: () => articleMod,
+  proxy: () => import('./lib/hn/proxy'), // reader-proxy health/ranking + content scorer — for harnesses
   registry: () => registryMod, // model status store (WebGPU state) — for UI harnesses
   themes: () => themesMod, // THEME_IDS / LAYOUT_IDS — for the theme-contrast harness
   feedSession: () => import('./lib/feedSession'), // session stubs/pins — for harnesses
